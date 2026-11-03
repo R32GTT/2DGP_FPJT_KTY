@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111111">
+<title>Revenant : L.O.S.T</title>
+<style>
+:root {
+  --black:#111111;
+  --white:#ffffff;
+  --paper:#f6f6f4;
+  --red:#c51f2b;
+  --red-dark:#9f1721;
+  --gray:#707070;
+  --mid:#b9b9b6;
+  --line:#e4e4e1;
+  --font: "Noto Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+}
+* { box-sizing:border-box; }
+html, body { width:100%; height:100%; margin:0; background:var(--black); color:var(--black); font-family:var(--font); }
+body { overflow:hidden; }
+button { font:inherit; }
+.deck { height:100%; width:100%; display:flex; flex-direction:column; background:var(--black); }
+.topline { height:4px; flex:0 0 4px; background:#292929; position:relative; z-index:5; }
+.topline > span { display:block; width:0; height:100%; background:var(--red); transition:width .25s ease; }
+.stage-wrap { position:relative; flex:1; min-height:0; display:grid; place-items:center; padding:22px; }
+.stage { width:min(100%, calc((100vh - 112px) * 16 / 9)); aspect-ratio:16/9; position:relative; overflow:hidden; background:var(--paper); box-shadow:0 18px 70px rgba(0,0,0,.34); }
+.slide { position:absolute; inset:0; display:none; padding:5.2% 5.6% 5.1%; background:var(--paper); overflow:hidden; }
+.slide.active { display:flex; flex-direction:column; animation:enter .28s ease both; }
+@keyframes enter { from { opacity:.45; transform:translateX(8px); } to {opacity:1; transform:translateX(0);} }
+.slide::before { content:""; position:absolute; left:0; top:0; bottom:0; width:7px; background:var(--red); }
+.slide.cover { color:var(--white); background:var(--black); padding-left:8.5%; justify-content:center; }
+.slide.cover::before { width:13px; left:6.2%; top:13%; bottom:17%; }
+.eyebrow { font-size:clamp(9px,1.1vw,13px); font-weight:800; letter-spacing:.16em; color:var(--red); text-transform:uppercase; }
+.cover .eyebrow { color:#a7a7a7; margin-bottom:4.4%; }
+.brandline { display:flex; justify-content:space-between; align-items:center; gap:16px; font-size:clamp(8px,.76vw,11px); color:#777; font-weight:800; letter-spacing:.13em; text-transform:uppercase; }
+.brandline span:last-child { color:var(--red); }
+h1,h2,h3,p { margin:0; }
+.cover h1 { font-size:clamp(32px,5.1vw,72px); line-height:1.08; letter-spacing:-.045em; font-weight:900; white-space:nowrap; }
+.cover .expansion { color:#ee5360; font-size:clamp(12px,1.45vw,20px); font-weight:800; margin-top:2.7%; letter-spacing:.015em; }
+.cover .coverline { color:#dedede; font-size:clamp(14px,1.5vw,21px); margin-top:12%; }
+.cover .genre { position:absolute; left:8.5%; bottom:8%; color:#777; font-size:clamp(8px,.82vw,11px); letter-spacing:.15em; font-weight:800; }
+.slide-head { margin-top:5.5%; }
+.slide-title { max-width:94%; font-size:clamp(22px,3.05vw,42px); line-height:1.25; letter-spacing:-.04em; font-weight:900; }
+.slide-sub { margin-top:1.3%; color:var(--gray); font-size:clamp(11px,1.15vw,16px); line-height:1.55; }
+.accent-rule { width:52px; height:4px; background:var(--red); margin-top:2.3%; }
+.slide-foot { margin-top:auto; padding-top:2%; border-top:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; color:#aaa; font-size:clamp(7px,.7vw,10px); letter-spacing:.1em; font-weight:700; }
+.slide-foot b { color:var(--red); font-size:1.05em; }
+.body { flex:1; min-height:0; margin-top:4.6%; display:flex; flex-direction:column; justify-content:center; }
+.statement { font-size:clamp(18px,2vw,28px); line-height:1.55; font-weight:850; letter-spacing:-.025em; max-width:68%; }
+.pillars { display:grid; grid-template-columns:repeat(3,1fr); margin-top:6.5%; border-top:1px solid #d7d7d4; }
+.pillar { padding:4.5% 6% 0 0; position:relative; }
+.pillar + .pillar { border-left:1px solid #ddd; padding-left:9%; }
+.pillar .num { color:var(--red); font-size:clamp(9px,.9vw,12px); font-weight:900; letter-spacing:.1em; }
+.pillar h3 { margin-top:12%; font-size:clamp(16px,1.7vw,24px); font-weight:900; }
+.pillar p { margin-top:7%; color:var(--gray); font-size:clamp(10px,1vw,14px); line-height:1.6; }
+.flow { display:grid; grid-template-columns:repeat(5,1fr); gap:2.2%; margin-top:1%; align-items:start; }
+.flow-item { position:relative; min-width:0; }
+.flow-item:not(:last-child)::after { content:""; position:absolute; top:26px; left:66%; width:47%; height:1px; background:var(--red); }
+.flow-item .num { color:var(--red); font-size:clamp(9px,.9vw,12px); font-weight:900; }
+.flow-item h3 { margin-top:23%; font-size:clamp(15px,1.55vw,22px); font-weight:900; white-space:nowrap; }
+.flow-item p { margin-top:9%; font-size:clamp(9px,.9vw,13px); color:var(--gray); line-height:1.5; }
+.bottom-callout { margin-top:auto; padding-top:2.8%; font-size:clamp(14px,1.6vw,22px); font-weight:900; color:var(--red); }
+.split { flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; gap:2.3%; margin-top:4.7%; }
+.split-panel { padding:6% 6.5%; display:flex; flex-direction:column; justify-content:center; background:#fff; }
+.split-panel.dark { background:var(--black); color:#fff; }
+.split-panel .tag { font-size:clamp(8px,.85vw,12px); color:var(--red); font-weight:900; letter-spacing:.16em; }
+.split-panel.dark .tag { color:#ff737b; }
+.split-panel h3 { font-size:clamp(20px,2.3vw,32px); margin-top:9%; font-weight:900; letter-spacing:-.04em; }
+.split-panel ul { list-style:none; padding:0; margin:10% 0 0; display:grid; gap:9px; }
+.split-panel li { font-size:clamp(11px,1.1vw,15px); color:#494949; }
+.split-panel.dark li { color:#e0e0e0; }
+.split-panel li::before { content:"—"; color:var(--red); font-weight:900; margin-right:10px; }
+.stateflow { display:grid; grid-template-columns:repeat(4,1fr); align-items:center; gap:3.2%; margin-top:6%; }
+.state { position:relative; }
+.state:not(:last-child)::after { content:""; position:absolute; width:35%; height:1px; background:var(--red); left:85%; top:18px; }
+.state .num { color:var(--red); font-size:clamp(9px,.85vw,12px); font-weight:900; }
+.state h3 { font-size:clamp(16px,1.65vw,24px); margin-top:18%; font-weight:900; }
+.state p { font-size:clamp(10px,1vw,14px); margin-top:8%; color:var(--gray); }
+.state-tags { display:grid; grid-template-columns:repeat(5,1fr); gap:1.5%; margin-top:auto; padding-top:3%; border-top:1px solid var(--line); }
+.state-tags span { text-align:center; padding:12px 4px; background:#fff; font-size:clamp(10px,1vw,14px); font-weight:800; }
+.state-tags span:nth-child(4) { background:var(--red); color:#fff; }
+.facility-list { display:grid; margin-top:1%; }
+.facility-row { display:grid; grid-template-columns:8% 25% 1fr; align-items:center; min-height:15%; border-bottom:1px solid var(--line); }
+.facility-row .num { color:var(--red); font-size:clamp(9px,.9vw,12px); font-weight:900; }
+.facility-row strong { font-size:clamp(15px,1.55vw,22px); font-weight:900; }
+.facility-row span:last-child { color:#474747; font-size:clamp(11px,1.15vw,16px); }
+.campaign-grid { display:grid; grid-template-columns:1fr 1fr; gap:5% 6%; margin-top:3%; }
+.campaign-item { display:grid; grid-template-columns:38px 1fr; gap:12px; align-items:start; padding-bottom:6%; border-bottom:1px solid var(--line); }
+.campaign-item .num { color:var(--red); font-size:clamp(9px,.9vw,12px); font-weight:900; }
+.campaign-item h3 { font-size:clamp(16px,1.6vw,23px); font-weight:900; }
+.campaign-item p { margin-top:6px; font-size:clamp(10px,1vw,14px); color:var(--gray); line-height:1.5; }
+.dev-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:2.2%; margin-top:5%; }
+.dev-item { min-width:0; }
+.dev-item .num { color:var(--red); font-weight:900; font-size:clamp(9px,.9vw,12px); }
+.dev-item h3 { margin-top:18%; font-size:clamp(15px,1.6vw,22px); font-weight:900; }
+.dev-item p { margin-top:9%; color:var(--gray); font-size:clamp(10px,.95vw,13px); line-height:1.55; }
+.dark-band { margin-top:auto; background:var(--black); color:#fff; padding:2.2% 2.8%; display:flex; justify-content:space-between; align-items:center; gap:14px; }
+.dark-band strong { color:var(--white); font-size:clamp(9px,.95vw,13px); letter-spacing:.1em; }
+.dark-band span { color:#ddd; font-size:clamp(10px,1vw,14px); }
+.controls { height:62px; flex:0 0 62px; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 24px; color:#ddd; background:#111; }
+.control-left,.control-right { display:flex; align-items:center; gap:9px; }
+.control-btn { border:1px solid #3b3b3b; color:#ddd; background:#1a1a1a; padding:9px 13px; border-radius:3px; cursor:pointer; font-size:12px; transition:background .15s,border .15s; }
+.control-btn:hover { background:#292929; border-color:#777; }
+.control-btn.primary { background:var(--red); border-color:var(--red); color:white; font-weight:800; }
+.control-btn.primary:hover { background:var(--red-dark); }
+.control-btn:disabled { opacity:.35; cursor:not-allowed; }
+.counter { min-width:62px; color:#aaa; font-size:12px; font-variant-numeric:tabular-nums; text-align:center; }
+.timer { color:#fff; font-size:13px; min-width:45px; font-variant-numeric:tabular-nums; }
+.hint { color:#777; font-size:11px; }
+.overlay { position:fixed; inset:0; display:none; z-index:20; background:rgba(0,0,0,.94); color:#fff; padding:5vh 5vw; overflow:auto; }
+.overlay.open { display:block; }
+.overlay-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:28px; }
+.overlay-head h2 { font-size:22px; }
+.overview-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; }
+.thumb { min-height:120px; background:var(--paper); color:var(--black); padding:17px; cursor:pointer; border:2px solid transparent; text-align:left; }
+.thumb:hover { border-color:var(--red); }
+.thumb span { display:block; color:var(--red); font-size:10px; font-weight:900; margin-bottom:18px; }
+.thumb strong { display:block; font-size:15px; line-height:1.4; }
+.help-list { color:#ccc; line-height:2; font-size:14px; }
+.help-list b { color:#fff; display:inline-block; min-width:100px; }
+button:focus-visible { outline:2px solid #ff6872; outline-offset:2px; }
+@media (max-width:800px) {
+  .stage-wrap { padding:8px; }
+  .stage { width:100%; }
+  .controls { padding:0 8px; height:54px; flex-basis:54px; gap:5px; }
+  .control-btn { padding:8px 9px; font-size:10px; }
+  .hint { display:none; }
+  .slide { padding-left:5%; padding-right:5%; }
+}
+@media (max-width:560px) {
+  .stage-wrap { padding:0; }
+  .stage { width:100%; box-shadow:none; }
+  .controls { flex-wrap:wrap; height:70px; flex-basis:70px; justify-content:center; }
+  .control-right { gap:5px; }
+  .control-btn { padding:6px 8px; }
+  .statement { max-width:95%; }
+}
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none !important; transition:none !important; } }
+@media print {
+  html,body,.deck { height:auto; overflow:visible; background:#fff; }
+  .topline,.controls,.overlay { display:none !important; }
+  .stage-wrap { display:block; padding:0; }
+  .stage { width:100%; aspect-ratio:auto; overflow:visible; box-shadow:none; }
+  .slide,.slide.active { display:flex !important; position:relative; inset:auto; width:100%; aspect-ratio:16/9; page-break-after:always; animation:none; }
+}
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+  <div class="topline" aria-hidden="true"><span id="progress"></span></div>
+  <div class="stage-wrap">
+    <main class="stage" id="stage" aria-label="Revenant L.O.S.T 발표 자료">
+      <section class="slide cover active" data-title="Revenant : L.O.S.T">
+        <div class="eyebrow">PROJECT / 01</div>
+        <h1>Revenant : L.O.S.T</h1>
+        <p class="expansion">Line-behind Overwatch &amp; Strike Team</p>
+        <p class="coverline">적진 후방 침투 · 시설 무력화 · 전선 변화</p>
+        <div class="genre">TOP-DOWN ACTION&nbsp;&nbsp; / &nbsp;&nbsp;STEALTH&nbsp;&nbsp; / &nbsp;&nbsp;SHOOTER</div>
+      </section>
+
+      <section class="slide" data-title="적진 후방을 홀로 돌파한다.">
+        <div class="brandline"><span>REVENANT : L.O.S.T</span><span>CONCEPT</span></div>
+        <div class="slide-head">
+          <h2 class="slide-title">적진 후방을 홀로 돌파한다.</h2>
+          <p class="slide-sub">주요 시설을 무력화하고, 작전 결과로 변화하는 적의 대응을 뚫는다.</p>
+          <div class="accent-rule"></div>
+        </div>
+        <div class="body">
+          <p class="statement">전설적인 용병 한 명이 여러 작전 지역에 침투한다.<br>잠입과 정면 전투를 모두 활용해 목표를 달성한다.</p>
+          <div class="pillars">
+            <div class="pillar"><span class="num">01</span><h3>침투</h3><p>적의 감시를 피해 작전 지역으로 접근</p></div>
+            <div class="pillar"><span class="num">02</span><h3>무력화</h3><p>시설 파괴, 주요 인물 제거, 물자 확보</p></div>
+            <div class="pillar"><span class="num">03</span><h3>변화</h3><p>작전 결과가 다음 지역에 반영</p></div>
+          </div>
+        </div>
+        <div class="slide-foot"><span>PROJECT BRIEF</span><b>02 / 09</b></div>
+      </section>
+
+      <section class="slide" data-title="작전은 하나의 흐름으로 이어진다.">
+        <div class="brandline"><span>REVENANT : L.O.S.T</span><span>GAMEPLAY</span></div>
+        <div class="slide-head">
+          <h2 class="slide-title">작전은 하나의 흐름으로 이어진다.</h2>
+          <p class="slide-sub">준비부터 결과 반영까지, 한 번의 작전이 다음 상황을 만든다.</p>
+          <div class="accent-rule"></div>
+        </div>
+        <div class="body">
+          <div class="flow">
+            <div class="flow-item"><span class="num">01</span><h3>준비</h3><p>목표와 장비<br>확인</p></div>
+            <div class="flow-item"><span class="num">02</span><h3>침투</h3><p>시야와 소음<br>관리</p></div>
+            <div class="flow-item"><span class="num">03</span><h3>목표 수행</h3><p>시설·인물<br>처리</p></div>
+            <div class="flow-item"><span class="num">04</span><h3>탈출</h3><p>추격과 수색<br>돌파</p></div>
+            <div class="flow-item"><span class="num">05</span><h3>결과 반영</h3><p>다음 지역에<br>적용</p></div>
+          </div>
+          <div class="bottom-callout">발각은 즉시 실패를 뜻하지 않는다.</div>
+        </div>
+        <div class="slide-foot"><span>PROJECT BRIEF</span><b>03 / 09</b></div>
+      </section>
+
+      <section class="slide" data-title="잠입과 전투, 둘 다 선택지다.">
+        <div class="brandline"><span>REVENANT : L.O.S.T</span><span>PLAYSTYLE</span></div>
+        <div class="slide-head">
+          <h2 class="slide-title">잠입과 전투, 둘 다 선택지다.</h2>
+          <p class="slide-sub">작전 목표는 유지된다. 접근 방식은 플레이어가 선택한다.</p>
+          <div class="accent-rule"></div>
+        </div>
+        <div class="split">
+          <div class="split-panel">
+            <span class="tag">STEALTH</span><h3>조용히 접근한다.</h3>
+            <ul><li>시야 밖으로 이동</li><li>소음기와 연막 활용</li><li>의심도를 관리</li></ul>
+          </div>
+          <div class="split-panel dark">
+            <span class="tag">COMBAT</span><h3>전투로 돌파한다.</h3>
+            <ul><li>총기별 화력과 사거리</li><li>엄폐와 우회</li><li>제압 사격으로 압박</li></ul>
+          </div>
+        </div>
+        <div class="slide-foot"><span>PROJECT BRIEF</span><b>04 / 09</b></div>
+      </section>
+
+      <section class="slide" data-title="적은 플레이어의 위치를 항상 알지 못한다.">
+        <div class="brandline"><span>REVENANT : L.O.S.T</span><span>ENEMY AI</span></div>
+        <div class="slide-head">
+          <h2 class="slide-title">적은 플레이어의 위치를 항상 알지 못한다.</h2>
+          <p class="slide-sub">직접 목격한 정보와 소리, 마지막 목격 위치를 바탕으로 행동한다.</p>
+          <div class="accent-rule"></div>
+        </div>
+        <div class="body">
+          <div class="stateflow">
+            <div class="state"><span class="num">01</span><h3>목격</h3><p>위치 확인</p></div>
+            <div class="state"><span class="num">02</span><h3>교전</h3><p>전투 행동</p></div>
+            <div class="state"><span class="num">03</span><h3>시야 상실</h3><p>정보 유지</p></div>
+            <div class="state"><span class="num">04</span><h3>수색</h3><p>마지막 위치</p></div>
+          </div>
+          <div class="state-tags"><span>대기</span><span>순찰</span><span>경계</span><span>전투</span><span>수색</span></div>
+        </div>
+        <div class="slide-foot"><span>PROJECT BRIEF</span><b>05 / 09</b></div>
+      </section>
+
+      <section class="slide" data-title="시설마다 전장의 조건이 달라진다.">
+        <div class="brandline"><span>REVENANT : L.O.S.T</span><span>FACILITIES</span></div>
+        <div class="slide-head">
+          <h2 class="slide-title">시설마다 전장의 조건이 달라진다.</h2>
+          <p class="slide-sub">각 시설은 현장 효과와 캠페인 효과를 함께 가진다.</p>
+          <div class="accent-rule"></div>
+        </div>
+        <div class="body facility-list">
+          <div class="facility-row"><span class="num">01</span><strong>HQ</strong><span>지휘·경계 능력 저하</span></div>
+          <div class="facility-row"><span class="num">02</span><strong>통신탑</strong><span>주변 지원 요청 차단</span></div>
+          <div class="facility-row"><span class="num">03</span><strong>물류창고</strong><span>적 보급·장비 수준 저하</span></div>
+          <div class="facility-row"><span class="num">04</span><strong>초소</strong><span>지역 감시 능력 약화</span></div>
+          <div class="facility-row"><span class="num">05</span><strong>대공시설</strong><span>항공 지원 조건 해제</span></div>
+        </div>
+        <div class="slide-foot"><span>PROJECT BRIEF</span><b>06 / 09</b></div>
+      </section>
+
+      <section class="slide" data-title="작전 결과는 다음 지역에 남는다.">
+        <div class="brandline"><span>REVENANT : L.O.S.T</span><span>CAMPAIGN</span></div>
+        <div class="slide-head">
+          <h2 class="slide-title">작전 결과는 다음 지역에 남는다.</h2>
+          <p class="slide-sub">시설을 어떻게 처리했는지가 이후 적의 대응과 작전 선택지를 바꾼다.</p>
+          <div class="accent-rule"></div>
+        </div>
+        <div class="body">
+          <div class="campaign-grid">
+            <div class="campaign-item"><span class="num">01</span><div><h3>통신</h3><p>지원 요청과 명령 전달 제한</p></div></div>
+            <div class="campaign-item"><span class="num">02</span><div><h3>보급</h3><p>적 장비와 방어 수준 저하</p></div></div>
+            <div class="campaign-item"><span class="num">03</span><div><h3>감시</h3><p>초소 무력화로 탐지 범위 축소</p></div></div>
+            <div class="campaign-item"><span class="num">04</span><div><h3>대공</h3><p>방공 시설 파괴 후 항공 지원</p></div></div>
+          </div>
+          <p class="bottom-callout" style="font-size:clamp(12px,1.3vw,18px);">작전 결과는 저장되고, 후속 작전에 반영된다.</p>
+        </div>
+        <div class="slide-foot"><span>PROJECT BRIEF</span><b>07 / 09</b></div>
+      </section>
+
+      <section class="slide" data-title="게임의 중심은 세 시스템의 연결이다.">
+        <div class="brandline"><span>REVENANT : L.O.S.T</span><span>CORE</span></div>
+        <div class="slide-head">
+          <h2 class="slide-title">게임의 중심은 세 시스템의 연결이다.</h2>
+          <p class="slide-sub">각 시스템은 따로 존재하는 기능이 아니라 하나의 작전 경험을 만든다.</p>
+          <div class="accent-rule"></div>
+        </div>
+        <div class="body">
+          <div class="pillars" style="margin-top:5%; border-top:0;">
+            <div class="pillar"><span class="num">01</span><h3>소음과 시야</h3><p>침투 경로와 발각 위험을 결정한다.</p></div>
+            <div class="pillar"><span class="num">02</span><h3>정보 기반 AI</h3><p>마지막 목격 위치를 중심으로 교전·수색한다.</p></div>
+            <div class="pillar"><span class="num">03</span><h3>지속되는 결과</h3><p>시설 상태가 이후 작전 환경을 바꾼다.</p></div>
+          </div>
+        </div>
+        <div class="slide-foot"><span>PROJECT BRIEF</span><b>08 / 09</b></div>
+      </section>
+
+      <section class="slide" data-title="전투에서 캠페인까지 단계적으로 연결한다.">
+        <div class="brandline"><span>REVENANT : L.O.S.T</span><span>DEVELOPMENT</span></div>
+        <div class="slide-head">
+          <h2 class="slide-title">전투에서 캠페인까지 단계적으로 연결한다.</h2>
+          <p class="slide-sub">기능 의존성을 고려해 기반 시스템부터 순서대로 통합한다.</p>
+          <div class="accent-rule"></div>
+        </div>
+        <div class="body">
+          <div class="dev-grid">
+            <div class="dev-item"><span class="num">01</span><h3>기본 전투</h3><p>이동 · 충돌<br>HP · 무기</p></div>
+            <div class="dev-item"><span class="num">02</span><h3>잠입 감지</h3><p>시야 · 소음<br>의심도</p></div>
+            <div class="dev-item"><span class="num">03</span><h3>전술 AI</h3><p>목격 정보<br>수색 · 제압</p></div>
+            <div class="dev-item"><span class="num">04</span><h3>작전·캠페인</h3><p>시설 · 임무<br>저장</p></div>
+          </div>
+          <div class="dark-band"><strong>PYTHON&nbsp; / &nbsp;PICO2D</strong><span>핵심 경험을 먼저 완성하고, 작전 규모를 확장한다.</span></div>
+        </div>
+        <div class="slide-foot"><span>PROJECT BRIEF</span><b>09 / 09</b></div>
+      </section>
+    </main>
+  </div>
+  <nav class="controls" aria-label="프레젠테이션 컨트롤">
+    <div class="control-left">
+      <button class="control-btn" id="prev" type="button" aria-label="이전 슬라이드">←</button>
+      <button class="control-btn" id="next" type="button" aria-label="다음 슬라이드">→</button>
+      <span class="counter" id="counter">01 / 09</span>
+      <span class="timer" id="timer" aria-live="off">01:30</span>
+    </div>
+    <div class="control-right">
+      <span class="hint">← → 이동 · F 전체 화면 · G 목차 · P 90초 진행</span>
+      <button class="control-btn" id="overviewBtn" type="button">목차</button>
+      <button class="control-btn" id="fullscreenBtn" type="button">전체 화면</button>
+      <button class="control-btn primary" id="playBtn" type="button">90초 진행</button>
+    </div>
+  </nav>
+</div>
+
+<div class="overlay" id="overview" role="dialog" aria-modal="true" aria-label="슬라이드 목차">
+  <div class="overlay-head"><h2>슬라이드 목차</h2><button class="control-btn" id="closeOverview" type="button">닫기 ✕</button></div>
+  <div class="overview-grid" id="overviewGrid"></div>
+</div>
+<div class="overlay" id="help" role="dialog" aria-modal="true" aria-label="키보드 조작 도움말">
+  <div class="overlay-head"><h2>조작 방법</h2><button class="control-btn" id="closeHelp" type="button">닫기 ✕</button></div>
+  <div class="help-list">
+    <div><b>← / →</b> 이전·다음 슬라이드</div>
+    <div><b>Space</b> 다음 슬라이드</div>
+    <div><b>Home / End</b> 첫 장 / 마지막 장</div>
+    <div><b>F</b> 전체 화면</div>
+    <div><b>G</b> 슬라이드 목차</div>
+    <div><b>P</b> 90초 자동 진행 시작 / 일시정지</div>
+    <div><b>R</b> 처음으로</div>
+    <div><b>?</b> 이 도움말</div>
+    <div><b>터치</b> 좌우 스와이프로 이동</div>
+  </div>
+</div>
+<script>
+(() => {
+  const slides = [...document.querySelectorAll('.slide')];
+  const progress = document.getElementById('progress');
+  const counter = document.getElementById('counter');
+  const timer = document.getElementById('timer');
+  const playBtn = document.getElementById('playBtn');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const overview = document.getElementById('overview');
+  const overviewGrid = document.getElementById('overviewGrid');
+  const help = document.getElementById('help');
+  let index = 0;
+  let playing = false;
+  let startedAt = 0;
+  let elapsedBeforePause = 0;
+  let ticker = null;
+  const TOTAL_MS = 90000;
+  const SLIDE_MS = TOTAL_MS / slides.length;
+
+  function fmt(ms) {
+    const seconds = Math.max(0, Math.ceil(ms / 1000));
+    return `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`;
+  }
+  function show(i, manual = false) {
+    index = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach((slide, n) => {
+      slide.classList.toggle('active', n === index);
+      slide.setAttribute('aria-hidden', n === index ? 'false' : 'true');
+    });
+    counter.textContent = `${String(index + 1).padStart(2,'0')} / ${String(slides.length).padStart(2,'0')}`;
+    progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+    prevBtn.disabled = index === 0;
+    nextBtn.disabled = index === slides.length - 1;
+    document.title = `${slides[index].dataset.title || 'Revenant : L.O.S.T'} — Revenant : L.O.S.T`;
+    if (manual && playing) stopTimer(true);
+  }
+  function stopTimer(reset = false) {
+    playing = false;
+    if (ticker) clearInterval(ticker);
+    ticker = null;
+    if (reset) elapsedBeforePause = 0;
+    playBtn.textContent = '90초 진행';
+    timer.textContent = fmt(TOTAL_MS - elapsedBeforePause);
+  }
+  function updateTimer() {
+    const elapsed = elapsedBeforePause + (playing ? Date.now() - startedAt : 0);
+    const remaining = Math.max(0, TOTAL_MS - elapsed);
+    timer.textContent = fmt(remaining);
+    const target = Math.min(slides.length - 1, Math.floor(elapsed / SLIDE_MS));
+    if (target !== index) show(target, false);
+    if (elapsed >= TOTAL_MS) {
+      elapsedBeforePause = TOTAL_MS;
+      stopTimer(false);
+      timer.textContent = '00:00';
+      playBtn.textContent = '90초 완료';
+      show(slides.length - 1, false);
+    }
+  }
+  function togglePlay() {
+    if (playing) {
+      elapsedBeforePause += Date.now() - startedAt;
+      stopTimer(false);
+      return;
+    }
+    if (elapsedBeforePause >= TOTAL_MS) {
+      elapsedBeforePause = 0;
+      show(0, false);
+    }
+    playing = true;
+    startedAt = Date.now();
+    playBtn.textContent = '일시정지';
+    updateTimer();
+    ticker = setInterval(updateTimer, 100);
+  }
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  }
+  function openOverview() {
+    overview.classList.add('open');
+    help.classList.remove('open');
+  }
+  function closeOverlays() {
+    overview.classList.remove('open');
+    help.classList.remove('open');
+  }
+
+  slides.forEach((slide, n) => {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'thumb';
+    btn.innerHTML = `<span>${String(n+1).padStart(2,'0')}</span><strong>${slide.dataset.title || 'Revenant : L.O.S.T'}</strong>`;
+    btn.addEventListener('click', () => { show(n, true); closeOverlays(); });
+    overviewGrid.appendChild(btn);
+  });
+  prevBtn.addEventListener('click', () => show(index - 1, true));
+  nextBtn.addEventListener('click', () => show(index + 1, true));
+  playBtn.addEventListener('click', togglePlay);
+  document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
+  document.getElementById('overviewBtn').addEventListener('click', openOverview);
+  document.getElementById('closeOverview').addEventListener('click', closeOverlays);
+  document.getElementById('closeHelp').addEventListener('click', closeOverlays);
+
+  document.addEventListener('keydown', (e) => {
+    if (['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    if (e.key === 'Escape') { closeOverlays(); return; }
+    if (overview.classList.contains('open') || help.classList.contains('open')) return;
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); show(index + 1, true); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); show(index - 1, true); }
+    else if (e.key === 'Home') { show(0, true); }
+    else if (e.key === 'End') { show(slides.length - 1, true); }
+    else if (e.key.toLowerCase() === 'f') { toggleFullscreen(); }
+    else if (e.key.toLowerCase() === 'g') { openOverview(); }
+    else if (e.key.toLowerCase() === 'p') { togglePlay(); }
+    else if (e.key.toLowerCase() === 'r') { stopTimer(true); show(0, false); timer.textContent = '01:30'; }
+    else if (e.key === '?') { help.classList.add('open'); }
+  });
+
+  let touchX = null;
+  const stage = document.getElementById('stage');
+  stage.addEventListener('touchstart', e => { touchX = e.changedTouches[0].clientX; }, {passive:true});
+  stage.addEventListener('touchend', e => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 45) show(index + (dx < 0 ? 1 : -1), true);
+    touchX = null;
+  }, {passive:true});
+
+  show(0, false);
+  timer.textContent = '01:30';
+})();
+</script>
+</body>
+</html>
