@@ -1,0 +1,83 @@
+{
+  "width": 6,
+  "height": 6,
+  "infinite": false,
+  "layers": [
+    {
+      "data": [1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      "height": 6,
+      "id": 1,
+      "name": "Collision",
+      "type": "tilelayer",
+      "width": 6,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "data": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "height": 6,
+      "id": 2,
+      "name": "Occluder",
+      "type": "tilelayer",
+      "width": 6,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "data": [0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "height": 6,
+      "id": 3,
+      "name": "Decoration",
+      "type": "tilelayer",
+      "width": 6,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "draworder": "topdown",
+      "id": 4,
+      "name": "WallEdges",
+      "objects": [
+        {"class": "wall_edge", "id": 7, "name": "wall_edge", "point": true, "properties": [{"name": "cell_x", "type": "int", "value": 2}, {"name": "cell_y", "type": "int", "value": 2}, {"name": "edge", "type": "string", "value": "east"}, {"name": "thickness_m", "type": "float", "value": 0.375}], "type": "", "x": 128, "y": 128}
+      ],
+      "type": "objectgroup",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "draworder": "topdown",
+      "id": 5,
+      "name": "AI",
+      "objects": [
+        {"class": "connector", "id": 1, "name": "north_road", "point": true, "properties": [{"name": "connector_type", "type": "string", "value": "road"}, {"name": "direction", "type": "string", "value": "north"}], "type": "", "x": 192, "y": 0},
+        {"class": "enemy_spawn", "id": 2, "name": "guard_spawn", "point": true, "properties": [{"name": "archetype", "type": "string", "value": "rifleman"}, {"name": "group_id", "type": "string", "value": "hq_guard"}], "type": "", "x": 160, "y": 160},
+        {"class": "patrol_node", "id": 3, "name": "patrol_1", "point": true, "properties": [{"name": "route_id", "type": "string", "value": "outer_patrol"}, {"name": "order", "type": "int", "value": 0}, {"name": "wait_seconds", "type": "float", "value": 1.5}], "type": "", "x": 96, "y": 96},
+        {"class": "patrol_node", "id": 4, "name": "patrol_2", "point": true, "properties": [{"name": "route_id", "type": "string", "value": "outer_patrol"}, {"name": "order", "type": "int", "value": 1}], "type": "", "x": 288, "y": 96},
+        {"class": "cover_point", "id": 5, "name": "sandbag_cover", "point": true, "properties": [{"name": "quality", "type": "int", "value": 2}, {"name": "facing_degrees", "type": "float", "value": 180}], "type": "", "x": 224, "y": 224},
+        {"class": "door", "height": 64, "id": 6, "name": "main_door", "properties": [{"name": "blocks_movement", "type": "bool", "value": true}, {"name": "blocks_vision", "type": "bool", "value": true}, {"name": "blocks_sound", "type": "bool", "value": true}], "type": "", "width": 64, "x": 160, "y": 0}
+      ],
+      "type": "objectgroup",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "nextlayerid": 6,
+  "nextobjectid": 8,
+  "orientation": "orthogonal",
+  "properties": [
+    {"name": "module_id", "type": "string", "value": "sample_hq"},
+    {"name": "module_type", "type": "string", "value": "facility"},
+    {"name": "variant_id", "type": "string", "value": "hq_01"},
+    {"name": "facility_type", "type": "string", "value": "hq"},
+    {"name": "allowed_region_sizes", "type": "string", "value": "[\"medium\", \"large\"]"},
+    {"name": "allowed_importance_tiers", "type": "string", "value": "[\"important\", \"core\"]"},
+    {"name": "supports", "type": "string", "value": "[\"command\", \"communication\"]"},
+    {"name": "has_vehicle_entry", "type": "bool", "value": true},
+    {"name": "attached_watchposts", "type": "int", "value": 2}
+  ],
+  "renderorder": "right-down",
+  "tileheight": 32,
+  "tilewidth": 32,
+  "type": "map",
+  "version": "1.10"
+}

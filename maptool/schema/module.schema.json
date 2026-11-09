@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revenant-lost.local/schema/module.runtime.json",
+  "title": "Revenant LOST Runtime Module",
+  "type": "object",
+  "required": ["format", "format_version", "coordinate_system", "module", "facility", "bounds", "visual_layers", "geometry", "navigation", "tactical", "interactions", "enemy", "routes"],
+  "properties": {
+    "format": {"const": "revenant_lost.module"},
+    "format_version": {"type": "integer", "minimum": 1},
+    "coordinate_system": {"type": "object"},
+    "module": {"type": "object"},
+    "facility": {"type": ["object", "null"]},
+    "bounds": {"type": "object"},
+    "visual_layers": {"type": "object"},
+    "geometry": {"type": "object"},
+    "navigation": {"type": "object"},
+    "tactical": {"type": "object"},
+    "interactions": {"type": "array"},
+    "enemy": {"type": "object"},
+    "routes": {"type": "object"}
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "width": 12,
+  "height": 8,
+  "infinite": false,
+  "layers": [
+    {
+      "data": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      "height": 8,
+      "id": 1,
+      "name": "Ground",
+      "type": "tilelayer",
+      "width": 12,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "data": [1,1,1,1,1,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      "height": 8,
+      "id": 2,
+      "name": "Architecture",
+      "type": "tilelayer",
+      "width": 12,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "data": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      "height": 8,
+      "id": 3,
+      "name": "Decoration",
+      "type": "tilelayer",
+      "width": 12,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "draworder": "topdown",
+      "id": 4,
+      "name": "Objects",
+      "objects": [
+        {"class":"door","id":1,"name":"main_door","height":32,"properties":[{"name":"asset_id","type":"string","value":"door_default"},{"name":"orientation","type":"string","value":"horizontal"},{"name":"hinge","type":"string","value":"left"},{"name":"state","type":"string","value":"closed"},{"name":"access","type":"string","value":"free"},{"name":"locked","type":"bool","value":false},{"name":"closed_angle","type":"float","value":0},{"name":"open_angle","type":"float","value":90}],"type":"","width":64,"x":160,"y":0},
+        {"class":"enemy_spawn","id":2,"name":"guard_spawn","point":true,"properties":[{"name":"archetype","type":"string","value":"rifleman"},{"name":"group_id","type":"string","value":"facility_guard"}],"type":"","x":176,"y":112},
+        {"class":"patrol_node","id":3,"name":"patrol_a","point":true,"properties":[{"name":"route_id","type":"string","value":"inner_patrol"},{"name":"order","type":"int","value":0}],"type":"","x":80,"y":112},
+        {"class":"patrol_node","id":4,"name":"patrol_b","point":true,"properties":[{"name":"route_id","type":"string","value":"inner_patrol"},{"name":"order","type":"int","value":1}],"type":"","x":272,"y":112}
+      ],
+      "type":"objectgroup","x":0,"y":0
+    },
+    {
+      "draworder":"topdown",
+      "id":5,
+      "name":"Navigation",
+      "objects":[
+        {"class":"nav_node","id":5,"name":"nav_1","point":true,"properties":[{"name":"node_id","type":"string","value":"nav_1"},{"name":"node_kind","type":"string","value":"room"}],"type":"","x":80,"y":112},
+        {"class":"nav_node","id":6,"name":"nav_2","point":true,"properties":[{"name":"node_id","type":"string","value":"nav_2"},{"name":"node_kind","type":"string","value":"corridor"}],"type":"","x":176,"y":112},
+        {"class":"nav_node","id":7,"name":"nav_3","point":true,"properties":[{"name":"node_id","type":"string","value":"nav_3"},{"name":"node_kind","type":"string","value":"room"}],"type":"","x":304,"y":112},
+        {"class":"nav_node","id":8,"name":"nav_4","point":true,"properties":[{"name":"node_id","type":"string","value":"nav_4"},{"name":"node_kind","type":"string","value":"room"}],"type":"","x":304,"y":208}
+      ],
+      "type":"objectgroup","x":0,"y":0
+    },
+    {
+      "draworder":"topdown",
+      "id":6,
+      "name":"NavigationEdges",
+      "objects":[
+        {"class":"nav_edge","id":9,"name":"edge","point":true,"properties":[{"name":"from_id","type":"string","value":"nav_1"},{"name":"to_id","type":"string","value":"nav_2"},{"name":"mode","type":"string","value":"preferred"},{"name":"cost","type":"float","value":1.0}],"type":"","x":80,"y":112},
+        {"class":"nav_edge","id":10,"name":"edge","point":true,"properties":[{"name":"from_id","type":"string","value":"nav_2"},{"name":"to_id","type":"string","value":"nav_3"},{"name":"mode","type":"string","value":"normal"},{"name":"cost","type":"float","value":1.0}],"type":"","x":176,"y":112},
+        {"class":"nav_edge","id":11,"name":"edge","point":true,"properties":[{"name":"from_id","type":"string","value":"nav_3"},{"name":"to_id","type":"string","value":"nav_4"},{"name":"mode","type":"string","value":"avoid"},{"name":"cost","type":"float","value":3.0}],"type":"","x":304,"y":112}
+      ],
+      "type":"objectgroup","x":0,"y":0
+    }
+  ],
+  "nextlayerid":7,
+  "nextobjectid":12,
+  "orientation":"orthogonal",
+  "properties":[
+    {"name":"module_id","type":"string","value":"small_facility_01"},
+    {"name":"module_type","type":"string","value":"facility"},
+    {"name":"variant_id","type":"string","value":"facility_01"},
+    {"name":"facility_type","type":"string","value":"garrison"},
+    {"name":"wall_thickness_m","type":"float","value":0.375}
+  ],
+  "renderorder":"right-down",
+  "tileheight":32,
+  "tilewidth":32,
+  "tilesets":[],
+  "type":"map",
+  "version":"1.10"
+}

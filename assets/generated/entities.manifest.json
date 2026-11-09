@@ -1,0 +1,29 @@
+{
+  "format": "revenant_lost.entities",
+  "assets": [
+    {
+      "asset_id": "door_door_wood_horizontal_64x32",
+      "category": "door",
+      "file": "entities/door_door_wood_horizontal_64x32.png",
+      "width_tiles": 2,
+      "height_tiles": 1,
+      "recommended_span_tiles": 2
+    },
+    {
+      "asset_id": "window_glass_window_broken",
+      "category": "window",
+      "file": "entities/window_glass_window_broken.png",
+      "width_tiles": 1,
+      "height_tiles": 1,
+      "recommended_span_tiles": 1
+    },
+    {
+      "asset_id": "window_glass_window_intact",
+      "category": "window",
+      "file": "entities/window_glass_window_intact.png",
+      "width_tiles": 1,
+      "height_tiles": 1,
+      "recommended_span_tiles": 1
+    }
+  ]
+}

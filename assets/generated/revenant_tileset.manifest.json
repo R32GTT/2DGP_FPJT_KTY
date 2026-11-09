@@ -1,0 +1,708 @@
+{
+  "format": "revenant_lost.tileset",
+  "format_version": 1,
+  "tile_size_px": 32,
+  "tile_size_m": 0.5,
+  "pixels_per_meter": 64,
+  "atlas_size_px": 2048,
+  "regions": {
+    "ground": [
+      0,
+      0,
+      32,
+      16
+    ],
+    "road": [
+      32,
+      0,
+      32,
+      16
+    ],
+    "wall": [
+      0,
+      16,
+      32,
+      16
+    ],
+    "opening": [
+      32,
+      16,
+      32,
+      16
+    ],
+    "decoration": [
+      0,
+      32,
+      64,
+      32
+    ]
+  },
+  "wall_thickness_px": 24,
+  "wall_thickness_m": 0.375,
+  "tiles": [
+    {
+      "gid": 1,
+      "category": "ground",
+      "name": "concrete_floor_01",
+      "variant": "",
+      "column": 0,
+      "row": 0
+    },
+    {
+      "gid": 2,
+      "category": "ground",
+      "name": "grass_01",
+      "variant": "",
+      "column": 1,
+      "row": 0
+    },
+    {
+      "gid": 3,
+      "category": "ground",
+      "name": "ground_dirt_256x256",
+      "variant": "",
+      "column": 2,
+      "row": 0
+    },
+    {
+      "gid": 4,
+      "category": "ground",
+      "name": "indoor_floor_01",
+      "variant": "",
+      "column": 3,
+      "row": 0
+    },
+    {
+      "gid": 33,
+      "category": "road",
+      "name": "asphalt_damaged_01",
+      "variant": "",
+      "column": 32,
+      "row": 0
+    },
+    {
+      "gid": 34,
+      "category": "road",
+      "name": "concrete_road_01",
+      "variant": "",
+      "column": 33,
+      "row": 0
+    },
+    {
+      "gid": 35,
+      "category": "road",
+      "name": "dirt_road_01",
+      "variant": "",
+      "column": 34,
+      "row": 0
+    },
+    {
+      "gid": 36,
+      "category": "road",
+      "name": "road_256x256",
+      "variant": "",
+      "column": 35,
+      "row": 0
+    },
+    {
+      "gid": 1025,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "north",
+      "wall_thickness_px": 24,
+      "column": 0,
+      "row": 16
+    },
+    {
+      "gid": 1026,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "east",
+      "wall_thickness_px": 24,
+      "column": 1,
+      "row": 16
+    },
+    {
+      "gid": 1027,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "south",
+      "wall_thickness_px": 24,
+      "column": 2,
+      "row": 16
+    },
+    {
+      "gid": 1028,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "west",
+      "wall_thickness_px": 24,
+      "column": 3,
+      "row": 16
+    },
+    {
+      "gid": 1029,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "north_east",
+      "wall_thickness_px": 24,
+      "column": 4,
+      "row": 16
+    },
+    {
+      "gid": 1030,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "east_south",
+      "wall_thickness_px": 24,
+      "column": 5,
+      "row": 16
+    },
+    {
+      "gid": 1031,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "south_west",
+      "wall_thickness_px": 24,
+      "column": 6,
+      "row": 16
+    },
+    {
+      "gid": 1032,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "west_north",
+      "wall_thickness_px": 24,
+      "column": 7,
+      "row": 16
+    },
+    {
+      "gid": 1033,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "north_south",
+      "wall_thickness_px": 24,
+      "column": 8,
+      "row": 16
+    },
+    {
+      "gid": 1034,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "east_west",
+      "wall_thickness_px": 24,
+      "column": 9,
+      "row": 16
+    },
+    {
+      "gid": 1035,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "north_east_south",
+      "wall_thickness_px": 24,
+      "column": 10,
+      "row": 16
+    },
+    {
+      "gid": 1036,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "east_south_west",
+      "wall_thickness_px": 24,
+      "column": 11,
+      "row": 16
+    },
+    {
+      "gid": 1037,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "south_west_north",
+      "wall_thickness_px": 24,
+      "column": 12,
+      "row": 16
+    },
+    {
+      "gid": 1038,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "west_north_east",
+      "wall_thickness_px": 24,
+      "column": 13,
+      "row": 16
+    },
+    {
+      "gid": 1039,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "brick_wall_01",
+      "variant": "north_east_south_west",
+      "wall_thickness_px": 24,
+      "column": 14,
+      "row": 16
+    },
+    {
+      "gid": 1040,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "north",
+      "wall_thickness_px": 24,
+      "column": 15,
+      "row": 16
+    },
+    {
+      "gid": 1041,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "east",
+      "wall_thickness_px": 24,
+      "column": 16,
+      "row": 16
+    },
+    {
+      "gid": 1042,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "south",
+      "wall_thickness_px": 24,
+      "column": 17,
+      "row": 16
+    },
+    {
+      "gid": 1043,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "west",
+      "wall_thickness_px": 24,
+      "column": 18,
+      "row": 16
+    },
+    {
+      "gid": 1044,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "north_east",
+      "wall_thickness_px": 24,
+      "column": 19,
+      "row": 16
+    },
+    {
+      "gid": 1045,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "east_south",
+      "wall_thickness_px": 24,
+      "column": 20,
+      "row": 16
+    },
+    {
+      "gid": 1046,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "south_west",
+      "wall_thickness_px": 24,
+      "column": 21,
+      "row": 16
+    },
+    {
+      "gid": 1047,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "west_north",
+      "wall_thickness_px": 24,
+      "column": 22,
+      "row": 16
+    },
+    {
+      "gid": 1048,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "north_south",
+      "wall_thickness_px": 24,
+      "column": 23,
+      "row": 16
+    },
+    {
+      "gid": 1049,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "east_west",
+      "wall_thickness_px": 24,
+      "column": 24,
+      "row": 16
+    },
+    {
+      "gid": 1050,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "north_east_south",
+      "wall_thickness_px": 24,
+      "column": 25,
+      "row": 16
+    },
+    {
+      "gid": 1051,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "east_south_west",
+      "wall_thickness_px": 24,
+      "column": 26,
+      "row": 16
+    },
+    {
+      "gid": 1052,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "south_west_north",
+      "wall_thickness_px": 24,
+      "column": 27,
+      "row": 16
+    },
+    {
+      "gid": 1053,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "west_north_east",
+      "wall_thickness_px": 24,
+      "column": 28,
+      "row": 16
+    },
+    {
+      "gid": 1054,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "half_wall_256x256",
+      "variant": "north_east_south_west",
+      "wall_thickness_px": 24,
+      "column": 29,
+      "row": 16
+    },
+    {
+      "gid": 1055,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "north",
+      "wall_thickness_px": 24,
+      "column": 30,
+      "row": 16
+    },
+    {
+      "gid": 1056,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "east",
+      "wall_thickness_px": 24,
+      "column": 31,
+      "row": 16
+    },
+    {
+      "gid": 1089,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "south",
+      "wall_thickness_px": 24,
+      "column": 0,
+      "row": 17
+    },
+    {
+      "gid": 1090,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "west",
+      "wall_thickness_px": 24,
+      "column": 1,
+      "row": 17
+    },
+    {
+      "gid": 1091,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "north_east",
+      "wall_thickness_px": 24,
+      "column": 2,
+      "row": 17
+    },
+    {
+      "gid": 1092,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "east_south",
+      "wall_thickness_px": 24,
+      "column": 3,
+      "row": 17
+    },
+    {
+      "gid": 1093,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "south_west",
+      "wall_thickness_px": 24,
+      "column": 4,
+      "row": 17
+    },
+    {
+      "gid": 1094,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "west_north",
+      "wall_thickness_px": 24,
+      "column": 5,
+      "row": 17
+    },
+    {
+      "gid": 1095,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "north_south",
+      "wall_thickness_px": 24,
+      "column": 6,
+      "row": 17
+    },
+    {
+      "gid": 1096,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "east_west",
+      "wall_thickness_px": 24,
+      "column": 7,
+      "row": 17
+    },
+    {
+      "gid": 1097,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "north_east_south",
+      "wall_thickness_px": 24,
+      "column": 8,
+      "row": 17
+    },
+    {
+      "gid": 1098,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "east_south_west",
+      "wall_thickness_px": 24,
+      "column": 9,
+      "row": 17
+    },
+    {
+      "gid": 1099,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "south_west_north",
+      "wall_thickness_px": 24,
+      "column": 10,
+      "row": 17
+    },
+    {
+      "gid": 1100,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "west_north_east",
+      "wall_thickness_px": 24,
+      "column": 11,
+      "row": 17
+    },
+    {
+      "gid": 1101,
+      "category": "wall",
+      "wall_type": "wall",
+      "name": "metal_wall_01",
+      "variant": "north_east_south_west",
+      "wall_thickness_px": 24,
+      "column": 12,
+      "row": 17
+    },
+    {
+      "gid": 1102,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "north",
+      "wall_thickness_px": 24,
+      "column": 13,
+      "row": 17
+    },
+    {
+      "gid": 1103,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "east",
+      "wall_thickness_px": 24,
+      "column": 14,
+      "row": 17
+    },
+    {
+      "gid": 1104,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "south",
+      "wall_thickness_px": 24,
+      "column": 15,
+      "row": 17
+    },
+    {
+      "gid": 1105,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "west",
+      "wall_thickness_px": 24,
+      "column": 16,
+      "row": 17
+    },
+    {
+      "gid": 1106,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "north_east",
+      "wall_thickness_px": 24,
+      "column": 17,
+      "row": 17
+    },
+    {
+      "gid": 1107,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "east_south",
+      "wall_thickness_px": 24,
+      "column": 18,
+      "row": 17
+    },
+    {
+      "gid": 1108,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "south_west",
+      "wall_thickness_px": 24,
+      "column": 19,
+      "row": 17
+    },
+    {
+      "gid": 1109,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "west_north",
+      "wall_thickness_px": 24,
+      "column": 20,
+      "row": 17
+    },
+    {
+      "gid": 1110,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "north_south",
+      "wall_thickness_px": 24,
+      "column": 21,
+      "row": 17
+    },
+    {
+      "gid": 1111,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "east_west",
+      "wall_thickness_px": 24,
+      "column": 22,
+      "row": 17
+    },
+    {
+      "gid": 1112,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "north_east_south",
+      "wall_thickness_px": 24,
+      "column": 23,
+      "row": 17
+    },
+    {
+      "gid": 1113,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "east_south_west",
+      "wall_thickness_px": 24,
+      "column": 24,
+      "row": 17
+    },
+    {
+      "gid": 1114,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "south_west_north",
+      "wall_thickness_px": 24,
+      "column": 25,
+      "row": 17
+    },
+    {
+      "gid": 1115,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "west_north_east",
+      "wall_thickness_px": 24,
+      "column": 26,
+      "row": 17
+    },
+    {
+      "gid": 1116,
+      "category": "half_wall",
+      "wall_type": "half_wall",
+      "name": "half_wall_256x256",
+      "variant": "north_east_south_west",
+      "wall_thickness_px": 24,
+      "column": 27,
+      "row": 17
+    }
+  ]
+}
