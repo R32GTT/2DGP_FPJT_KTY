@@ -69,6 +69,87 @@ def _property_list(properties: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _door_sprite_rotation(properties: dict[str, Any]) -> int:
+    """Return a counter-clockwise rotation for the door sprite.
+
+    The source door artwork is horizontal with its hinge on the right edge.
+    Horizontal doors rotate 180 degrees for a left hinge; vertical doors rotate
+    90/270 degrees so the hinge ends up on top/bottom.
+    """
+    orientation = str(properties.get("orientation", "horizontal")).lower()
+    hinge = str(properties.get("hinge", "left")).lower()
+    if orientation == "vertical":
+        return 90 if hinge in {"top", "left"} else 270
+    return 180 if hinge in {"left", "top"} else 0
+
+
+def _flood_fill(
+    grid: list[int],
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    target: int,
+    changed_cells: list[tuple[int, int]] | None = None,
+) -> int:
+    """Fill the 4-connected region at (x, y) with target and return the cell count."""
+    if not (0 <= x < width and 0 <= y < height):
+        return 0
+    source = grid[y * width + x]
+    if source == target:
+        return 0
+    stack = [(x, y)]
+    changed = 0
+    while stack:
+        cell_x, cell_y = stack.pop()
+        if not (0 <= cell_x < width and 0 <= cell_y < height):
+            continue
+        index = cell_y * width + cell_x
+        if grid[index] != source:
+            continue
+        grid[index] = target
+        changed += 1
+        if changed_cells is not None:
+            changed_cells.append((cell_x, cell_y))
+        stack.extend((
+            (cell_x + 1, cell_y),
+            (cell_x - 1, cell_y),
+            (cell_x, cell_y + 1),
+            (cell_x, cell_y - 1),
+        ))
+    return changed
+
+
+def _parse_property_value(text: str) -> Any:
+    value = text.strip()
+    lowered = value.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return text
+
+
+def _coerce_property_value(value: Any, original: Any) -> Any:
+    if isinstance(original, bool):
+        return bool(value)
+    if isinstance(original, int):
+        return int(str(value))
+    if isinstance(original, float):
+        return float(str(value))
+    if isinstance(original, (list, dict)):
+        parsed = json.loads(str(value))
+        if not isinstance(parsed, type(original)):
+            raise ValueError("속성 형식이 원래 값과 다릅니다.")
+        return parsed
+    return str(value)
+
+
 class MapEditor(tk.Tk):
     def __init__(self, map_path: Path | None = None) -> None:
         super().__init__()
@@ -111,6 +192,7 @@ class MapEditor(tk.Tk):
         }
 
         self.tool = tk.StringVar(value="ground")
+        self.tile_tool = tk.StringVar(value="brush")
         self.object_kind = tk.StringVar(value="enemy_spawn")
         self.door_orientation = tk.StringVar(value="horizontal")
         self.door_hinge = tk.StringVar(value="left")
@@ -151,8 +233,38 @@ class MapEditor(tk.Tk):
         ttk.Label(left, text="제작 모드").pack(anchor=tk.W)
         modes = ttk.Frame(left)
         modes.pack(fill=tk.X, pady=(2, 8))
-        for label, value in (("지면", "ground"), ("벽", "wall"), ("지우개", "erase"), ("오브젝트", "object"), ("이동 그래프", "navigation")):
-            ttk.Radiobutton(modes, text=label, value=value, variable=self.tool, command=self._mode_changed).pack(side=tk.LEFT)
+        for number, label, value in (
+            (1, "지면", "ground"),
+            (2, "벽", "wall"),
+            (3, "지우개", "erase"),
+            (4, "오브젝트", "object"),
+            (5, "이동 그래프", "navigation"),
+        ):
+            ttk.Radiobutton(
+                modes,
+                text=f"{number} {label}",
+                value=value,
+                variable=self.tool,
+                command=self._mode_changed,
+            ).pack(side=tk.LEFT)
+
+        tile_tool_frame = ttk.Frame(left)
+        tile_tool_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(tile_tool_frame, text="타일 도구:").pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            tile_tool_frame,
+            text="브러시(B)",
+            value="brush",
+            variable=self.tile_tool,
+            command=self._tile_tool_changed,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Radiobutton(
+            tile_tool_frame,
+            text="채우기(F)",
+            value="fill",
+            variable=self.tile_tool,
+            command=self._tile_tool_changed,
+        ).pack(side=tk.LEFT, padx=(4, 0))
 
         object_frame = ttk.Frame(left)
         object_frame.pack(fill=tk.X, pady=(0, 8))
@@ -222,7 +334,7 @@ class MapEditor(tk.Tk):
         )
         self.palette_filter_combo.pack(side=tk.LEFT, padx=4)
         self.palette_filter_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_palette())
-        self.palette = tk.Canvas(left, background="#303030", highlightthickness=0, height=560)
+        self.palette = tk.Canvas(left, background="#303030", highlightthickness=0, height=420)
         palette_scroll = ttk.Scrollbar(left, orient=tk.VERTICAL, command=self.palette.yview)
         self.palette.configure(yscrollcommand=palette_scroll.set)
         self.palette.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -244,6 +356,7 @@ class MapEditor(tk.Tk):
         self.map_canvas.bind("<B1-Motion>", self._map_drag)
         self.map_canvas.bind("<Button-3>", self._delete_object_at)
         self.map_canvas.bind("<Motion>", self._map_motion)
+        self.bind("<KeyPress>", self._on_key_press)
 
     def _new_map(self, width: int, height: int) -> None:
         self.width = width
@@ -511,7 +624,41 @@ class MapEditor(tk.Tk):
         refresh()
 
     def _mode_changed(self) -> None:
-        self.status.set(f"모드: {self.tool.get()}")
+        if self.tool.get() == "object":
+            self.status.set("오브젝트 모드: 클릭=설치/설정 편집, 우클릭=삭제")
+        else:
+            self.status.set(f"모드: {self.tool.get()} / 타일 도구: {self.tile_tool.get()}")
+
+    def _tile_tool_changed(self) -> None:
+        self.status.set(f"타일 도구: {self.tile_tool.get()}")
+
+    def _on_key_press(self, event: tk.Event) -> str | None:
+        if event.state & 0x4 or event.state & 0x20000:
+            return None
+        focus = self.focus_get()
+        if isinstance(focus, (tk.Entry, ttk.Entry, tk.Text, ttk.Combobox, tk.Spinbox, ttk.Spinbox)):
+            return None
+        keysym = event.keysym.lower()
+        mode_keys = {
+            "1": "ground", "kp_1": "ground",
+            "2": "wall", "kp_2": "wall",
+            "3": "erase", "kp_3": "erase",
+            "4": "object", "kp_4": "object",
+            "5": "navigation", "kp_5": "navigation",
+        }
+        if keysym in mode_keys:
+            self.tool.set(mode_keys[keysym])
+            self._mode_changed()
+            return "break"
+        if keysym == "b":
+            self.tile_tool.set("brush")
+            self._tile_tool_changed()
+            return "break"
+        if keysym == "f":
+            self.tile_tool.set("brush" if self.tile_tool.get() == "fill" else "fill")
+            self._tile_tool_changed()
+            return "break"
+        return None
 
     def set_zoom(self, value: int) -> None:
         self.view_tile_px = max(16, min(96, value))
@@ -526,15 +673,56 @@ class MapEditor(tk.Tk):
         return None
 
     def _map_click(self, event: tk.Event) -> None:
-        self._edit_cell(self._cell_from_event(event))
+        self.map_canvas.focus_set()
+        cell = self._cell_from_event(event)
+        if cell is None:
+            return
+        mode = self.tool.get()
+        if self.tile_tool.get() == "fill" and mode in {"ground", "wall", "decoration"}:
+            self._fill_tiles(cell[0], cell[1], mode)
+            return
+        self._edit_cell(cell)
 
     def _map_motion(self, event: tk.Event) -> None:
         self.preview_cell = self._cell_from_event(event)
         self._draw_preview()
 
     def _map_drag(self, event: tk.Event) -> None:
+        if self.tile_tool.get() == "fill":
+            return
         if self.tool.get() not in {"object", "navigation"}:
             self._edit_cell(self._cell_from_event(event))
+
+    def _fill_tiles(self, x: int, y: int, mode: str) -> None:
+        grid = {"ground": self.ground, "wall": self.architecture, "decoration": self.decoration}.get(mode)
+        if grid is None:
+            return
+        target = self.selected_tile
+        if target <= 0:
+            self.status.set("채우기: 팔레트에서 타일을 먼저 선택하세요.")
+            return
+        source = grid[y * self.width + x]
+        if source == target:
+            self.status.set("채우기: 이미 같은 타일입니다.")
+            return
+        changed_cells: list[tuple[int, int]] = []
+        changed = _flood_fill(grid, self.width, self.height, x, y, target, changed_cells)
+        if changed:
+            if mode == "wall":
+                for cell_x, cell_y in changed_cells:
+                    self._update_wall_edges(cell_x, cell_y, target)
+            self.refresh_map()
+            self.status.set(f"채우기: {changed}칸")
+        else:
+            self.status.set("채우기: 변경된 칸이 없습니다.")
+
+    def _object_at(self, x: int, y: int) -> dict[str, Any] | None:
+        for obj in reversed(self.objects):
+            width = max(1, int(obj.get("width", 0)))
+            height = max(1, int(obj.get("height", 0)))
+            if obj["x"] <= x < obj["x"] + width and obj["y"] <= y < obj["y"] + height:
+                return obj
+        return None
 
     def _delete_object_at(self, event: tk.Event) -> None:
         cell = self._cell_from_event(event)
@@ -552,13 +740,11 @@ class MapEditor(tk.Tk):
                 self.status.set(f"이동 노드 삭제: {node_id}")
                 self.refresh_map()
                 return
-        for index in range(len(self.objects) - 1, -1, -1):
-            obj = self.objects[index]
-            if obj["x"] == x and obj["y"] == y:
-                removed = self.objects.pop(index)
-                self.status.set(f"오브젝트 삭제: {removed['kind']}")
-                self.refresh_map()
-                return
+        obj = self._object_at(x, y)
+        if obj is not None:
+            self.objects.remove(obj)
+            self.status.set(f"오브젝트 삭제: {obj['kind']}")
+            self.refresh_map()
 
     def _edit_cell(self, cell: tuple[int, int] | None) -> None:
         if cell is None:
@@ -572,6 +758,7 @@ class MapEditor(tk.Tk):
             self.ground[index] = self.selected_tile
         elif mode == "wall" and self.selected_tile:
             self.architecture[index] = self.selected_tile
+            self._update_wall_edges(x, y, self.selected_tile)
         elif mode == "decoration" and self.selected_tile:
             self.decoration[index] = self.selected_tile
         elif mode == "erase":
@@ -585,8 +772,28 @@ class MapEditor(tk.Tk):
             else:
                 self.ground[index] = 0
         elif mode == "object":
-            self.place_object(x, y)
+            existing = self._object_at(x, y)
+            if existing is not None:
+                self.edit_object_dialog(existing)
+            else:
+                self.place_object(x, y)
         self.refresh_map()
+
+    def _update_wall_edges(self, x: int, y: int, gid: int) -> None:
+        self.wall_edges = [
+            item for item in self.wall_edges
+            if not (item["x"] == x and item["y"] == y)
+        ]
+        variant = str(self.tile_metadata.get(gid, {}).get("variant", ""))
+        thickness = float(self.map_props.get("wall_thickness_m", WALL_THICKNESS_M))
+        for edge in ("north", "east", "south", "west"):
+            if edge in variant.split("_"):
+                self.wall_edges.append({
+                    "x": x,
+                    "y": y,
+                    "edge": edge,
+                    "thickness_m": thickness,
+                })
 
     def _wall_cell(self, x: int, y: int) -> bool:
         if not (0 <= x < self.width and 0 <= y < self.height):
@@ -736,6 +943,134 @@ class MapEditor(tk.Tk):
         })
         self.next_object_id += 1
 
+    def edit_object_dialog(self, obj: dict[str, Any]) -> None:
+        window = tk.Toplevel(self)
+        window.title(f"오브젝트 설정 - {obj['kind']} #{obj['id']}")
+        window.transient(self)
+        window.geometry("560x640")
+        form = ttk.Frame(window, padding=8)
+        form.pack(fill=tk.BOTH, expand=True)
+        form.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            form,
+            text=f"종류: {obj['kind']}   ID: {obj['id']}",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
+
+        position_vars: dict[str, tk.StringVar] = {}
+        for column, key in enumerate(("x", "y")):
+            ttk.Label(form, text=key.upper()).grid(row=1, column=column * 2, sticky="w", padx=(0, 4))
+            variable = tk.StringVar(value=str(obj[key]))
+            position_vars[key] = variable
+            ttk.Entry(form, textvariable=variable, width=8).grid(
+                row=1, column=column * 2 + 1, sticky="w", padx=(0, 12)
+            )
+
+        ttk.Label(form, text="속성").grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 2))
+        properties_frame = ttk.Frame(form)
+        properties_frame.grid(row=3, column=0, columnspan=3, sticky="nsew")
+        properties_frame.columnconfigure(1, weight=1)
+        form.rowconfigure(3, weight=1)
+
+        property_rows: list[tuple[tk.StringVar, tk.Variable, Any, bool]] = []
+        property_choices = {
+            "orientation": ("horizontal", "vertical"),
+            "hinge": ("left", "right", "top", "bottom"),
+            "access": ("free", "locked"),
+            "state": ("closed", "open", "broken", "intact"),
+            "direction": ("north", "south", "east", "west"),
+            "connector_type": ("road", "pedestrian", "vehicle"),
+        }
+        next_property_row = [0]
+
+        def add_property_row(key: str, value: Any, editable_key: bool = False) -> None:
+            row = next_property_row[0]
+            next_property_row[0] += 1
+            key_var = tk.StringVar(value=str(key))
+            if editable_key:
+                key_widget: tk.Widget = ttk.Entry(properties_frame, textvariable=key_var, width=22)
+            else:
+                key_widget = ttk.Label(properties_frame, text=str(key), width=22, anchor="w")
+            key_widget.grid(row=row, column=0, sticky="w", pady=1)
+            if isinstance(value, bool):
+                value_var: tk.Variable = tk.BooleanVar(value=value)
+                value_widget: tk.Widget = ttk.Checkbutton(properties_frame, variable=value_var)
+            else:
+                value_var = tk.StringVar(value=str(value))
+                choices = property_choices.get(str(key))
+                if choices and isinstance(value, str):
+                    value_widget = ttk.Combobox(
+                        properties_frame,
+                        textvariable=value_var,
+                        values=choices,
+                        state="readonly",
+                    )
+                else:
+                    value_widget = ttk.Entry(properties_frame, textvariable=value_var)
+            value_widget.grid(row=row, column=1, sticky="ew", pady=1)
+            property_rows.append((key_var, value_var, value, editable_key))
+
+        for property_key, property_value in obj["properties"].items():
+            add_property_row(str(property_key), property_value)
+
+        add_row = ttk.Frame(form)
+        add_row.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        new_key = tk.StringVar()
+        new_value = tk.StringVar()
+        ttk.Entry(add_row, textvariable=new_key, width=22).pack(side=tk.LEFT)
+        ttk.Entry(add_row, textvariable=new_value).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+
+        def add_new_property() -> None:
+            key = new_key.get().strip()
+            if not key:
+                return
+            add_property_row(key, _parse_property_value(new_value.get()), True)
+            new_key.set("")
+            new_value.set("")
+
+        ttk.Button(add_row, text="속성 추가", command=add_new_property).pack(side=tk.LEFT)
+
+        buttons = ttk.Frame(form)
+        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(10, 0))
+
+        def save() -> None:
+            try:
+                new_x = int(position_vars["x"].get())
+                new_y = int(position_vars["y"].get())
+            except ValueError:
+                messagebox.showerror("위치 오류", "X와 Y는 정수여야 합니다.", parent=window)
+                return
+            if not (0 <= new_x < self.width and 0 <= new_y < self.height):
+                messagebox.showerror("위치 오류", "맵 범위 안의 좌표를 입력하세요.", parent=window)
+                return
+            new_properties: dict[str, Any] = {}
+            try:
+                for key_var, value_var, original, editable in property_rows:
+                    key = key_var.get().strip()
+                    if not key:
+                        continue
+                    if editable:
+                        value = _parse_property_value(str(value_var.get()))
+                    else:
+                        value = _coerce_property_value(value_var.get(), original)
+                    new_properties[key] = value
+            except (TypeError, ValueError) as exc:
+                messagebox.showerror("속성 오류", str(exc), parent=window)
+                return
+            if obj["kind"] == "door":
+                access = new_properties.get("access")
+                if access in {"free", "locked"} and "locked" in new_properties:
+                    new_properties["locked"] = access == "locked"
+            obj["x"] = new_x
+            obj["y"] = new_y
+            obj["properties"] = new_properties
+            window.destroy()
+            self.refresh_map()
+            self.status.set(f"오브젝트 설정 저장: {obj['kind']} #{obj['id']}")
+
+        ttk.Button(buttons, text="적용", command=save).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="취소", command=window.destroy).pack(side=tk.RIGHT, padx=4)
+
     def _find_door_gap(self, x: int, y: int, orientation: str) -> tuple[int, int, int, int] | None:
         candidates = [(x, y)]
         if orientation == "horizontal":
@@ -795,8 +1130,17 @@ class MapEditor(tk.Tk):
             entity_image = self.entity_images.get(asset_id)
             if entity_image is not None and obj["kind"] in {"door", "window", "decoration"}:
                 image = entity_image
-                if obj["properties"].get("orientation") == "vertical":
+                rotation = 0
+                if obj["kind"] == "door":
+                    rotation = _door_sprite_rotation(obj["properties"])
+                elif obj["properties"].get("orientation") == "vertical":
+                    rotation = 90
+                if rotation == 90:
                     image = image.transpose(Image.Transpose.ROTATE_90)
+                elif rotation == 180:
+                    image = image.transpose(Image.Transpose.ROTATE_180)
+                elif rotation == 270:
+                    image = image.transpose(Image.Transpose.ROTATE_270)
                 image = ImageTk.PhotoImage(
                     image.resize(
                         (max(1, obj["width"] * size), max(1, obj["height"] * size)),
@@ -1030,10 +1374,22 @@ class MapEditor(tk.Tk):
             "has_pedestrian_entry": "보행자 출입구(true/false)",
             "attached_watchposts": "부속 감시초소 수",
         }
+        list_keys = {"allowed_region_sizes", "allowed_importance_tiers", "supports"}
         variables: dict[str, tk.StringVar] = {}
         for row, (key, label) in enumerate(fields.items()):
             ttk.Label(window, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=3)
-            variable = tk.StringVar(value=str(self.map_props.get(key, "")))
+            raw_value = self.map_props.get(key, "")
+            if key in list_keys:
+                if isinstance(raw_value, str):
+                    try:
+                        parsed = json.loads(raw_value)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, list):
+                        raw_value = parsed
+                if isinstance(raw_value, list):
+                    raw_value = ", ".join(str(item) for item in raw_value)
+            variable = tk.StringVar(value=str(raw_value))
             variables[key] = variable
             ttk.Entry(window, textvariable=variable, width=42).grid(row=row, column=1, padx=6, pady=3)
 
@@ -1052,8 +1408,15 @@ class MapEditor(tk.Tk):
                         value = float(value or WALL_THICKNESS_M)
                     except ValueError:
                         value = WALL_THICKNESS_M
-                elif key in {"allowed_region_sizes", "allowed_importance_tiers", "supports"}:
-                    value = [item.strip() for item in value.split(",") if item.strip()]
+                elif key in list_keys:
+                    try:
+                        parsed = json.loads(value)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, list):
+                        value = [str(item).strip() for item in parsed if str(item).strip()]
+                    else:
+                        value = [item.strip() for item in value.split(",") if item.strip()]
                 self.map_props[key] = value
             window.destroy()
             self.status.set("모듈 설정 저장됨")
@@ -1177,10 +1540,10 @@ class MapEditor(tk.Tk):
                 "y": 0,
             })
         wall_edge_objects = []
-        for index, edge in enumerate(self.wall_edges, start=self.next_object_id):
+        for edge in self.wall_edges:
             wall_edge_objects.append({
                 "class": "wall_edge",
-                "id": index,
+                "id": next_generated_id,
                 "name": "wall_edge",
                 "point": True,
                 "properties": _property_list({
@@ -1193,6 +1556,7 @@ class MapEditor(tk.Tk):
                 "x": edge["x"] * TILE_SIZE,
                 "y": edge["y"] * TILE_SIZE,
             })
+            next_generated_id += 1
         if wall_edge_objects:
             layers.append({
                 "draworder": "topdown",
@@ -1223,7 +1587,7 @@ class MapEditor(tk.Tk):
             "infinite": False,
             "layers": layers,
             "nextlayerid": len(layers) + 1,
-            "nextobjectid": next_generated_id + len(self.wall_edges),
+            "nextobjectid": next_generated_id,
             "orientation": "orthogonal",
             "properties": _property_list(self._map_properties_for_tiled()),
             "renderorder": "right-down",

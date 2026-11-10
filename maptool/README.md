@@ -77,14 +77,21 @@ The task-focused editor avoids direct Tiled editing for the common workflow:
 & .\.venv\Scripts\python.exe -m maptool edit
 ```
 
-The editor has separate `Ground`, `Wall`, and `Decoration` painting modes.
-Painting a wall places a selected 32px wall tile and a `wall_edge` record. The
+The editor has separate `Ground` and `Wall` painting modes. Paint with the
+normal brush or switch to fill mode to flood-fill a connected region. Fill uses
+the current mode as its target, so `1` (ground) fills the ground layer and `2`
+(wall) fills the architecture layer. Number keys `1`-`5` switch modes, `B`
+selects the brush, and `F` toggles fill mode.
+
+Painting a wall places a selected 32px wall tile and its wall-edge records. The
 default wall thickness is 0.375m (24px), so the compiler creates a thick
 collision/occlusion rectangle along the selected grid edge instead of blocking
-the whole floor cell. Decoration tiles are visual-only and never enter the
-collision, occlusion, or navigation data. The object mode places enemy spawns,
-patrol nodes, doors, stairs, connectors, guards, and authored cover points.
-Right-click an object cell to remove the object.
+the whole floor cell.
+Decoration tiles are visual-only and never enter the collision, occlusion, or
+navigation data. The object mode places enemy spawns, patrol nodes, doors,
+stairs, connectors, guards, and authored cover points. Click an existing object
+to edit its position and properties, or right-click it to remove it. Door
+sprites rotate to match the selected hinge direction.
 
 To edit a tilemap made in Tiled:
 
