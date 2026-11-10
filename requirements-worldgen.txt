@@ -1,0 +1,7 @@
+# World generator / placeholder viewer
+pico2d==1.5.1
+PySDL2==0.9.17
+PySDL2-DLL==2.32.10
+
+# Needed by the existing maptool compiler (.tmj -> runtime JSON)
+Pillow>=13.0
