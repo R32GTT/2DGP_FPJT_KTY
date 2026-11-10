@@ -269,23 +269,30 @@ class Enemy(Actor):
                     self.patrol_points = [self.home]
                 target = self.patrol_points[self.patrol_index % len(self.patrol_points)]
                 self.patrol_index = (self.patrol_index + 1) % len(self.patrol_points)
-                self._set_path(nav.find_path(self.position, target))
+                self._set_path(nav.find_path(self.position, target, self.radius))
             self._follow(world, 1.8, dt)
         elif self.state == "investigate":
             if self.path is None:
-                self._set_path(nav.find_path(self.position, self.investigate_point))
+                self._set_path(
+                    nav.find_path(self.position, self.investigate_point, self.radius)
+                )
             if self._follow(world, 2.2, dt):
                 self.state = "search"
                 self.state_timer = 4.0
                 self.path = None
         elif self.state == "chase":
+            # Never repath to the player's true position while the player is
+            # hidden.  The enemy only knows the last position it actually saw.
+            target = player.position if can_see else self.last_seen
             if self.path is None or self.repath_timer <= 0.0:
-                self._set_path(nav.find_path(self.position, player.position))
+                self._set_path(nav.find_path(self.position, target, self.radius))
                 self.repath_timer = 0.55
             self._follow(world, 2.8, dt)
         elif self.state == "search":
             if self.path is None:
-                self._set_path(nav.find_path(self.position, self._search_point(world)))
+                self._set_path(
+                    nav.find_path(self.position, self._search_point(world), self.radius)
+                )
             if self._follow(world, 1.8, dt):
                 self.state_timer -= dt
                 if self.state_timer <= 0.0:
