@@ -41,6 +41,12 @@ class NavPath:
         return bool(self.points)
 
 
+def required_clearance_cells(radius_m: float) -> int:
+    # Distance-field cells are measured centre-to-centre.  A blocked cell
+    # occupies half a cell beyond its centre, so include that before inflating.
+    return max(1, int(math.ceil((radius_m + TILE_METERS * 0.5) / TILE_METERS)))
+
+
 def can_stand(world: WorldMap, x: float, y: float, radius: float = 0.30) -> bool:
     grid = world.grid
     cx0 = max(0, int(math.floor((x - radius) / TILE_METERS)))
@@ -72,7 +78,12 @@ def has_line_of_sight(
     return True
 
 
-def _line_walkable(world: WorldMap, a: tuple[float, float], b: tuple[float, float]) -> bool:
+def _line_walkable(
+    world: WorldMap,
+    a: tuple[float, float],
+    b: tuple[float, float],
+    required_clearance: int = 0,
+) -> bool:
     grid = world.grid
     distance = math.hypot(b[0] - a[0], b[1] - a[1])
     steps = max(1, int(math.ceil(distance / (TILE_METERS * 0.5))))
@@ -83,10 +94,18 @@ def _line_walkable(world: WorldMap, a: tuple[float, float], b: tuple[float, floa
         cx, cy = grid.world_to_cell(x, y)
         if not grid.is_walkable(cx, cy):
             return False
+        if required_clearance > 0:
+            index = grid.index(cx, cy)
+            if grid.clearance[index] < required_clearance:
+                return False
     return True
 
 
-def _smooth(world: WorldMap, points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+def _smooth(
+    world: WorldMap,
+    points: list[tuple[float, float]],
+    required_clearance: int = 0,
+) -> list[tuple[float, float]]:
     if len(points) <= 2:
         return points
     result = [points[0]]
@@ -94,7 +113,7 @@ def _smooth(world: WorldMap, points: list[tuple[float, float]]) -> list[tuple[fl
     while current < len(points) - 1:
         farthest = current + 1
         for candidate in range(len(points) - 1, current, -1):
-            if _line_walkable(world, points[current], points[candidate]):
+            if _line_walkable(world, points[current], points[candidate], required_clearance):
                 farthest = candidate
                 break
         result.append(points[farthest])
@@ -183,30 +202,58 @@ class NavigationWorld:
                 return placement
         return None
 
+    def _passable(self, required_clearance: int):
+        grid = self.grid
+
+        def passable(cx: int, cy: int) -> bool:
+            if not grid.is_walkable(cx, cy):
+                return False
+            if required_clearance <= 0:
+                return True
+            return grid.clearance[grid.index(cx, cy)] >= required_clearance
+
+        return passable
+
     def _grid_path(
-        self, start: tuple[float, float], goal: tuple[float, float]
+        self,
+        start: tuple[float, float],
+        goal: tuple[float, float],
+        radius: float = 0.30,
     ) -> list[tuple[float, float]] | None:
         grid = self.grid
-        start_cell = nearest_passable(grid, grid.world_to_cell(*start))
-        goal_cell = nearest_passable(grid, grid.world_to_cell(*goal))
-        if start_cell is None or goal_cell is None:
-            return None
-        cells = a_star(grid, start_cell, goal_cell)
-        if cells is None:
-            return None
-        points = [start]
-        points.extend(grid.cell_center(cx, cy) for cx, cy in cells)
-        points.append(goal)
-        deduped: list[tuple[float, float]] = []
-        for point in points:
-            if not deduped or math.hypot(
-                point[0] - deduped[-1][0], point[1] - deduped[-1][1]
-            ) > 1e-6:
-                deduped.append(point)
-        return _smooth(self.world, deduped)
+        required = required_clearance_cells(radius)
+        # Prefer a body-sized corridor.  Tight doorways may only offer one cell
+        # of clearance, so fall back progressively instead of refusing to move.
+        for clearance in (required, 1, 0):
+            passable = self._passable(clearance)
+            start_cell = nearest_passable(
+                grid, grid.world_to_cell(*start), passable, max_radius=24
+            )
+            goal_cell = nearest_passable(
+                grid, grid.world_to_cell(*goal), passable, max_radius=24
+            )
+            if start_cell is None or goal_cell is None:
+                continue
+            cells = a_star(grid, start_cell, goal_cell, passable=passable)
+            if cells is None:
+                continue
+            points = [start]
+            points.extend(grid.cell_center(cx, cy) for cx, cy in cells)
+            points.append(goal)
+            deduped: list[tuple[float, float]] = []
+            for point in points:
+                if not deduped or math.hypot(
+                    point[0] - deduped[-1][0], point[1] - deduped[-1][1]
+                ) > 1e-6:
+                    deduped.append(point)
+            return _smooth(self.world, deduped, clearance)
+        return None
 
     def find_path(
-        self, start: tuple[float, float], goal: tuple[float, float]
+        self,
+        start: tuple[float, float],
+        goal: tuple[float, float],
+        radius: float = 0.30,
     ) -> NavPath | None:
         start_facility = self.facility_at(start)
         goal_facility = self.facility_at(goal)
@@ -218,7 +265,7 @@ class NavigationWorld:
 
         if start_facility is not None and goal_facility is None:
             indoor = _facility_path(start_facility, start, start_facility.entrance)
-            outdoor = self._grid_path(start_facility.entrance, goal)
+            outdoor = self._grid_path(start_facility.entrance, goal, radius)
             if indoor is not None and outdoor is not None:
                 return NavPath(
                     [
@@ -228,7 +275,7 @@ class NavigationWorld:
                 )
 
         if start_facility is None and goal_facility is not None:
-            outdoor = self._grid_path(start, goal_facility.entrance)
+            outdoor = self._grid_path(start, goal_facility.entrance, radius)
             indoor = _facility_path(goal_facility, goal_facility.entrance, goal)
             if outdoor is not None and indoor is not None:
                 return NavPath(
@@ -244,7 +291,9 @@ class NavigationWorld:
             and start_facility is not goal_facility
         ):
             indoor_a = _facility_path(start_facility, start, start_facility.entrance)
-            outdoor = self._grid_path(start_facility.entrance, goal_facility.entrance)
+            outdoor = self._grid_path(
+                start_facility.entrance, goal_facility.entrance, radius
+            )
             indoor_b = _facility_path(goal_facility, goal_facility.entrance, goal)
             if indoor_a is not None and outdoor is not None and indoor_b is not None:
                 return NavPath(
@@ -255,7 +304,7 @@ class NavigationWorld:
                     ]
                 )
 
-        grid_path = self._grid_path(start, goal)
+        grid_path = self._grid_path(start, goal, radius)
         if grid_path is None:
             return None
         return NavPath([PathSegment("outdoor", grid_path)])
