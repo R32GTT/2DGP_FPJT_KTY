@@ -5,7 +5,16 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from worldgen.constants import CELLS_PER_METER, Flag, PIXELS_PER_METER, TILE_METERS, TILE_PIXELS
+from worldgen.constants import (
+    CELLS_PER_METER,
+    Flag,
+    PIXELS_PER_METER,
+    PLAYER_COLLISION_RADIUS_M,
+    PLAYER_DISPLAY_PX,
+    PLAYER_SOURCE_SPRITE_PX,
+    TILE_METERS,
+    TILE_PIXELS,
+)
 from worldgen.facility import load_prefab
 from worldgen.generation import generate_world
 from worldgen.nav import find_world_path
@@ -31,6 +40,9 @@ class WorldgenTests(unittest.TestCase):
         self.assertEqual(CELLS_PER_METER, 2)
         self.assertEqual(self.world.grid.width, 128)
         self.assertEqual(self.world.grid.height, 128)
+        self.assertEqual(PLAYER_SOURCE_SPRITE_PX, (96, 48))
+        self.assertEqual(PLAYER_DISPLAY_PX, (48, 24))
+        self.assertEqual(PLAYER_COLLISION_RADIUS_M, 0.30)
 
     def test_generation_is_deterministic(self) -> None:
         other = generate_world(
@@ -79,6 +91,28 @@ class WorldgenTests(unittest.TestCase):
                     grid.get_flag(cx, cy, Flag.ROAD),
                     f"tree {tree.id} overlaps road at {(cx, cy)}",
                 )
+
+    def test_tree_canopy_does_not_overlap_road(self) -> None:
+        grid = self.world.grid
+        for tree in self.world.trees:
+            cx0 = max(0, int((tree.x - tree.canopy_radius_m) / TILE_METERS))
+            cx1 = min(grid.width - 1, int((tree.x + tree.canopy_radius_m) / TILE_METERS))
+            cy0 = max(0, int((tree.y - tree.canopy_radius_m) / TILE_METERS))
+            cy1 = min(grid.height - 1, int((tree.y + tree.canopy_radius_m) / TILE_METERS))
+            for cy in range(cy0, cy1 + 1):
+                for cx in range(cx0, cx1 + 1):
+                    dx = (cx + 0.5) * TILE_METERS - tree.x
+                    dy = (cy + 0.5) * TILE_METERS - tree.y
+                    if dx * dx + dy * dy <= tree.canopy_radius_m ** 2:
+                        self.assertFalse(
+                            grid.get_flag(cx, cy, Flag.ROAD),
+                            f"tree {tree.id} canopy overlaps road at {(cx, cy)}",
+                        )
+
+    def test_zones_are_broad_and_forest_density_blends(self) -> None:
+        self.assertGreaterEqual(len(set(self.world.grid.zone)), 2)
+        densities = self.world.grid.forest_density
+        self.assertTrue(any(0 < value < 255 for value in densities))
 
     def test_generated_path_reaches_facility(self) -> None:
         self.assertTrue(self.world.facilities)
