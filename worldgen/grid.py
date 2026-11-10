@@ -9,7 +9,7 @@ from __future__ import annotations
 from array import array
 import math
 
-from .constants import Flag, TILE_METERS, Terrain
+from .constants import Flag, TILE_METERS, Terrain, Zone
 
 
 class WorldGrid:
@@ -22,6 +22,8 @@ class WorldGrid:
 
         self.terrain = bytearray([int(Terrain.GRASS)]) * self.size
         self.flags = bytearray([int(Flag.WALKABLE)]) * self.size
+        self.zone = bytearray([int(Zone.MEADOW)]) * self.size
+        self.forest_density = bytearray(self.size)
         self.occlusion = bytearray(self.size)
         self.clearance = bytearray(self.size)
         self.owner = array("H", [0]) * self.size

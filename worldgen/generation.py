@@ -19,6 +19,7 @@ from .roads import build_road_network
 from .terrain import generate_base
 from .trees import generate_trees
 from .world import WorldMap
+from .zones import generate_zones
 
 
 def generate_world(
@@ -44,8 +45,10 @@ def generate_world(
         height_m=float(height_m),
         grid=grid,
         spawn=(width_m * 0.5, height_m * 0.5),
+        road_width_m=road_width_m,
     )
 
+    generate_zones(world, seed)
     generate_base(world, seed)
 
     if prefab_sources:

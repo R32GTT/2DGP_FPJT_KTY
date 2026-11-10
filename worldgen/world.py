@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
+from .constants import DEFAULT_ROAD_WIDTH_M, Zone
 from .grid import WorldGrid
 
 
@@ -113,6 +115,7 @@ class WorldMap:
     grid: WorldGrid
     spawn: tuple[float, float]
     gate: tuple[float, float] | None = None
+    road_width_m: float = DEFAULT_ROAD_WIDTH_M
     facilities: list[FacilityPlacement] = field(default_factory=list)
     trees: list[Tree] = field(default_factory=list)
     roads: RoadNetwork | None = None
@@ -127,6 +130,13 @@ class WorldMap:
             "width_m": self.width_m,
             "height_m": self.height_m,
             "grid": {"width": self.grid.width, "height": self.grid.height},
+            "zones": {
+                Zone(zone).name.lower(): count
+                for zone, count in sorted(Counter(self.grid.zone).items())
+            },
+            "forest_density_cells": sum(
+                1 for value in self.grid.forest_density if value >= 32
+            ),
             "spawn": [round(self.spawn[0], 2), round(self.spawn[1], 2)],
             "gate": None if self.gate is None else [round(self.gate[0], 2), round(self.gate[1], 2)],
             "facilities": [
@@ -144,6 +154,7 @@ class WorldMap:
                 for placement in self.facilities
             ],
             "trees": len(self.trees),
+            "road_width_m": self.road_width_m,
             "roads": None
             if self.roads is None
             else {

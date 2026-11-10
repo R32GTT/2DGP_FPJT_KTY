@@ -70,7 +70,7 @@ def generate_trees(world: WorldMap, seed: int) -> None:
         for index, flag in enumerate(grid.flags)
         if flag & int(Flag.ROAD)
     )
-    road_distance = distance_field(grid, road_cells, max_distance=12)
+    road_distance = distance_field(grid, road_cells, max_distance=24)
 
     facility_cells = (
         (index % grid.width, index // grid.width)
@@ -79,7 +79,7 @@ def generate_trees(world: WorldMap, seed: int) -> None:
     )
     facility_distance = distance_field(grid, facility_cells, max_distance=20)
 
-    noise = ValueNoise(seed ^ 0x51F0E57)
+    detail_noise = ValueNoise(seed ^ 0x51F0E58)
     rng = random.Random(seed ^ 0x7A11E5)
     buckets: dict[tuple[int, int], list[Tree]] = {}
     trees: list[Tree] = []
@@ -89,19 +89,23 @@ def generate_trees(world: WorldMap, seed: int) -> None:
     while y < world.height_m - 4.0:
         x = 4.0
         while x < world.width_m - 4.0:
-            density = noise.fbm(x * 0.020, y * 0.020, 4)
-            if density < 0.52:
-                x += 0.9
-                continue
-            if rng.random() > min(0.95, (density - 0.52) * 2.3):
-                x += 0.9
-                continue
-
             tx = x + rng.uniform(-0.38, 0.38)
             ty = y + rng.uniform(-0.38, 0.38)
             cx, cy = grid.world_to_cell(tx, ty)
             index = grid.index(cx, cy)
-            if road_distance[index] < 10:
+
+            density = grid.forest_density[index] / 255.0
+            if density < 0.035:
+                x += 0.9
+                continue
+            local = detail_noise.fbm(tx * 0.10, ty * 0.10, 3)
+            if rng.random() > min(0.95, density * (0.55 + 0.90 * local)):
+                x += 0.9
+                continue
+
+            canopy_radius = 1.2 + rng.random() * 1.6
+            road_clearance = world.road_width_m * 0.5 + canopy_radius + 0.4
+            if road_distance[index] * TILE_METERS < road_clearance:
                 x += 0.9
                 continue
             if facility_distance[index] < 16:
@@ -121,7 +125,7 @@ def generate_trees(world: WorldMap, seed: int) -> None:
                 x=tx,
                 y=ty,
                 trunk_radius_m=trunk_radius,
-                canopy_radius_m=1.2 + rng.random() * 1.6,
+                canopy_radius_m=canopy_radius,
                 trunk_cells=trunk_cells,
             )
             tree_id += 1

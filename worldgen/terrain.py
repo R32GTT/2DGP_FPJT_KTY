@@ -51,11 +51,13 @@ def generate_base(world: WorldMap, seed: int) -> None:
     noise = ValueNoise(seed ^ 0x1A2B3C4D)
     for cy in range(grid.height):
         for cx in range(grid.width):
+            index = grid.index(cx, cy)
             n = noise.fbm(cx * 0.035, cy * 0.035, 4)
-            if n > 0.73:
-                grid.terrain[grid.index(cx, cy)] = int(Terrain.ROCK)
-            elif n > 0.58:
-                grid.terrain[grid.index(cx, cy)] = int(Terrain.DIRT)
+            forest = grid.forest_density[index] / 255.0
+            if n > 0.73 and forest < 0.55:
+                grid.terrain[index] = int(Terrain.ROCK)
+            elif n > 0.58 or (forest > 0.35 and n > 0.50):
+                grid.terrain[index] = int(Terrain.DIRT)
 
     world.spawn = (width * 0.5, height * 0.5)
     grid.paint_circle_m(
