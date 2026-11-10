@@ -27,6 +27,7 @@ class GameViewer(PlaceholderViewer):
         self.aim_world = (self.player.x + 5.0, self.player.y)
         self.tracers: list[list[float]] = []
         self.noise_events: list[tuple[float, float, float]] = []
+        self.noise_markers: list[list[float]] = []
         self.message = ""
         self.message_timer = 0.0
 
@@ -77,6 +78,7 @@ class GameViewer(PlaceholderViewer):
             self.message_timer = 0.35
         self.tracers.append([origin[0], origin[1], end[0], end[1], 0.09])
         self.noise_events.append((origin[0], origin[1], 30.0))
+        self.noise_markers.append([origin[0], origin[1], 30.0, 1.4])
 
     def _update(self, dt: float) -> None:
         self.player.shoot_cooldown = max(0.0, self.player.shoot_cooldown - dt)
@@ -113,6 +115,13 @@ class GameViewer(PlaceholderViewer):
             if tracer[4] > 0.0:
                 alive_tracers.append(tracer)
         self.tracers = alive_tracers
+
+        alive_noise = []
+        for marker in self.noise_markers:
+            marker[3] -= dt
+            if marker[3] > 0.0:
+                alive_noise.append(marker)
+        self.noise_markers = alive_noise
 
         if self.player.hp <= 0.0:
             self.player.x, self.player.y = self.world.spawn
@@ -163,6 +172,25 @@ class GameViewer(PlaceholderViewer):
                             color[0], color[1], color[2], 180,
                         )
                     previous = current
+
+    def _draw_noise(self, pico2d, font) -> None:
+        if not self.debug:
+            return
+        for x, y, radius, _ in self.noise_markers:
+            sx, sy = self._screen(x, y)
+            pico2d.draw_circle(
+                sx, sy, int(radius * PIXELS_PER_METER),
+                255, 220, 80, 150, False,
+            )
+            if font is not None:
+                font.draw(sx + 8, sy + 8, f"NOISE {radius:.0f}m", (255, 220, 80))
+        for enemy in self.enemies:
+            if enemy.state == "investigate":
+                sx, sy = self._screen(*enemy.investigate_point)
+                pico2d.draw_circle(sx, sy, 8, 255, 180, 60, 220, False)
+            elif enemy.state == "search":
+                sx, sy = self._screen(*enemy.last_seen)
+                pico2d.draw_circle(sx, sy, 10, 180, 200, 255, 180, False)
 
     def _draw_tracers(self, pico2d) -> None:
         for x0, y0, x1, y1, _ in self.tracers:
@@ -223,6 +251,7 @@ class GameViewer(PlaceholderViewer):
                 self._draw_tracers(pico2d)
                 self._draw_enemies(pico2d)
                 self._draw_paths(pico2d)
+                self._draw_noise(pico2d, font)
 
                 sx, sy = self._screen(self.player.x, self.player.y)
                 half_w = PLAYER_DISPLAY_PX[0] * 0.5
@@ -251,7 +280,7 @@ class GameViewer(PlaceholderViewer):
                         f"HP {self.player.hp:3.0f}/{self.player.max_hp:.0f}  "
                         f"ARMOR {self.player.armor:3.0f}  "
                         f"ENEMIES {len(self.enemies)}  {states}  "
-                        f"LMB shoot  F1 paths",
+                        f"LMB shoot  F1 paths/noise",
                         (245, 245, 245),
                     )
                     if self.message:

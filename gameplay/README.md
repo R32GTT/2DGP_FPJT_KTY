@@ -16,13 +16,15 @@
 
 - `NavigationWorld`
   - 실외: 생성된 0.5m grid A*.
+  - AI 반경만큼 clearance를 확보한 셀을 우선 사용. 좁은 문은 clearance 1/0으로 단계적 폴백.
   - 시설 내부: maptool이 저작한 `nav_node`/`nav_edge` Dijkstra.
   - 시설 입구에서 `outdoor <-> facility` 도메인 전환.
   - authored graph가 없으면 grid 경로로 폴백.
 - 더미 적
   - `patrol -> investigate -> chase -> search`.
   - 시야: 거리 + occlusion grid line-of-sight.
-  - 총성 noise event로 주변 적이 조사.
+  - 플레이어가 안 보이면 실제 위치로 재경로하지 않고 `last_seen`으로만 이동.
+  - 총성 noise event로 주변 적이 조사. `F1`에서 총성 반경/조사 지점 표시.
   - 시설 문을 통해 플레이어 추적.
 - 플레이어
   - PRD 기준 표시 `48x24px`, 충돌 반경 `0.30m`.
