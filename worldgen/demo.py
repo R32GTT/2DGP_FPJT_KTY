@@ -10,7 +10,14 @@ import math
 import os
 from pathlib import Path
 
-from .constants import Flag, PIXELS_PER_METER, TILE_METERS, Terrain
+from .constants import (
+    Flag,
+    PIXELS_PER_METER,
+    PLAYER_COLLISION_RADIUS_M,
+    PLAYER_DISPLAY_PX,
+    TILE_METERS,
+    Terrain,
+)
 from .world import Tree, WorldMap
 
 _CELL_PX = int(round(TILE_METERS * PIXELS_PER_METER))
@@ -155,7 +162,7 @@ class PlaceholderViewer:
 
     def _blocked_at(self, x_m: float, y_m: float) -> bool:
         grid = self.world.grid
-        radius = 0.32
+        radius = PLAYER_COLLISION_RADIUS_M
         cx0 = max(0, int(math.floor((x_m - radius) / TILE_METERS)))
         cy0 = max(0, int(math.floor((y_m - radius) / TILE_METERS)))
         cx1 = min(grid.width - 1, int(math.floor((x_m + radius) / TILE_METERS)))
@@ -238,14 +245,22 @@ class PlaceholderViewer:
                 self._draw_markers(pico2d, x0, y0, x1, y1)
 
                 sx, sy = self._screen(self.player_x, self.player_y)
-                pico2d.draw_circle(sx, sy, 12, 235, 198, 72, 255, True)
-                pico2d.draw_circle(sx, sy, 12, 40, 34, 26, 255, False)
+                half_w = PLAYER_DISPLAY_PX[0] * 0.5
+                half_h = PLAYER_DISPLAY_PX[1] * 0.5
+                pico2d.draw_rectangle(
+                    sx - half_w, sy - half_h, sx + half_w, sy + half_h,
+                    235, 198, 72, 255, True,
+                )
+                pico2d.draw_rectangle(
+                    sx - half_w, sy - half_h, sx + half_w, sy + half_h,
+                    40, 34, 26, 255, False,
+                )
 
                 if font is not None:
                     text = (
                         f"seed {self.world.seed}  "
                         f"pos {self.player_x:5.1f},{self.player_y:5.1f}  "
-                        f"trees {len(self.world.trees)}  F1 debug"
+                        f"player 48x24  trees {len(self.world.trees)}  F1 debug"
                     )
                     font.draw(12, 24, text, (245, 245, 245))
 
