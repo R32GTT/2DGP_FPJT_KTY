@@ -451,8 +451,9 @@ def place_prefab(
                 ) & 0xFF
                 grid.occlusion[index] = 1
                 blocked_cells.append((cx, cy))
-                if (lx, ly) in prefab.occluder:
-                    occluder_cells.append((cx, cy))
+            if (lx, ly) in prefab.occluder:
+                grid.occlusion[index] = 1
+                occluder_cells.append((cx, cy))
 
     # Doors are openings.  Clear a small circle around the authored door center
     # so the hand-authored interior connects to the exterior apron.
