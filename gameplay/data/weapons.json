@@ -1,0 +1,15 @@
+{
+  "pistol_45": {
+    "name": ".45 Pistol",
+    "ammo_type": ".45 ACP",
+    "magazine_capacity": 12,
+    "initial_reserve": 48,
+    "fire_interval_s": 0.2,
+    "damage_curve": [[0, 70], [25, 65], [50, 50], [75, 0]],
+    "reload_remove_s": 0.3,
+    "reload_insert_s": 1.0,
+    "reload_chamber_s": 0.4,
+    "reload_move_multiplier": 0.4,
+    "noise_radius_m": 30.0
+  }
+}
