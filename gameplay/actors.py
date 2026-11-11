@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import math
+from pathlib import Path
 import random
 from typing import Iterable
 
@@ -12,7 +14,44 @@ from worldgen.nav import nearest_passable
 from worldgen.world import WorldMap
 
 from .navigation import NavPath, NavigationWorld, can_stand, has_line_of_sight
-from .weapons import Weapon
+from .weapons import Weapon, WeaponSpec, load_weapon_specs
+
+
+@dataclass(frozen=True)
+class EnemyProfile:
+    id: str = "soldier"
+    starting_weapon_id: str = "pistol_45"
+    reaction_delay_s: float = 0.5
+    sight_range_m: float = 22.0
+    hold_distance_m: float = 12.0
+    retreat_distance_m: float = 10.0
+
+    def __post_init__(self) -> None:
+        for name in ("id", "starting_weapon_id"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        for name in (
+            "reaction_delay_s", "sight_range_m", "hold_distance_m", "retreat_distance_m",
+        ):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be a finite number >= 0")
+            if name != "reaction_delay_s" and value == 0:
+                raise ValueError(f"{name} must be > 0")
+
+
+def load_enemy_profiles(
+    path: str | Path = Path(__file__).resolve().parent / "data" / "enemies.json",
+) -> dict[str, EnemyProfile]:
+    try:
+        with Path(path).open(encoding="utf-8") as source:
+            data = json.load(source)
+        if not isinstance(data, dict) or not data:
+            raise ValueError("expected a non-empty object keyed by role ID")
+        return {role: EnemyProfile(id=role, **settings) for role, settings in data.items()}
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid enemy config {path}: {exc}") from exc
 
 
 @dataclass
@@ -91,8 +130,17 @@ def _patrol_points(
 
 
 def spawn_enemies(
-    world: WorldMap, nav: NavigationWorld, count: int = 3
+    world: WorldMap, nav: NavigationWorld, count: int = 3, *,
+    role: str = "soldier", weapon_specs: dict[str, WeaponSpec] | None = None,
 ) -> list["Enemy"]:
+    profile = load_enemy_profiles().get(role)
+    if profile is None:
+        raise ValueError(f"Unknown enemy role: {role}")
+    if weapon_specs is None:
+        weapon_specs = load_weapon_specs()
+    weapon_spec = weapon_specs.get(profile.starting_weapon_id)
+    if weapon_spec is None:
+        raise ValueError(f"{role}: unknown starting weapon {profile.starting_weapon_id}")
     candidates: list[tuple[float, float]] = []
     for placement in world.facilities:
         candidates.append(
@@ -151,6 +199,8 @@ def spawn_enemies(
                 max_hp=80.0,
                 armor=10.0,
                 radius=0.30,
+                profile=profile,
+                weapon=Weapon(weapon_spec),
                 home=(x, y),
                 patrol_points=_patrol_points(world, (x, y), enemy_rng),
                 rng=enemy_rng,
@@ -162,6 +212,7 @@ def spawn_enemies(
 @dataclass
 class Enemy(Actor):
     id: int = 0
+    profile: EnemyProfile = field(default_factory=EnemyProfile)
     state: str = "patrol"
     home: tuple[float, float] = (0.0, 0.0)
     patrol_points: list[tuple[float, float]] = field(default_factory=list)
