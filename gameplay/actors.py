@@ -227,6 +227,11 @@ class Enemy(Actor):
     investigate_point: tuple[float, float] = (0.0, 0.0)
     last_seen: tuple[float, float] = (0.0, 0.0)
     rng: random.Random = field(default_factory=random.Random)
+    _had_visual: bool = field(default=False, init=False, repr=False)
+
+    def clear_contact(self) -> None:
+        self._had_visual = False
+        self.attack_timer = self.profile.reaction_delay_s
 
     def _set_path(self, path: NavPath | None) -> None:
         self.path = path
@@ -285,6 +290,34 @@ class Enemy(Actor):
                 return px, py
         return self.last_seen
 
+    def _retreat(self, world: WorldMap, nav: NavigationWorld, dt: float) -> None:
+        threat_distance = math.hypot(self.x - self.last_seen[0], self.y - self.last_seen[1])
+        if not self._had_visual and threat_distance >= self.profile.sight_range_m:
+            self.path = None
+            return
+        if self.repath_timer <= 0.0:
+            self.path = None
+            self.repath_timer = 1.0
+            angle = math.atan2(self.y - self.last_seen[1], self.x - self.last_seen[0])
+            for offset in (0.0, math.pi / 4, -math.pi / 4, math.pi / 2, -math.pi / 2):
+                x = self.x + math.cos(angle + offset) * self.profile.retreat_distance_m
+                y = self.y + math.sin(angle + offset) * self.profile.retreat_distance_m
+                cell = nearest_passable(world.grid, world.grid.world_to_cell(x, y), max_radius=8)
+                if cell is None:
+                    continue
+                point = world.grid.cell_center(*cell)
+                if (
+                    math.hypot(point[0] - self.last_seen[0], point[1] - self.last_seen[1])
+                    <= threat_distance + 0.5
+                    or not can_stand(world, *point, self.radius)
+                ):
+                    continue
+                path = nav.find_path(self.position, point, self.radius)
+                if path:
+                    self._set_path(path)
+                    break
+        self._follow(world, 2.8, dt)
+
     def update(
         self,
         dt: float,
@@ -292,22 +325,45 @@ class Enemy(Actor):
         nav: NavigationWorld,
         player: Player,
         noise_events: Iterable[tuple[float, float, float]],
-    ) -> None:
+    ) -> tuple[float, float] | None:
+        """Update behavior; return a fired shot's observed target for scene collision."""
         if self.hp <= 0.0:
-            return
-        self.attack_timer = max(0.0, self.attack_timer - dt)
+            return None
+        dt = max(0.0, dt)
         self.repath_timer -= dt
         distance_to_player = math.hypot(player.x - self.x, player.y - self.y)
-        can_see = distance_to_player < 22.0 and has_line_of_sight(
-            world, self.position, player.position
+        can_see = (
+            player.hp > 0.0 and distance_to_player < self.profile.sight_range_m
+            and has_line_of_sight(world, self.position, player.position)
         )
 
         if can_see:
+            self.attack_timer = (
+                max(0.0, self.attack_timer - dt) if self._had_visual
+                else self.profile.reaction_delay_s
+            )
+            self.last_seen = player.position
+            self.lost_timer = 0.0
+        else:
+            self.attack_timer = self.profile.reaction_delay_s
+        self._had_visual = can_see
+
+        weapon = self.weapon
+        exhausted = weapon is None or weapon.exhausted
+        if exhausted and (can_see or self.state in ("chase", "search", "retreat")):
+            if self.state != "retreat":
+                self.state = "retreat"
+                self.path = None
+                self.repath_timer = 0.0
+        elif self.state == "retreat" and not exhausted:
+            self.state = "chase" if can_see else "search"
+            self.state_timer = 4.0
+            self.path = None
+
+        if can_see and self.state != "retreat":
             if self.state != "chase":
                 self.state = "chase"
                 self.path = None
-            self.last_seen = player.position
-            self.lost_timer = 0.0
         elif self.state == "chase":
             self.lost_timer += dt
             if self.lost_timer > 2.5:
@@ -324,6 +380,10 @@ class Enemy(Actor):
                     self.path = None
                     break
 
+        if weapon is not None and not weapon.chambered and not weapon.reloading:
+            weapon.start_reload()
+        move_scale = weapon.spec.reload_move_multiplier if weapon and weapon.reloading else 1.0
+        previous_x, previous_y = self.position
         if self.state == "patrol":
             if self.path is None or self.path_index >= len(self.path.points):
                 if not self.patrol_points:
@@ -331,13 +391,13 @@ class Enemy(Actor):
                 target = self.patrol_points[self.patrol_index % len(self.patrol_points)]
                 self.patrol_index = (self.patrol_index + 1) % len(self.patrol_points)
                 self._set_path(nav.find_path(self.position, target, self.radius))
-            self._follow(world, 1.8, dt)
+            self._follow(world, 1.8 * move_scale, dt)
         elif self.state == "investigate":
             if self.path is None:
                 self._set_path(
                     nav.find_path(self.position, self.investigate_point, self.radius)
                 )
-            if self._follow(world, 2.2, dt):
+            if self._follow(world, 2.2 * move_scale, dt):
                 self.state = "search"
                 self.state_timer = 4.0
                 self.path = None
@@ -345,25 +405,46 @@ class Enemy(Actor):
             # Never repath to the player's true position while the player is
             # hidden.  The enemy only knows the last position it actually saw.
             target = player.position if can_see else self.last_seen
-            if self.path is None or self.repath_timer <= 0.0:
-                self._set_path(nav.find_path(self.position, target, self.radius))
-                self.repath_timer = 0.55
-            self._follow(world, 2.8, dt)
+            hold_distance = (
+                min(self.profile.hold_distance_m, weapon.spec.range_m * 0.8)
+                if weapon else 0.0
+            )
+            if can_see and distance_to_player <= hold_distance:
+                self.path = None
+            else:
+                if self.path is None or self.repath_timer <= 0.0:
+                    self._set_path(nav.find_path(self.position, target, self.radius))
+                    self.repath_timer = 0.55
+                self._follow(world, 2.8 * move_scale, dt)
         elif self.state == "search":
             if self.path is None:
                 self._set_path(
                     nav.find_path(self.position, self._search_point(world), self.radius)
                 )
-            if self._follow(world, 1.8, dt):
+            if self._follow(world, 1.8 * move_scale, dt):
                 self.state_timer -= dt
                 if self.state_timer <= 0.0:
                     self.state = "patrol"
                     self.path = None
+        elif self.state == "retreat":
+            self._retreat(world, nav, dt)
 
+        if weapon is None:
+            return None
+        movement_speed = (
+            math.hypot(self.x - previous_x, self.y - previous_y) / dt if dt > 0 else 0.0
+        )
+        weapon.update(
+            dt, aiming=can_see and self.state != "retreat", movement_speed_mps=movement_speed,
+        )
         if (
-            distance_to_player < 1.25
-            and can_see
-            and self.attack_timer <= 0.0
+            can_see and self.state == "chase" and self.attack_timer <= 1e-9
+            and not weapon.reloading and weapon.chambered
+            and math.hypot(self.last_seen[0] - self.x, self.last_seen[1] - self.y)
+            < weapon.spec.range_m
         ):
-            player.apply_damage(12.0)
-            self.attack_timer = 0.9
+            if not has_line_of_sight(world, self.position, self.last_seen):
+                self.clear_contact()
+            elif weapon.fire():
+                return self.last_seen
+        return None
