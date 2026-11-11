@@ -14,6 +14,7 @@ from worldgen.world import WorldMap
 
 from .actors import Player, spawn_enemies
 from .navigation import NavigationWorld
+from .weapons import Weapon, load_weapon_specs
 
 
 class GameViewer(PlaceholderViewer):
@@ -21,6 +22,8 @@ class GameViewer(PlaceholderViewer):
         super().__init__(world)
         self.nav = NavigationWorld(world)
         self.player = Player(world.spawn[0], world.spawn[1], armor=20.0)
+        self.weapon = Weapon(load_weapon_specs()["pistol_45"])
+        self._weapon_actions: list[str] = []
         self.enemies = spawn_enemies(world, self.nav, count=3)
         self.mouse_x = 640
         self.mouse_y = 360
@@ -38,24 +41,28 @@ class GameViewer(PlaceholderViewer):
         )
 
     def _shoot(self) -> None:
-        if self.player.shoot_cooldown > 0.0:
-            return
-        self.player.shoot_cooldown = 0.16
         origin = (self.player.x, self.player.y)
         aim = self._aim_world()
         dx = aim[0] - origin[0]
         dy = aim[1] - origin[1]
         length = math.hypot(dx, dy)
         if length < 1e-6:
+            self.weapon.cancel_reload()
+            return
+        if not self.weapon.fire():
+            if not self.weapon.chambered:
+                self.message = "empty - R reload"
+                self.message_timer = 0.6
             return
         dx /= length
         dy /= length
 
         grid = self.world.grid
         hit = None
-        end = (origin[0] + dx * 32.0, origin[1] + dy * 32.0)
-        for step in range(1, 321):
-            distance = step * 0.1
+        range_m = self.weapon.spec.range_m
+        end = (origin[0] + dx * range_m, origin[1] + dy * range_m)
+        for step in range(1, math.ceil(range_m / 0.1) + 1):
+            distance = min(step * 0.1, range_m)
             x = origin[0] + dx * distance
             y = origin[1] + dy * distance
             cx, cy = grid.world_to_cell(x, y)
@@ -73,15 +80,18 @@ class GameViewer(PlaceholderViewer):
                 break
 
         if hit is not None:
-            hit.apply_damage(34.0)
-            self.message = "hit"
-            self.message_timer = 0.35
+            damage = self.weapon.spec.damage_at(distance)
+            if damage > 0.0:
+                hit.apply_damage(damage)
+                self.message = "hit"
+                self.message_timer = 0.35
         self.tracers.append([origin[0], origin[1], end[0], end[1], 0.09])
-        self.noise_events.append((origin[0], origin[1], 30.0))
-        self.noise_markers.append([origin[0], origin[1], 30.0, 1.4])
+        noise_radius = self.weapon.spec.noise_radius_m
+        self.noise_events.append((origin[0], origin[1], noise_radius))
+        self.noise_markers.append([origin[0], origin[1], noise_radius, 1.4])
 
     def _update(self, dt: float) -> None:
-        self.player.shoot_cooldown = max(0.0, self.player.shoot_cooldown - dt)
+        self.weapon.update(dt)
         self.message_timer = max(0.0, self.message_timer - dt)
         if self.message_timer <= 0.0:
             self.message = ""
@@ -97,12 +107,22 @@ class GameViewer(PlaceholderViewer):
         if 115 in self.keys:  # S
             dy += 1.0
         speed = 5.0 if 1073742049 in self.keys else 3.0  # LSHIFT
+        if self.weapon.reloading:
+            speed *= self.weapon.spec.reload_move_multiplier
         self.player.move(self.world, dx, dy, speed, dt)
 
         self.player_x, self.player_y = self.player.x, self.player.y
         self._visible_cells()
         self.aim_world = self._aim_world()
         self.player.aim_x, self.player.aim_y = self.aim_world
+
+        # Apply this frame's input after ticking existing weapon timers.
+        for action in self._weapon_actions:
+            if action == "reload":
+                self.weapon.start_reload()
+            else:
+                self._shoot()
+        self._weapon_actions.clear()
 
         for enemy in self.enemies:
             enemy.update(dt, self.world, self.nav, self.player, self.noise_events)
@@ -127,7 +147,7 @@ class GameViewer(PlaceholderViewer):
             self.player.x, self.player.y = self.world.spawn
             self.player.hp = self.player.max_hp
             self.player.armor = 20.0
-            self.player.shoot_cooldown = 0.0
+            self.weapon = Weapon(self.weapon.spec)
             self.message = "respawn"
             self.message_timer = 1.5
 
@@ -230,13 +250,15 @@ class GameViewer(PlaceholderViewer):
                         elif event.key == pico2d.SDLK_F1:
                             self.debug = not self.debug
                         elif event.key is not None:
+                            if event.key == pico2d.SDLK_r and event.key not in self.keys:
+                                self._weapon_actions.append("reload")
                             self.keys.add(event.key)
                     elif event.type == pico2d.SDL_KEYUP:
                         self.keys.discard(event.key)
                     elif event.type == pico2d.SDL_MOUSEMOTION:
                         self.mouse_x, self.mouse_y = event.x, event.y
                     elif event.type == pico2d.SDL_MOUSEBUTTONDOWN and event.button == 1:
-                        self._shoot()
+                        self._weapon_actions.append("fire")
 
                 now = pico2d.get_time()
                 dt = min(0.05, max(0.0, now - self.last_time))
@@ -280,11 +302,23 @@ class GameViewer(PlaceholderViewer):
                         f"HP {self.player.hp:3.0f}/{self.player.max_hp:.0f}  "
                         f"ARMOR {self.player.armor:3.0f}  "
                         f"ENEMIES {len(self.enemies)}  {states}  "
-                        f"LMB shoot  F1 paths/noise",
+                        f"F1 paths/noise",
+                        (245, 245, 245),
+                    )
+                    weapon = self.weapon
+                    reload_text = (
+                        f"  RELOAD {weapon.reload_stage} {weapon.reload_remaining_s:.1f}s"
+                        if weapon.reloading else ""
+                    )
+                    font.draw(
+                        12, 46,
+                        f"{weapon.spec.name}  {weapon.spec.ammo_type}  "
+                        f"AMMO {weapon.magazine_rounds}+{int(weapon.chambered)} / "
+                        f"{weapon.reserve_rounds}{reload_text}  LMB fire  R reload",
                         (245, 245, 245),
                     )
                     if self.message:
-                        font.draw(12, 46, self.message, (255, 220, 120))
+                        font.draw(12, 68, self.message, (255, 220, 120))
 
                 pico2d.update_canvas()
         finally:
@@ -294,4 +328,9 @@ class GameViewer(PlaceholderViewer):
 
 
 def run_game(world: WorldMap) -> int:
-    return GameViewer(world).run()
+    try:
+        viewer = GameViewer(world)
+    except ValueError as exc:
+        print(exc)
+        return 1
+    return viewer.run()

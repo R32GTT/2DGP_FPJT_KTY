@@ -38,7 +38,6 @@ class Actor:
 class Player(Actor):
     aim_x: float = 0.0
     aim_y: float = 0.0
-    shoot_cooldown: float = 0.0
     radius: float = PLAYER_COLLISION_RADIUS_M
 
     def move(self, world: WorldMap, dx: float, dy: float, speed: float, dt: float) -> None:
