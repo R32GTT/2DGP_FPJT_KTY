@@ -9,8 +9,8 @@
 & .\.venv\Scripts\python.exe -m gameplay --seed 2026 --no-play
 ```
 
-조작: `WASD` 이동, `Shift` 달리기, 마우스 조준, `LMB` 단발 사격, `R` 재장전,
-`F1` 경로 디버그, `ESC` 종료.
+조작: `WASD` 이동, `Shift` 달리기, 마우스 방향 지정, `RMB` 유지 조준,
+`LMB` 단발 사격, `R` 재장전, `F1` 경로 디버그, `ESC` 종료.
 
 ## 구현
 
@@ -51,7 +51,29 @@
 - `reload_remove_s` + `reload_insert_s`: 약실 잔탄 재장전 1.3초.
   빈 총은 `reload_chamber_s` 0.4초를 추가해 총 1.7초.
 - `reload_move_multiplier`: 재장전 중 이동 배율, 임시값 0.4.
-- `noise_radius_m`: 총성 반경. 기존 30m 유지. 명중률·적 AI·임시 자동 부활도 유지.
+- `noise_radius_m`: 총성 반경. 기존 30m 유지. 적 AI·임시 자동 부활도 유지.
+
+## Spread와 조준
+
+각도는 조준선 기준 좌우 반각이다. 현재 spread 안에서 균일하게 방향을 뽑아
+히트스캔 경로를 회전한다. 첫 발도 정확한 한 점에 고정되지 않으며 낙차는 없다.
+
+- `spread_base_deg`: 기본 1도. `spread_per_shot_deg`: 발사 성공마다 0.25도 증가.
+- `spread_max_deg`: 이동·조준 보정을 포함한 최종 상한 3도.
+- `spread_recovery_delay_s`: 마지막 발사 후 0.25초 대기.
+- `spread_recovery_deg_per_s`: 이후 초당 2도씩 발사 누적분만 회복.
+- `aim_spread_multiplier`: 조준 시 기본 spread와 발사 누적분에 0.6배 적용.
+- `aim_settle_s`: 우클릭 유지 시 0.25초에 걸쳐 조준 안정. 해제 시 즉시 일반 상태.
+- `move_spread_deg_per_mps`: 실제 이동 속도 1m/s당 0.15도 추가.
+- `sprint_spread_multiplier`: 달리기 중 이동 불이익을 3배 적용.
+
+탄도는 발사 전 spread로 결정하며 누적 증가분은 다음 발부터 적용한다.
+빈 총·발사 대기 중 실패한 클릭은 spread나 회복 대기를 갱신하지 않는다.
+최대로 안정된 정지 조준도 0.6도이며, 달리기 조준은 기본값 기준 2.85도다.
+벽에 막혀 실제로 이동하지 않으면 이동 불이익은 없다.
+
+크로스헤어 간격은 현재 spread와 플레이어에서 마우스까지 거리에 비례한다.
+HUD의 `SPREAD`는 현재 반각이다. 총구 위치·벽 검사·총구 섬광·반동 연출은 후속 범위다.
 
 ## 재장전 동작
 

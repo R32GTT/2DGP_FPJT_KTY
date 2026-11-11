@@ -24,6 +24,7 @@ class GameViewer(PlaceholderViewer):
         self.player = Player(world.spawn[0], world.spawn[1], armor=20.0)
         self.weapon = Weapon(load_weapon_specs()["pistol_45"])
         self._weapon_actions: list[str] = []
+        self.aiming = False
         self.enemies = spawn_enemies(world, self.nav, count=3)
         self.mouse_x = 640
         self.mouse_y = 360
@@ -54,8 +55,9 @@ class GameViewer(PlaceholderViewer):
                 self.message = "empty - R reload"
                 self.message_timer = 0.6
             return
-        dx /= length
-        dy /= length
+        angle = math.atan2(dy, dx) + math.radians(self.weapon.shot_offset_deg)
+        dx = math.cos(angle)
+        dy = math.sin(angle)
 
         grid = self.world.grid
         hit = None
@@ -91,7 +93,6 @@ class GameViewer(PlaceholderViewer):
         self.noise_markers.append([origin[0], origin[1], noise_radius, 1.4])
 
     def _update(self, dt: float) -> None:
-        self.weapon.update(dt)
         self.message_timer = max(0.0, self.message_timer - dt)
         if self.message_timer <= 0.0:
             self.message = ""
@@ -106,10 +107,19 @@ class GameViewer(PlaceholderViewer):
             dy -= 1.0
         if 115 in self.keys:  # S
             dy += 1.0
-        speed = 5.0 if 1073742049 in self.keys else 3.0  # LSHIFT
+        sprinting = 1073742049 in self.keys  # LSHIFT
+        speed = 5.0 if sprinting else 3.0
         if self.weapon.reloading:
             speed *= self.weapon.spec.reload_move_multiplier
+        previous_x, previous_y = self.player.position
         self.player.move(self.world, dx, dy, speed, dt)
+        movement_speed = (
+            math.hypot(self.player.x - previous_x, self.player.y - previous_y) / dt
+            if dt > 0.0 else 0.0
+        )
+        self.weapon.update(
+            dt, aiming=self.aiming, movement_speed_mps=movement_speed, sprinting=sprinting,
+        )
 
         self.player_x, self.player_y = self.player.x, self.player.y
         self._visible_cells()
@@ -221,10 +231,14 @@ class GameViewer(PlaceholderViewer):
     def _draw_crosshair(self, pico2d) -> None:
         x = self.mouse_x
         y = 720 - self.mouse_y
-        pico2d.draw_line(x - 7, y, x - 2, y, 240, 240, 240, 255)
-        pico2d.draw_line(x + 2, y, x + 7, y, 240, 240, 240, 255)
-        pico2d.draw_line(x, y - 7, x, y - 2, 240, 240, 240, 255)
-        pico2d.draw_line(x, y + 2, x, y + 7, 240, 240, 240, 255)
+        sx, sy = self._screen(self.player.x, self.player.y)
+        distance_px = math.hypot(x - sx, y - sy)
+        gap = max(2.0, distance_px * math.tan(math.radians(self.weapon.spread_deg)))
+        color = (170, 230, 240, 255) if self.aiming else (240, 240, 240, 255)
+        pico2d.draw_line(x - gap - 5, y, x - gap, y, *color)
+        pico2d.draw_line(x + gap, y, x + gap + 5, y, *color)
+        pico2d.draw_line(x, y - gap - 5, x, y - gap, *color)
+        pico2d.draw_line(x, y + gap, x, y + gap + 5, *color)
 
     def run(self) -> int:
         try:
@@ -257,8 +271,13 @@ class GameViewer(PlaceholderViewer):
                         self.keys.discard(event.key)
                     elif event.type == pico2d.SDL_MOUSEMOTION:
                         self.mouse_x, self.mouse_y = event.x, event.y
-                    elif event.type == pico2d.SDL_MOUSEBUTTONDOWN and event.button == 1:
-                        self._weapon_actions.append("fire")
+                    elif event.type == pico2d.SDL_MOUSEBUTTONDOWN:
+                        if event.button == 1:
+                            self._weapon_actions.append("fire")
+                        elif event.button == 3:
+                            self.aiming = True
+                    elif event.type == pico2d.SDL_MOUSEBUTTONUP and event.button == 3:
+                        self.aiming = False
 
                 now = pico2d.get_time()
                 dt = min(0.05, max(0.0, now - self.last_time))
@@ -314,7 +333,8 @@ class GameViewer(PlaceholderViewer):
                         12, 46,
                         f"{weapon.spec.name}  {weapon.spec.ammo_type}  "
                         f"AMMO {weapon.magazine_rounds}+{int(weapon.chambered)} / "
-                        f"{weapon.reserve_rounds}{reload_text}  LMB fire  R reload",
+                        f"{weapon.reserve_rounds}{reload_text}  "
+                        f"SPREAD {weapon.spread_deg:.2f}deg  LMB fire  RMB aim  R reload",
                         (245, 245, 245),
                     )
                     if self.message:
