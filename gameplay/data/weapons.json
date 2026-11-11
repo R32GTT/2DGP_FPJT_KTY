@@ -10,6 +10,15 @@
     "reload_insert_s": 1.0,
     "reload_chamber_s": 0.4,
     "reload_move_multiplier": 0.4,
-    "noise_radius_m": 30.0
+    "noise_radius_m": 30.0,
+    "spread_base_deg": 1.0,
+    "spread_per_shot_deg": 0.25,
+    "spread_max_deg": 3.0,
+    "spread_recovery_delay_s": 0.25,
+    "spread_recovery_deg_per_s": 2.0,
+    "aim_spread_multiplier": 0.6,
+    "aim_settle_s": 0.25,
+    "move_spread_deg_per_mps": 0.15,
+    "sprint_spread_multiplier": 3.0
   }
 }
