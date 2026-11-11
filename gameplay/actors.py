@@ -12,6 +12,7 @@ from worldgen.nav import nearest_passable
 from worldgen.world import WorldMap
 
 from .navigation import NavPath, NavigationWorld, can_stand, has_line_of_sight
+from .weapons import Weapon
 
 
 @dataclass
@@ -22,10 +23,20 @@ class Actor:
     max_hp: float = 100.0
     armor: float = 0.0
     radius: float = 0.30
+    weapon: Weapon | None = field(default=None, repr=False)
 
     @property
     def position(self) -> tuple[float, float]:
         return self.x, self.y
+
+    def equip_weapon(self, weapon: Weapon | None) -> Weapon | None:
+        """Accept any firearm and return the previous instance, retaining its ammo."""
+        previous = self.weapon
+        if previous is not weapon:
+            if previous is not None:
+                previous.cancel_reload()
+            self.weapon = weapon
+        return previous
 
     def apply_damage(self, amount: float) -> None:
         effective = max(1.0, amount - self.armor * 0.5)

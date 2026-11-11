@@ -158,6 +158,10 @@ class Weapon:
         return self.magazine_rounds + int(self.chambered)
 
     @property
+    def exhausted(self) -> bool:
+        return self.loaded_rounds == 0 and self.reserve_rounds <= 0
+
+    @property
     def spread_deg(self) -> float:
         """Current half-angle, including aim and actual movement; never zero."""
         aim_scale = 1.0 - self.aim_progress * (1.0 - self.spec.aim_spread_multiplier)
