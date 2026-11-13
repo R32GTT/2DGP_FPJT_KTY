@@ -35,6 +35,7 @@ class ResourceTests(unittest.TestCase):
         remove(state, operation.cargo, {"supplies": 20}, outcome="destroyed")
         consume(state, operation.provisions, {"supplies": 2}, reason="vehicle_operation")
         operation.phase = "unloading"
+        operation.route = [operation.destination_node]
         self.assertTrue(handover(state, operation.id))
         self.assertFalse(handover(state, operation.id))
         self.assertEqual(state.facilities["hq_b"].inventory["supplies"], destination_before + 50)

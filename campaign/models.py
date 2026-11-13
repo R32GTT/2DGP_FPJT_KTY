@@ -95,6 +95,7 @@ class ExternalDemand:
     node_id: str
     cargo: dict[str, int]
     period_s: int
+    collection_facility_id: str
     outstanding: dict[str, int] = field(default_factory=stock)
     delivered: dict[str, int] = field(default_factory=stock)
 
@@ -211,6 +212,8 @@ def validate_state(state: CampaignState) -> None:
             and set(state.resource_priority) == set(RESOURCE_TYPES), "잘못된 자원 우선순위")
     require(state.source.node_id in state.nodes, "외부 공급원 노드 누락")
     require(state.demand.node_id in state.nodes, "외부 출하 노드 누락")
+    require(state.demand.collection_facility_id in state.facilities, "집적 창고 누락")
+    require(type(state.demand.period_s) is int and state.demand.period_s > 0, "잘못된 출하 주기")
     for mapping in (state.nodes, state.roads, state.regions, state.facilities,
                     state.units, state.vehicles, state.operations):
         require(all(key == item.id for key, item in mapping.items()), "ID와 키 불일치")

@@ -1,7 +1,7 @@
 """고정 전략 틱·사건·외부 개입을 묶는 독립 실행 코어."""
 
 from . import clock
-from .logistics import plan_supplies
+from .logistics import plan_exports, plan_supplies
 from .models import CampaignState, Event
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
                         finish_return, handover, owner, remove)
@@ -23,6 +23,8 @@ class Simulation:
             clock.schedule(state, state.world_time, "planning")
             clock.schedule(state, state.world_time + state.rules["consumption_period_s"],
                            "consumption", priority=clock.CONSUMPTION)
+            clock.schedule(state, state.world_time + state.demand.period_s,
+                           "demand", priority=clock.DEMAND)
         clock.advance_to(state, world_time, self._handle_event, tick=self._tick)
         assert_invariants(state)
 
@@ -51,7 +53,14 @@ class Simulation:
         operation = state.operations.get(event.operation_id)
         if event.kind == "planning":
             plan_supplies(state)
+            plan_exports(state)
             clock.schedule(state, state.world_time + state.rules["planning_period_s"], "planning")
+        elif event.kind == "demand":
+            for name, amount in state.demand.cargo.items():
+                state.demand.outstanding[name] += amount
+            state.record("export_demand", amount=dict(state.demand.cargo))
+            clock.schedule(state, state.world_time + state.demand.period_s,
+                           "demand", priority=clock.DEMAND)
         elif event.kind == "consumption":
             self._consume_garrisons()
             clock.schedule(state, state.world_time + state.rules["consumption_period_s"],
@@ -59,8 +68,10 @@ class Simulation:
         elif operation is not None:
             if event.kind == "depart" and operation.phase == "loading":
                 origin = owner(state, operation.origin_id)
-                destination = state.facilities[operation.destination_id]
-                invalid = destination.damage == 100 or state.regions[destination.region_id].owner != "enemy"
+                invalid = False
+                if operation.kind != "export":
+                    destination = state.facilities[operation.destination_id]
+                    invalid = destination.damage == 100 or state.regions[destination.region_id].owner != "enemy"
                 if operation.origin_id != state.source.id:
                     invalid |= origin.damage == 100 or state.regions[origin.region_id].owner != "enemy"
                 if invalid:

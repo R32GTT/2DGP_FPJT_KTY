@@ -162,22 +162,37 @@ def handover(state: CampaignState, operation_id: str) -> bool:
     operation = state.operations[operation_id]
     if operation.phase != "unloading" or operation.delivered_at is not None:
         return False
-    destination = state.facilities[operation.destination_id]
-    if destination.damage == 100 or state.regions[destination.region_id].owner != "enemy":
-        operation.waiting_reason = "destination_unavailable"
+    if (not operation.route or operation.edge_index != len(operation.route) - 1
+            or operation.route[-1] != operation.destination_node or operation.progress_m):
         return False
-    for name in RESOURCE_TYPES:
-        destination.inventory[name] += operation.cargo[name]
-        operation.cargo[name] = 0
+    cargo = dict(operation.cargo)
+    if operation.kind == "export":
+        if operation.destination_node != state.demand.node_id:
+            return False
+        for name in RESOURCE_TYPES:
+            state.demand.outstanding[name] = max(0, state.demand.outstanding[name] - cargo[name])
+            state.demand.delivered[name] += cargo[name]
+            state.ledger.delivered[name] += cargo[name]
+            operation.cargo[name] = 0
+    else:
+        destination = state.facilities[operation.destination_id]
+        if destination.damage == 100 or state.regions[destination.region_id].owner != "enemy":
+            operation.waiting_reason = "destination_unavailable"
+            return False
+        for name in RESOURCE_TYPES:
+            destination.inventory[name] += cargo[name]
+            operation.cargo[name] = 0
     operation.delivered_at, operation.phase = state.world_time, "turnaround"
-    state.record("handed_over", operation_id=operation_id)
+    state.record("exported" if operation.kind == "export" else "handed_over",
+                 operation_id=operation_id, cargo=cargo)
     return True
 
 
 def finish_return(state: CampaignState, operation_id: str) -> bool:
     operation = state.operations[operation_id]
     if (operation.phase != "returning" or not operation.route
-            or operation.route[operation.edge_index] != operation.home_node
+            or operation.edge_index != len(operation.route) - 1
+            or operation.route[-1] != operation.home_node
             or operation.progress_m != 0):
         return False
     for name in RESOURCE_TYPES:

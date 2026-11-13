@@ -6,6 +6,9 @@ from .resources import available, minimum, owner, quantities, reserve
 from .routes import find_route, road_between
 
 
+EXTERNAL_FRONT = "external_front"
+
+
 def incoming(state: CampaignState, destination_id: str) -> dict[str, int]:
     result = stock()
     for operation in state.operations.values():
@@ -95,7 +98,14 @@ def plan_supplies(state: CampaignState) -> None:
                for op in state.operations.values()):
             continue
         inbound = incoming(state, destination.id)
-        needed = {name: max(0, destination.target_stock[name]
+        extra = stock()
+        if destination.id == state.demand.collection_facility_id:
+            exports = incoming(state, EXTERNAL_FRONT)
+            extra = {name: max(0, state.demand.outstanding[name] - exports[name])
+                     for name in RESOURCE_TYPES}
+            if any(extra.values()):
+                extra["supplies"] += state.rules["export_provision_buffer"]
+        needed = {name: max(0, destination.target_stock[name] + extra[name]
                             - available(state, destination.id, name) - inbound[name])
                   for name in RESOURCE_TYPES}
         if not any(needed.values()):
@@ -116,3 +126,13 @@ def plan_supplies(state: CampaignState) -> None:
             if "logistics" in destination.capabilities:
                 plan_transport(state, state.source.id, destination.id, needed,
                                reason="외부 정기 보급 수요")
+
+
+def plan_exports(state: CampaignState) -> None:
+    inbound = incoming(state, EXTERNAL_FRONT)
+    needed = {name: max(0, state.demand.outstanding[name] - inbound[name])
+              for name in RESOURCE_TYPES}
+    if any(needed.values()):
+        plan_transport(state, state.demand.collection_facility_id, EXTERNAL_FRONT,
+                       needed, kind="export", reason="외부 전선 출하 수요·일정",
+                       minimum_batch=state.rules["minimum_export_batch"])
