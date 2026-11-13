@@ -8,6 +8,9 @@ from .resources import TERMINAL_PHASES
 from .routes import position
 
 
+FACILITY_RADIUS_M = 110  # 보기 전용 부지 크기. 시설 프리팹의 충돌 경계가 아니다.
+
+
 @dataclass
 class Camera:
     scale: float = 1.0
@@ -92,7 +95,8 @@ def pick(state: CampaignState, camera: Camera, markers: dict[str, ConvoyMarker],
     for facility in state.facilities.values():
         point = state.nodes[facility.node_id].position
         sx, sy = camera.screen(point.x, point.y)
-        if abs(sx - x) <= 17 and abs(sy - y) <= 17:
+        radius = max(17, FACILITY_RADIUS_M * camera.scale)
+        if abs(sx - x) <= radius and abs(sy - y) <= radius:
             return "facility", facility.id
     closest = (float("inf"), "")
     for road in state.roads.values():

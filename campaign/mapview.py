@@ -3,7 +3,8 @@
 import math
 import tkinter as tk
 
-from .viewmodel import Camera, pick
+from .mapart import GROUND, compound_buildings, compound_ground, landscape
+from .viewmodel import FACILITY_RADIUS_M, Camera, pick
 
 
 BACKGROUND = "#101b24"
@@ -18,7 +19,7 @@ FONT = "Malgun Gothic"
 
 class StrategicMap(tk.Canvas):
     def __init__(self, master, state, *, on_select):
-        super().__init__(master, background=BACKGROUND, highlightthickness=0)
+        super().__init__(master, background=GROUND, highlightthickness=0)
         self.state = state
         self.on_select = on_select
         self.camera = Camera()
@@ -31,6 +32,7 @@ class StrategicMap(tk.Canvas):
         self.minimap_box = None
         self.bind("<Configure>", self._resize)
         self.bind("<Button-1>", self._click)
+        self.bind("<Double-Button-1>", self._focus_click)
         self.bind("<MouseWheel>", self._wheel)
         self.bind("<Button-4>", lambda event: self.zoom(1.2, event.x, event.y))
         self.bind("<Button-5>", lambda event: self.zoom(1 / 1.2, event.x, event.y))
@@ -43,13 +45,36 @@ class StrategicMap(tk.Canvas):
 
     def _resize(self, event):
         if not self.fitted and event.width > 100 and event.height > 100:
-            self.fit()
+            self.focus_region()
             self.fitted = True
         self.dirty = True
 
     def fit(self):
         self.camera.fit(self.state, self.winfo_width(), self.winfo_height())
         self.dirty = True
+
+    def focus_region(self):
+        if not self.state.regions:
+            self.fit()
+            return
+        region = max(self.state.regions.values(), key=lambda item: item.importance)
+        points = [self.state.nodes[self.state.facilities[key].node_id].position for key in region.facility_ids]
+        if not points:
+            self.fit()
+            return
+        x0, x1 = min(p.x for p in points) - 220, max(p.x for p in points) + 220
+        y0, y1 = min(p.y for p in points) - 220, max(p.y for p in points) + 220
+        scale = min(self.winfo_width() / (x1 - x0), self.winfo_height() / (y1 - y0), 1.2)
+        self.focus_world((x0 + x1) / 2, (y0 + y1) / 2, scale=scale)
+
+    def focus_world(self, x, y, *, scale=None):
+        self.camera.scale = scale if scale is not None else max(self.camera.scale, 0.8)
+        self.camera.offset_x = self.winfo_width() / 2 - x * self.camera.scale
+        self.camera.offset_y = self.winfo_height() / 2 - y * self.camera.scale
+        self.dirty = True
+
+    def _focus_click(self, event):
+        self.focus_world(*self.camera.world(event.x, event.y))
 
     def pan(self, dx, dy):
         self.camera.offset_x += dx
@@ -107,11 +132,13 @@ class StrategicMap(tk.Canvas):
             if self.selection == ("operation", marker.id):
                 self.create_oval(x - 17, y - 17, x + 17, y + 17,
                                  outline="white", width=2, tags="dynamic")
-            cosine, sine = math.cos(marker.heading), math.sin(marker.heading)
-            vertices = []
-            for dx, dy in ((11, 0), (-7, -7), (-4, 0), (-7, 7)):
-                vertices.extend((x + dx * cosine - dy * sine, y + dx * sine + dy * cosine))
-            self.create_polygon(vertices, fill=color, outline=BACKGROUND, width=2, tags="dynamic")
+            operation = self.state.operations[marker.id]
+            vehicle_ids = [key for key in operation.vehicle_ids if self.state.vehicles[key].status != "destroyed"]
+            for index, vehicle_id in enumerate(vehicle_ids):
+                # 복수 차량은 같은 추상 수송대 위치의 표시 슬롯으로만 펼친다.
+                self._truck(x, y + index * 11, marker.heading, color, tag="dynamic")
+            if not vehicle_ids:
+                self.create_oval(x - 5, y - 5, x + 5, y + 5, fill=color, outline=TEXT, tags="dynamic")
             label = f"#{marker.id.removeprefix('operation_')}  ×{marker.vehicles}"
             self.create_text(x, y - 19, text=label, fill=color, font=(FONT, 8), tags="dynamic")
         self._minimap()
@@ -126,15 +153,16 @@ class StrategicMap(tk.Canvas):
     def _terrain(self):
         self.delete("terrain")
         width, height = self.winfo_width(), self.winfo_height()
+        landscape(self, self.state, self.camera, width, height)
         left, top = self.camera.world(0, 0)
         right, bottom = self.camera.world(width, height)
         spacing = 10 ** math.ceil(math.log10(70 / self.camera.scale))
         for x in range(math.floor(left / spacing), math.ceil(right / spacing) + 1):
             sx, _ = self.camera.screen(x * spacing, 0)
-            self.create_line(sx, 0, sx, height, fill="#1b2a35", tags="terrain")
+            self.create_line(sx, 0, sx, height, fill="#3c4a37", tags="terrain")
         for y in range(math.floor(top / spacing), math.ceil(bottom / spacing) + 1):
             _, sy = self.camera.screen(0, y * spacing)
-            self.create_line(0, sy, width, sy, fill="#1b2a35", tags="terrain")
+            self.create_line(0, sy, width, sy, fill="#3c4a37", tags="terrain")
         for region in self.state.regions.values():
             points = [self.state.nodes[self.state.facilities[fid].node_id].position
                       for fid in region.facility_ids]
@@ -142,15 +170,26 @@ class StrategicMap(tk.Canvas):
                 continue
             x0, y0 = self.camera.screen(min(p.x for p in points) - 300, min(p.y for p in points) - 320)
             x1, y1 = self.camera.screen(max(p.x for p in points) + 300, max(p.y for p in points) + 420)
-            self.create_rectangle(x0, y0, x1, y1, fill="#172e35", outline="#31545c", tags="terrain")
+            self.create_rectangle(x0, y0, x1, y1, outline="#6d805e", dash=(6, 8), tags="terrain")
             self.create_text(x0 + 8, y0 + 7, anchor="nw", text=f"REGION {region.id.upper()}",
-                             fill="#739da4", font=(FONT, 9, "bold"), tags="terrain")
+                             fill="#a2b48a", font=(FONT, 9, "bold"), tags="terrain")
+        detailed = self.camera.scale >= 0.35
+        if detailed:
+            for facility in self.state.facilities.values():
+                point = self.state.nodes[facility.node_id].position
+                x, y = self.camera.screen(point.x, point.y)
+                radius = FACILITY_RADIUS_M * self.camera.scale
+                if -radius <= x <= width + radius and -radius <= y <= height + radius:
+                    compound_ground(self, self.state, self.camera, facility)
         for road in self.state.roads.values():
             start, end = self.state.nodes[road.start].position, self.state.nodes[road.end].position
             coordinates = (*self.camera.screen(start.x, start.y), *self.camera.screen(end.x, end.y))
-            self.create_line(*coordinates, fill="#0a141d", width=11, tags="terrain")
-            self.create_line(*coordinates, fill=RED if road.blocked else "#526875", width=4,
+            road_width = max(4, 13 * self.camera.scale)
+            self.create_line(*coordinates, fill="#8a8870", width=road_width + 4, tags="terrain")
+            self.create_line(*coordinates, fill=RED if road.blocked else "#4b5050", width=road_width,
                              dash=(7, 5) if road.blocked else (), tags="terrain")
+            if detailed and not road.blocked:
+                self.create_line(*coordinates, fill="#aaa78e", width=1, dash=(12, 14), tags="terrain")
             if road.blocked:
                 x, y = self.camera.screen((start.x + end.x) / 2, (start.y + end.y) / 2)
                 self.create_text(x, y - 12, text="차단", fill=RED, font=(FONT, 8), tags="terrain")
@@ -172,6 +211,8 @@ class StrategicMap(tk.Canvas):
             x, y = self.camera.screen(point.x, point.y)
             if not -100 <= x <= width + 100 or not -100 <= y <= height + 100:
                 continue
+            if detailed:
+                compound_buildings(self, self.state, self.camera, facility)
             color = RED if facility.damage == 100 else GOLD if "logistics" in facility.capabilities else BLUE
             self.create_rectangle(x - 13, y - 12, x + 13, y + 12, fill=BACKGROUND,
                                   outline=color, width=2, tags="terrain")
@@ -195,9 +236,36 @@ class StrategicMap(tk.Canvas):
                            for vehicle in self.state.vehicles.values())
             self.create_text(x, y + 41, text=f"병 {soldiers} · 차 {vehicles}",
                              fill=MUTED, font=(FONT, 8), tags="dynamic")
+            if self.camera.scale >= 0.35:
+                parked = [vehicle for vehicle in self.state.vehicles.values()
+                          if vehicle.node_id == facility.node_id and vehicle.status != "destroyed"]
+                for index, vehicle in enumerate(parked):
+                    self._truck(x - 22 + index * 16, y - 24, 0, "#bdc0a0", tag="dynamic")
+                groups = [unit for unit in self.state.units.values()
+                          if unit.node_id == facility.node_id and unit.soldiers]
+                for index, unit in enumerate(groups):
+                    sx, sy = x - 22 + index * 14, y + 61
+                    self.create_rectangle(sx - 4, sy - 4, sx + 4, sy + 4, fill="#b1bd8c",
+                                          outline="#2a352a", tags="dynamic")
+                    self.create_text(sx, sy + 12, text=str(unit.soldiers), fill=TEXT,
+                                     font=(FONT, 7), tags="dynamic")
             if self.selection == ("facility", facility.id):
-                self.create_rectangle(x - 19, y - 18, x + 19, y + 18,
+                radius = max(19, FACILITY_RADIUS_M * self.camera.scale)
+                self.create_rectangle(x - radius, y - radius, x + radius, y + radius,
                                       outline="white", width=2, tags="dynamic")
+
+    def _truck(self, x, y, heading, color, *, tag):
+        cosine, sine = math.cos(heading), math.sin(heading)
+
+        def polygon(points, fill):
+            vertices = []
+            for dx, dy in points:
+                vertices.extend((x + dx * cosine - dy * sine, y + dx * sine + dy * cosine))
+            self.create_polygon(vertices, fill=fill, outline="#18231c", tags=tag)
+
+        polygon(((-8, -5), (8, -5), (8, 5), (-8, 5)), color)
+        polygon(((3, -4), (7, -4), (7, 4), (3, 4)), "#d5d8b8")
+        polygon(((-7, -3), (1, -3), (1, 3), (-7, 3)), "#526355")
 
     def _selected_route(self):
         if self.selection is None:

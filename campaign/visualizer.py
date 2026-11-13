@@ -11,6 +11,7 @@ from .mapview import ACCENT, BACKGROUND, FONT, MUTED, TEXT, StrategicMap
 from .persistence import load_campaign, save_campaign
 from .playback import Playback
 from .resources import TERMINAL_PHASES, available
+from .routes import position
 from .scenario import DEFAULT_SCENARIO, load_scenario
 from .simulation import Simulation
 from .viewmodel import world_clock
@@ -46,6 +47,7 @@ class Visualizer(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.bind("<space>", self._space)
         self.bind("<Home>", lambda event: self.map.fit())
+        self.bind("<KeyPress-f>", lambda event: self.focus_selection())
         self.after_idle(self._initial_render)
         if autostart:
             self._after_id = self.after(16, self._frame)
@@ -122,6 +124,8 @@ class Visualizer(tk.Tk):
         self.operations = self._tree(notebook, "수송대", ("상태", "화물"))
         self.facilities.bind("<<TreeviewSelect>>", lambda event: self._tree_select(self.facilities, "facility"))
         self.operations.bind("<<TreeviewSelect>>", lambda event: self._tree_select(self.operations, "operation"))
+        self.facilities.bind("<Double-Button-1>", lambda event: self.focus_selection())
+        self.operations.bind("<Double-Button-1>", lambda event: self.focus_selection())
         ttk.Label(sidebar, text="선택 정보", style="Title.TLabel", padding=(0, 8, 0, 5)).grid(row=1, column=0, sticky="w")
         self.details = tk.Text(sidebar, height=6, wrap="word", background="#14232e", foreground=TEXT,
                                relief="flat", padx=12, pady=10, font=(FONT, 9), state="disabled")
@@ -152,7 +156,7 @@ class Visualizer(tk.Tk):
         self.events_text = tk.StringVar()
         ttk.Label(sidebar, textvariable=self.events_text, style="Muted.TLabel",
                   justify="left", wraplength=320).grid(row=5, column=0, sticky="ew", pady=(0, 8))
-        self.status = tk.StringVar(value="좌클릭 선택 · 우/중클릭 드래그 이동 · 휠 확대 · 방향키/WASD 이동 · Space 재생/정지")
+        self.status = tk.StringVar(value="좌클릭 선택 · 더블클릭/F 확대 · 우/중클릭 드래그 · 휠 줌 · WASD 이동 · Home 전체 지도 · Space 재생/정지")
         ttk.Label(self, textvariable=self.status, padding=(14, 8), style="Muted.TLabel").pack(fill="x")
 
     def _tree(self, notebook, title, columns):
@@ -171,7 +175,7 @@ class Visualizer(tk.Tk):
         return tree
 
     def _initial_render(self):
-        self.map.fit()
+        self.map.focus_region()
         self.map.render(self.playback.markers())
         self.refresh_panel(force=True)
 
@@ -197,6 +201,19 @@ class Visualizer(tk.Tk):
         selection = tree.selection()
         if selection:
             self.select((kind, selection[0]))
+
+    def focus_selection(self):
+        if self.selection is None:
+            self.map.focus_region()
+        else:
+            kind, key = self.selection
+            if kind == "facility":
+                point = self.state.nodes[self.state.facilities[key].node_id].position
+            elif kind == "operation":
+                point = position(self.state, self.state.operations[key])
+            else:
+                point = self.state.nodes[self.state.roads[key].start].position
+            self.map.focus_world(point.x, point.y)
 
     def intervene(self, command):
         try:

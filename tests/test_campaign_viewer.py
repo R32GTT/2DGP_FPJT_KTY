@@ -123,3 +123,18 @@ class ViewerGuiTests(unittest.TestCase):
         app.update()
         self.assertEqual(app.selection, ("facility", "depot_a"))
         self.assertIn(str(app.state.facilities["depot_a"].inventory["supplies"]), app.details.get("1.0", "end"))
+
+    def test_overview_to_facility_camera_focus_does_not_change_world(self):
+        app = self.app
+        before = asdict(app.state)
+        app.map.fit()
+        overview_scale = app.map.camera.scale
+        app.select(("facility", "hq_b"))
+        app.focus_selection()
+        app.map.render(app.playback.markers())
+        self.assertGreater(app.map.camera.scale, overview_scale)
+        point = app.state.nodes["hq_b"].position
+        x, y = app.map.camera.screen(point.x, point.y)
+        self.assertAlmostEqual(x, app.map.winfo_width() / 2)
+        self.assertAlmostEqual(y, app.map.winfo_height() / 2)
+        self.assertEqual(asdict(app.state), before)
