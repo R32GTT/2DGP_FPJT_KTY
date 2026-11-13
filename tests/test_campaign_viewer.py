@@ -1,4 +1,5 @@
 from dataclasses import asdict
+import os
 import unittest
 
 from campaign.playback import Playback
@@ -83,3 +84,42 @@ class PlaybackTests(unittest.TestCase):
         playback.timer = lambda: 0
         playback.update(0)
         self.assertEqual(playback.simulation.state.world_time, 100)
+
+
+@unittest.skipUnless(os.environ.get("CAMPAIGN_GUI_TEST") == "1", "GUI 검증은 CAMPAIGN_GUI_TEST=1로 실행")
+class ViewerGuiTests(unittest.TestCase):
+    def setUp(self):
+        from campaign.visualizer import Visualizer
+        simulation = Simulation(load_scenario())
+        simulation.advance_to(100)
+        self.app = Visualizer(simulation, paused=True, autostart=False)
+        self.addCleanup(self.app.close)
+        self.app.update()
+        self.app._initial_render()
+
+    def test_map_selection_and_rendering_share_real_campaign_state(self):
+        app = self.app
+        before = asdict(app.state)
+        marker = next(iter(app.playback.current.values()))
+        x, y = app.map.camera.screen(marker.x, marker.y)
+        app.map.event_generate("<Button-1>", x=int(x), y=int(y))
+        app.update()
+        self.assertEqual(app.selection[0], "operation")
+        self.assertIn(app.selection[1], app.details.get("1.0", "end"))
+        self.assertGreater(len(app.map.find_withtag("terrain")), len(app.state.roads))
+        self.assertGreater(len(app.map.find_withtag("dynamic")), len(app.playback.current))
+        self.assertEqual(asdict(app.state), before)
+
+    def test_pause_and_single_step_use_the_core_and_refresh_visible_clock(self):
+        app = self.app
+        app.playback.update(10)
+        self.assertEqual(app.state.world_time, 100)
+        app.step()
+        app.playback.update(0)
+        app.refresh_panel(force=True)
+        self.assertEqual(app.state.world_time, 101)
+        self.assertIn("00:01:41", app.clock_text.get())
+        app.facilities.selection_set("depot_a")
+        app.update()
+        self.assertEqual(app.selection, ("facility", "depot_a"))
+        self.assertIn(str(app.state.facilities["depot_a"].inventory["supplies"]), app.details.get("1.0", "end"))

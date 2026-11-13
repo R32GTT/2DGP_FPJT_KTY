@@ -20,11 +20,11 @@ class Camera:
     def world(self, x: float, y: float) -> tuple[float, float]:
         return (x - self.offset_x) / self.scale, (y - self.offset_y) / self.scale
 
-    def fit(self, state: CampaignState, width: int, height: int) -> None:
+    def fit(self, state: CampaignState, width: int, height: int, *, padding: float = 60) -> None:
         xs = [node.position.x for node in state.nodes.values()]
         ys = [node.position.y for node in state.nodes.values()]
-        self.scale = min(max(1, width - 120) / max(1, max(xs) - min(xs)),
-                         max(1, height - 120) / max(1, max(ys) - min(ys)), 8.0)
+        self.scale = min(max(1, width - 2 * padding) / max(1, max(xs) - min(xs)),
+                         max(1, height - 2 * padding) / max(1, max(ys) - min(ys)), 8.0)
         self.offset_x = width / 2 - (min(xs) + max(xs)) / 2 * self.scale
         self.offset_y = height / 2 - (min(ys) + max(ys)) / 2 * self.scale
 
