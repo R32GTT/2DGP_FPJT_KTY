@@ -1,0 +1,78 @@
+{
+  "description": "소형 지역 3개 후방 군수 검증 월드. 모든 수치는 임시 검증값.",
+  "nodes": [
+    {"id":"outside", "position":{"x":-2000.0,"y":0.0}},
+    {"id":"entry", "position":{"x":-1000.0,"y":0.0}},
+    {"id":"depot_a", "position":{"x":0.0,"y":0.0}},
+    {"id":"hq_a", "position":{"x":0.0,"y":500.0}},
+    {"id":"comms_a", "position":{"x":500.0,"y":500.0}},
+    {"id":"depot_b", "position":{"x":2000.0,"y":0.0}},
+    {"id":"hq_b", "position":{"x":2000.0,"y":500.0}},
+    {"id":"comms_b", "position":{"x":2500.0,"y":500.0}},
+    {"id":"depot_c", "position":{"x":4000.0,"y":0.0}},
+    {"id":"hq_c", "position":{"x":4000.0,"y":500.0}},
+    {"id":"comms_c", "position":{"x":4500.0,"y":500.0}},
+    {"id":"bypass", "position":{"x":2000.0,"y":-1500.0}},
+    {"id":"exit", "position":{"x":5000.0,"y":0.0}}
+  ],
+  "roads": [
+    {"id":"external_entry","start":"outside","end":"entry","length_m":1000.0},
+    {"id":"entry_a","start":"entry","end":"depot_a","length_m":1000.0},
+    {"id":"a_b","start":"depot_a","end":"depot_b","length_m":2000.0},
+    {"id":"b_c","start":"depot_b","end":"depot_c","length_m":2000.0},
+    {"id":"a_bypass","start":"depot_a","end":"bypass","length_m":2500.0},
+    {"id":"bypass_c","start":"bypass","end":"depot_c","length_m":2500.0},
+    {"id":"c_exit","start":"depot_c","end":"exit","length_m":1000.0},
+    {"id":"a_hq","start":"depot_a","end":"hq_a","length_m":500.0},
+    {"id":"a_comms","start":"hq_a","end":"comms_a","length_m":500.0},
+    {"id":"b_hq","start":"depot_b","end":"hq_b","length_m":500.0},
+    {"id":"b_comms","start":"hq_b","end":"comms_b","length_m":500.0},
+    {"id":"c_hq","start":"depot_c","end":"hq_c","length_m":500.0},
+    {"id":"c_comms","start":"hq_c","end":"comms_c","length_m":500.0}
+  ],
+  "regions": [
+    {"id":"a","facility_ids":["depot_a","hq_a","comms_a"],"minimum_garrison":10,"importance":3},
+    {"id":"b","facility_ids":["depot_b","hq_b","comms_b"],"minimum_garrison":10,"importance":2},
+    {"id":"c","facility_ids":["depot_c","hq_c","comms_c"],"minimum_garrison":10,"importance":1}
+  ],
+  "facilities": [
+    {"id":"depot_a","region_id":"a","node_id":"depot_a","capabilities":["logistics","export"],"inventory":{"supplies":700,"ammunition":150,"repair_parts":100},"minimum_stock":{"supplies":30,"ammunition":10,"repair_parts":5},"target_stock":{"supplies":350,"ammunition":80,"repair_parts":40}},
+    {"id":"hq_a","region_id":"a","node_id":"hq_a","capabilities":["command","garrison","qrf"],"inventory":{"supplies":30,"ammunition":20,"repair_parts":5},"minimum_stock":{"supplies":10,"ammunition":10,"repair_parts":2},"target_stock":{"supplies":80,"ammunition":20,"repair_parts":5}},
+    {"id":"comms_a","region_id":"a","node_id":"comms_a","capabilities":["communication"],"inventory":{"supplies":10,"ammunition":10,"repair_parts":5},"minimum_stock":{"supplies":5,"ammunition":5,"repair_parts":2},"target_stock":{"supplies":25,"ammunition":10,"repair_parts":5}},
+    {"id":"depot_b","region_id":"b","node_id":"depot_b","capabilities":["logistics"],"inventory":{"supplies":60,"ammunition":25,"repair_parts":10},"minimum_stock":{"supplies":30,"ammunition":10,"repair_parts":5},"target_stock":{"supplies":250,"ammunition":60,"repair_parts":25}},
+    {"id":"hq_b","region_id":"b","node_id":"hq_b","capabilities":["command","garrison","qrf"],"inventory":{"supplies":20,"ammunition":20,"repair_parts":5},"minimum_stock":{"supplies":10,"ammunition":10,"repair_parts":2},"target_stock":{"supplies":80,"ammunition":20,"repair_parts":5}},
+    {"id":"comms_b","region_id":"b","node_id":"comms_b","capabilities":["communication"],"inventory":{"supplies":8,"ammunition":10,"repair_parts":5},"minimum_stock":{"supplies":5,"ammunition":5,"repair_parts":2},"target_stock":{"supplies":25,"ammunition":10,"repair_parts":5}},
+    {"id":"depot_c","region_id":"c","node_id":"depot_c","capabilities":["logistics","export"],"inventory":{"supplies":120,"ammunition":40,"repair_parts":20},"minimum_stock":{"supplies":30,"ammunition":10,"repair_parts":5},"target_stock":{"supplies":250,"ammunition":60,"repair_parts":25}},
+    {"id":"hq_c","region_id":"c","node_id":"hq_c","capabilities":["command","garrison","qrf"],"inventory":{"supplies":20,"ammunition":20,"repair_parts":5},"minimum_stock":{"supplies":10,"ammunition":10,"repair_parts":2},"target_stock":{"supplies":80,"ammunition":20,"repair_parts":5}},
+    {"id":"comms_c","region_id":"c","node_id":"comms_c","capabilities":["communication"],"inventory":{"supplies":8,"ammunition":10,"repair_parts":5},"minimum_stock":{"supplies":5,"ammunition":5,"repair_parts":2},"target_stock":{"supplies":25,"ammunition":10,"repair_parts":5}}
+  ],
+  "units": [
+    {"id":"source_escort_1","soldiers":4,"node_id":"outside"},
+    {"id":"source_escort_2","soldiers":4,"node_id":"outside"},
+    {"id":"a_garrison","soldiers":10,"node_id":"hq_a"},
+    {"id":"a_comms_guard","soldiers":2,"node_id":"comms_a"},
+    {"id":"a_escort_1","soldiers":2,"node_id":"depot_a"},
+    {"id":"a_escort_2","soldiers":2,"node_id":"depot_a"},
+    {"id":"b_garrison","soldiers":10,"node_id":"hq_b"},
+    {"id":"b_comms_guard","soldiers":2,"node_id":"comms_b"},
+    {"id":"b_escort_1","soldiers":2,"node_id":"depot_b"},
+    {"id":"b_escort_2","soldiers":2,"node_id":"depot_b"},
+    {"id":"c_garrison","soldiers":10,"node_id":"hq_c"},
+    {"id":"c_comms_guard","soldiers":2,"node_id":"comms_c"},
+    {"id":"c_escort_1","soldiers":2,"node_id":"depot_c"},
+    {"id":"c_escort_2","soldiers":2,"node_id":"depot_c"}
+  ],
+  "vehicles": [
+    {"id":"source_truck_1","node_id":"outside","capacity":200,"speed_mps":10.0},
+    {"id":"source_truck_2","node_id":"outside","capacity":200,"speed_mps":10.0},
+    {"id":"a_truck_1","node_id":"depot_a","capacity":150,"speed_mps":10.0},
+    {"id":"a_truck_2","node_id":"depot_a","capacity":150,"speed_mps":10.0},
+    {"id":"b_truck_1","node_id":"depot_b","capacity":150,"speed_mps":10.0},
+    {"id":"b_truck_2","node_id":"depot_b","capacity":150,"speed_mps":10.0},
+    {"id":"c_truck_1","node_id":"depot_c","capacity":150,"speed_mps":10.0},
+    {"id":"c_truck_2","node_id":"depot_c","capacity":150,"speed_mps":10.0}
+  ],
+  "source": {"id":"external_source","node_id":"outside","inventory":{"supplies":2400,"ammunition":600,"repair_parts":300}},
+  "demand": {"node_id":"exit","cargo":{"supplies":120,"ammunition":20,"repair_parts":10},"period_s":7200},
+  "rules": {"planning_period_s":300,"consumption_period_s":3600,"supplies_per_soldier":1,"loading_s":30,"unloading_s":20,"turnaround_s":120,"external_departure_interval_s":600,"external_cargo_limit":180,"escort_soldiers":2,"provisions_per_vehicle":20,"road_cost_per_vehicle":1,"minimum_export_batch":80}
+}
