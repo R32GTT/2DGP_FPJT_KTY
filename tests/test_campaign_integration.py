@@ -67,3 +67,19 @@ class CampaignIntegrationTests(unittest.TestCase):
         self.assertFalse(any(op.origin_id == state.source.id for op in state.operations.values()))
         self.assertEqual(sum(state.ledger.imported.values()), 0)
         assert_invariants(state)
+
+    def test_infinite_external_goods_become_capturable_only_after_physical_departure(self):
+        state = load_scenario(support="infinite")
+        state.started = True
+        operation = plan_transport(state, state.source.id, "depot_a", {"supplies": 100})
+        simulation = Simulation(state)
+        before = asdict(state)
+        action = {"type": "capture", "operation_id": operation.id, "amount": {"supplies": 10}}
+        with self.assertRaises(ValueError):
+            simulation.apply_action(action)
+        self.assertEqual(asdict(state), before)
+        simulation.advance_to(30)
+        simulation.apply_action(action)
+        self.assertEqual(operation.cargo["supplies"], 90)
+        self.assertEqual(state.player_stock["supplies"], 10)
+        assert_invariants(state)

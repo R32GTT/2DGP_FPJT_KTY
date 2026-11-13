@@ -237,6 +237,8 @@ def material_totals(state: CampaignState) -> dict[str, int]:
 
 def assert_invariants(state: CampaignState) -> None:
     validate_state(state)
+    if state.demand.delivered != state.ledger.delivered:
+        raise ValueError("외부 인도 실적과 자원 회계 불일치")
     totals = material_totals(state)
     for name in RESOURCE_TYPES:
         accounted = (totals[name] + state.ledger.consumed[name] + state.ledger.destroyed[name]

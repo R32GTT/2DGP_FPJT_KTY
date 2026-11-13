@@ -66,6 +66,5 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(position(state, operation).x, 200)
         for _ in range(19):
             self.assertFalse(move_one_second(state, operation))
-        self.assertFalse(move_one_second(state, operation))
         self.assertTrue(move_one_second(state, operation))
         self.assertEqual(position(state, operation).x, 0)

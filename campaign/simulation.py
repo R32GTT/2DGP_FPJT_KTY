@@ -133,6 +133,8 @@ class Simulation:
                     raise ValueError("종료된 작전의 화물을 처리할 수 없음")
                 if operation.phase == "loading":
                     owner_id = operation.origin_id
+                    if owner_id == state.source.id and state.source.mode == "infinite":
+                        raise ValueError("무한 외부 예비 물자는 출발 후 실제 화물에서 처리해야 함")
                     inventory = owner(state, owner_id).inventory
                 else:
                     inventory = operation.cargo
@@ -170,7 +172,7 @@ class Simulation:
         if asset.status == "destroyed":
             raise ValueError("이미 격파된 자산")
         losses = 0 if vehicle_loss else action["soldiers"]
-        if not vehicle_loss and (type(losses) is not int or not 0 <= losses <= asset.soldiers):
+        if not vehicle_loss and (type(losses) is not int or not 0 < losses <= asset.soldiers):
             raise ValueError("잘못된 병력 손실량")
         operation = state.operations.get(asset.operation_id)
         location = deepcopy(position(state, operation) if asset.node_id is None

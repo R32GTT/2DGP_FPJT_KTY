@@ -66,6 +66,7 @@ class PersistenceTests(unittest.TestCase):
             lambda p: p["state"].update(rng_state=[1, 2]),
             lambda p: p["state"]["operations"][next(iter(p["state"]["operations"]))].update(edge_index=999),
             lambda p: p["state"]["vehicles"]["a_truck_1"].update(operation_id="missing"),
+            lambda p: p["state"]["demand"]["delivered"].update(supplies=100),
         ]
         for mutate in mutations:
             payload = json.loads(baseline)

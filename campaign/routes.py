@@ -135,6 +135,9 @@ def move_one_second(state: CampaignState, operation: Operation) -> bool:
                 operation.reversing = operation.edge_paid = False
                 if not _replan(state, operation):
                     return False
+                target = operation.home_node if operation.phase == "returning" else operation.destination_node
+                if operation.route == [target]:
+                    return True
             continue
         if not operation.edge_paid:
             cost = len(vehicles) * state.rules["road_cost_per_vehicle"]

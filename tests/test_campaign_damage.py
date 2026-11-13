@@ -81,6 +81,7 @@ class DamageTests(unittest.TestCase):
     def test_invalid_loss_is_atomic(self):
         simulation, operation = self.convoy()
         before = asdict(simulation.state)
-        with self.assertRaises(ValueError):
-            simulation.apply_action({"type": "damage_unit", "unit_id": operation.unit_ids[0], "soldiers": -1})
+        for losses in (-1, 0, 3):
+            with self.assertRaises(ValueError):
+                simulation.apply_action({"type": "damage_unit", "unit_id": operation.unit_ids[0], "soldiers": losses})
         self.assertEqual(asdict(simulation.state), before)
