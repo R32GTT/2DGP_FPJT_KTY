@@ -39,14 +39,15 @@ def painted_image(backend, width, height, paint):
 
 def actor_image(backend, player):
     def paint(p):
-        p.rect(8, 4, 32, 17, (17, 25, 27))
-        p.rect(11, 3, 26, 18, (68, 126, 132) if player else (136, 133, 91))
-        p.rect(10, 4, 8, 16, (42, 70, 68))
-        p.rect(18, 7, 12, 10, (35, 49, 48))
-        p.rect(27, 6, 12, 12, (182, 171, 136))
-        p.rect(28, 6, 10, 9, (74, 98, 91) if player else (107, 109, 77))
-        p.rect(15, 1, 18, 4, (91, 151, 151) if player else (161, 156, 107))
-        p.rect(15, 19, 18, 4, (91, 151, 151) if player else (161, 156, 107))
+        # 몸통 중심 (24,12). 위쪽이 정면이며 어깨가 좌우로 넓게 펼쳐진다.
+        p.rect(4, 5, 40, 17, (17, 25, 27))
+        p.rect(10, 6, 28, 14, (68, 126, 132) if player else (136, 133, 91))
+        p.rect(15, 18, 18, 5, (42, 70, 68))
+        p.rect(15, 9, 18, 10, (35, 49, 48))
+        p.rect(18, 1, 12, 12, (182, 171, 136))
+        p.rect(19, 1, 10, 9, (74, 98, 91) if player else (107, 109, 77))
+        p.rect(4, 8, 8, 12, (91, 151, 151) if player else (161, 156, 107))
+        p.rect(36, 8, 8, 12, (91, 151, 151) if player else (161, 156, 107))
     return painted_image(backend, 48, 24, paint)
 
 

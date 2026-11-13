@@ -14,6 +14,11 @@ from .weapons import load_weapons, weapon_pose
 from .world import ROOT
 
 
+# 몸통 원본은 위를 바라본다. 가로는 어깨 폭, 세로는 앞뒤 두께다.
+BODY_SIZE_M = (0.75, 0.375)
+BODY_FORWARD_OFFSET = math.pi / 2
+
+
 class Renderer:
     def __init__(self, world):
         self.backend = importlib.import_module("pico2d.pico2d")
@@ -106,7 +111,8 @@ class Renderer:
         for point, _ in simulation.dropped:
             self._rect(view, Rect(point[0] - 0.25, point[1] - 0.15, 0.5, 0.3), (218, 181, 106))
         for actor in [*simulation.guards, simulation.player]:
-            body_bounds = self._rotated_bounds(actor.xy, (0.75, 0.375), actor.facing)
+            body_angle = actor.facing + BODY_FORWARD_OFFSET
+            body_bounds = self._rotated_bounds(actor.xy, BODY_SIZE_M, body_angle)
             weapon = actor.weapon
             center, muzzle = weapon_pose(actor)
             gun_bounds = self._rotated_bounds(center, weapon.spec.size_m, actor.facing) if weapon else body_bounds
@@ -116,7 +122,7 @@ class Renderer:
             image = self.sprites["player" if actor.team == "player" else "guard"]
             if actor.hp <= 0:
                 image.opacify(0.35)
-            image.rotate_draw(-actor.facing, x, y, 0.75 * view.scale, 0.375 * view.scale)
+            image.rotate_draw(-body_angle, x, y, BODY_SIZE_M[0] * view.scale, BODY_SIZE_M[1] * view.scale)
             image.opacify(1.0)
             if actor.hp > 0 and weapon:
                 gun_x, gun_y = view.pico(*center)
