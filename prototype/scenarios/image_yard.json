@@ -1,0 +1,37 @@
+{
+  "format": "revenant.image_scene.v1",
+  "bounds": [-18, -12, 36, 24],
+  "campaign_facility": "depot_a",
+  "player_spawn": [-3, 7],
+  "supply_point": [3, 1],
+  "layers": [
+    {"id":"terrain", "rect":[-18,-12,36,24], "image":"assets/prototype/terrain.png", "color":[48,76,45]},
+    {"id":"dirt", "rect":[-14,-10,9,7], "image":"assets/prototype/dirt_patch.png", "fallback":"assets/source/ground/ground_dirt_256x256.png", "color":[104,82,53]},
+    {"id":"road", "rect":[-18,5,36,2], "image":"assets/prototype/road.png", "color":[105,91,64]},
+    {"id":"floor", "rect":[-6,-4,12,8], "image":"assets/prototype/facility_floor.png", "fallback":"assets/source/ground/indoor_floor_01.png", "color":[139,137,117]},
+    {"id":"walls", "rect":[-6,-4,12,8], "image":"assets/prototype/facility_walls.png", "color":[0,0,0]}
+  ],
+  "colliders": [
+    {"id":"north", "rect":[-6,-4,12,0.25]},
+    {"id":"west", "rect":[-6,-4,0.25,8]},
+    {"id":"east", "rect":[5.75,-4,0.25,8]},
+    {"id":"south_left", "rect":[-6,3.75,5.1,0.25]},
+    {"id":"south_right", "rect":[0.9,3.75,5.1,0.25]},
+    {"id":"door", "rect":[-0.9,3.75,1.8,0.25], "kind":"door", "active":false},
+    {"id":"cover", "rect":[-3,-1,1.5,0.8], "kind":"cover"}
+  ],
+  "navigation": {
+    "south_west":[-8,6], "south_east":[8,6], "north_west":[-8,-6], "north_east":[8,-6],
+    "entry":[0,5], "inside_entry":[0,3], "hall":[0,0], "supply":[3,1]
+  },
+  "navigation_edges": [
+    ["south_west","south_east"], ["south_west","north_west"],
+    ["south_east","north_east"], ["north_west","north_east"],
+    ["south_west","entry"], ["south_east","entry"],
+    ["entry","inside_entry"], ["inside_entry","hall"], ["hall","supply"]
+  ],
+  "guards": [
+    {"id":"training_guard_1", "position":[-8,-6], "patrol":[[-8,-6],[8,-6],[8,6],[-8,6]]},
+    {"id":"training_guard_2", "position":[8,6], "patrol":[[8,6],[-8,6],[-8,-6],[8,-6]]}
+  ]
+}

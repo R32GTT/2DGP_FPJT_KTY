@@ -6,6 +6,8 @@
 - 게임 규칙: [PRD.md](PRD.md)
 - 구현 계획·인계: [CAMPAIGN_IMPLEMENTATION.md](CAMPAIGN_IMPLEMENTATION.md)
 - 기존 시설 제작 도구: [maptool/README.md](maptool/README.md)
+- 그림 기반 최소 플레이 목업: [prototype/README.md](prototype/README.md) — `PlayPrototype.bat` 실행
+- 목업 에셋 요청 규격: [assets/prototype/README.md](assets/prototype/README.md)
 
 ## 개발 환경
 
