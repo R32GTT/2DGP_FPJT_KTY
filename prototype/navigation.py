@@ -13,7 +13,7 @@ class Navigation:
         for start, end in edges:
             if start not in nodes or end not in nodes:
                 raise ValueError("내비게이션 연결 노드 누락")
-            if not self.clear(nodes[start], nodes[end], ignore_doors=True):
+            if not self.clear(nodes[start], nodes[end], ignore_doors="all"):
                 raise ValueError(f"벽을 통과하는 내비게이션 연결: {start} -> {end}")
             self.edges[start].append(end)
             self.edges[end].append(start)
@@ -22,16 +22,16 @@ class Navigation:
         return self.geometry.raycast(start, end, padding=self.clearance, category="movement",
                                      ignore_doors=ignore_doors) is None
 
-    def route(self, start, goal):
-        if self.clear(start, goal):
+    def route(self, start, goal, *, allow_doors=False):
+        if self.clear(start, goal, ignore_doors=allow_doors):
             return [goal]
         points = {**self.nodes, "@start": start, "@goal": goal}
         edges = {key: list(values) for key, values in self.edges.items()}
         edges["@start"], edges["@goal"] = [], []
         for key, point in self.nodes.items():
-            if self.clear(start, point):
+            if self.clear(start, point, ignore_doors=allow_doors):
                 edges["@start"].append(key)
-            if self.clear(point, goal):
+            if self.clear(point, goal, ignore_doors=allow_doors):
                 edges[key].append("@goal")
         pending, distances, parents = [(0.0, "@start")], {"@start": 0.0}, {}
         while pending:
@@ -46,7 +46,7 @@ class Navigation:
                 return path[::-1]
             for neighbor in edges[current]:
                 # 문 상태는 연결 후보만 확인한다. 전체 그래프를 다시 만들지 않는다.
-                if not self.clear(points[current], points[neighbor]):
+                if not self.clear(points[current], points[neighbor], ignore_doors=allow_doors):
                     continue
                 candidate = cost + math.dist(points[current], points[neighbor])
                 if candidate < distances.get(neighbor, math.inf):

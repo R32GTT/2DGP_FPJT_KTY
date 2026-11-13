@@ -33,19 +33,34 @@ class World:
                                   tuple(row["color"]), row.get("fallback", ""))
                        for row in self.data["layers"]]
         self.geometry = SpatialIndex()
+        self.revision = 0
         for row in self.data["colliders"]:
             rect = Rect(*row["rect"])
             if not all(math.isfinite(value) for value in (rect.x, rect.y, rect.w, rect.h)) or min(rect.w, rect.h) <= 0:
                 raise ValueError("충돌 영역 치수 오류")
-            self.geometry.add(Collider(row["id"], rect, row.get("kind", "wall"), row.get("active", True)))
+            self.geometry.add(Collider(row["id"], rect, row.get("kind", "wall"), row.get("active", True),
+                                        material=row.get("material", "concrete"), ai_access=row.get("ai_access", True)))
         self.navigation = Navigation({key: tuple(point) for key, point in self.data["navigation"].items()},
                                      self.data["navigation_edges"], self.geometry)
         self.crate = tuple(self.data["supply_point"])
+        self.safehouse = tuple(self.data.get("safehouse_spawn", self.data["player_spawn"]))
 
     def toggle_door(self, position):
         for collider in self.geometry.objects.values():
             center = (collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
             if collider.kind == "door" and math.dist(position, center) <= 1.8:
                 collider.active = not collider.active
+                self.revision += 1
+                return collider
+        return None
+
+    def open_for_ai(self, actor, destination):
+        for collider in self.geometry.objects.values():
+            center = (collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
+            if (collider.kind == "door" and collider.active and collider.ai_access
+                    and math.dist(actor.xy, center) < 1.6
+                    and collider.rect.expanded(actor.radius).segment_entry(actor.xy, destination) is not None):
+                collider.active = False
+                self.revision += 1
                 return collider
         return None

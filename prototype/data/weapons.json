@@ -1,0 +1,24 @@
+[
+  {
+    "id":"ar_a", "name":"AR-01", "capacity":30, "reserve":90,
+    "fire_interval":0.17, "damage":18, "range_m":60, "noise_radius":30,
+    "spread_degrees":0.7, "penetration":1, "reload_move_multiplier":0.45, "image":"assets/prototype/rifle_a.png",
+    "size_m":[0.9,0.225], "mount":[0.08,0.1], "grip":[0.2,0.5], "muzzle":[0.98,0.5],
+    "reload_stages":[
+      {"id":"remove_magazine","duration":0.5,"noise_radius":2},
+      {"id":"insert_magazine","duration":1.0,"noise_radius":2},
+      {"id":"bolt_catch","duration":0.5,"noise_radius":4}
+    ]
+  },
+  {
+    "id":"ar_b", "name":"AR-02", "capacity":20, "reserve":60,
+    "fire_interval":0.23, "damage":25, "range_m":70, "noise_radius":36,
+    "spread_degrees":0.5, "penetration":1, "reload_move_multiplier":0.35, "image":"assets/prototype/rifle_b.png",
+    "size_m":[1.0,0.225], "mount":[0.08,0.1], "grip":[0.18,0.5], "muzzle":[0.98,0.5],
+    "reload_stages":[
+      {"id":"remove_magazine","duration":0.65,"noise_radius":2},
+      {"id":"insert_magazine","duration":1.25,"noise_radius":2},
+      {"id":"bolt_catch","duration":0.7,"noise_radius":4}
+    ]
+  }
+]

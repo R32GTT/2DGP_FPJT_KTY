@@ -1,0 +1,123 @@
+"""외부 그림이 없을 때 사용할 작은 GPU 그림을 시작 시 한 번 만든다."""
+
+import ctypes
+import math
+import random
+
+import pico2d
+
+
+class Painter:
+    def __init__(self, backend):
+        self.backend = backend
+
+    def rect(self, x, y, w, h, color):
+        backend = self.backend
+        backend.SDL_SetRenderDrawColor(backend.renderer, *color[:3], color[3] if len(color) > 3 else 255)
+        backend.SDL_RenderFillRect(backend.renderer, backend.SDL_Rect(int(x), int(y), max(1, int(w)), max(1, int(h))))
+
+
+def painted_image(backend, width, height, paint):
+    texture = backend.SDL_CreateTexture(backend.renderer, backend.SDL_PIXELFORMAT_RGBA8888,
+                                        backend.SDL_TEXTUREACCESS_TARGET, width, height)
+    if not texture:
+        raise RuntimeError("임시 그래픽 텍스처 생성 실패")
+    previous = backend.SDL_GetRenderTarget(backend.renderer)
+    try:
+        backend.SDL_SetTextureBlendMode(texture, backend.SDL_BLENDMODE_BLEND)
+        backend.SDL_SetRenderTarget(backend.renderer, texture)
+        backend.SDL_SetRenderDrawColor(backend.renderer, 0, 0, 0, 0)
+        backend.SDL_RenderClear(backend.renderer)
+        paint(Painter(backend))
+    except Exception:
+        backend.SDL_DestroyTexture(texture)
+        raise
+    finally:
+        backend.SDL_SetRenderTarget(backend.renderer, previous)
+    return pico2d.Image(texture)
+
+
+def actor_image(backend, player):
+    def paint(p):
+        p.rect(8, 4, 32, 17, (17, 25, 27))
+        p.rect(11, 3, 26, 18, (68, 126, 132) if player else (136, 133, 91))
+        p.rect(10, 4, 8, 16, (42, 70, 68))
+        p.rect(18, 7, 12, 10, (35, 49, 48))
+        p.rect(27, 6, 12, 12, (182, 171, 136))
+        p.rect(28, 6, 10, 9, (74, 98, 91) if player else (107, 109, 77))
+        p.rect(15, 1, 18, 4, (91, 151, 151) if player else (161, 156, 107))
+        p.rect(15, 19, 18, 4, (91, 151, 151) if player else (161, 156, 107))
+    return painted_image(backend, 48, 24, paint)
+
+
+def weapon_image(backend, alternate=False):
+    def paint(p):
+        p.rect(7, 9, 34, 5, (27, 33, 34))
+        p.rect(34, 10, 23, 2, (161, 166, 154))
+        p.rect(0, 8, 12, 8, (111, 106, 79) if alternate else (69, 85, 80))
+        p.rect(12, 8, 25, 7, (70, 77, 72))
+        p.rect(18, 6, 6, 3, (172, 177, 159))
+        p.rect(19, 14, 5, 7, (37, 43, 42))
+        p.rect(28, 9, 10, 5, (110, 112, 94))
+    return painted_image(backend, 64, 24, paint)
+
+
+def layer_image(backend, layer):
+    if layer.id == "walls":
+        return None
+    road = layer.id.startswith("road")
+    width, height = (512, 64) if road else (768, 512)
+
+    def paint(p):
+        rng = random.Random(f"prototype-art:{layer.id}")
+        if road:
+            p.rect(0, 0, width, height, (144, 135, 107))
+            p.rect(0, 5, width, height - 10, (75, 81, 78))
+            for x in range(0, width, 45):
+                p.rect(x, height / 2, 22, 2, (185, 180, 145))
+            p.rect(0, 8, width, 1, (104, 111, 96))
+            p.rect(0, height - 9, width, 1, (104, 111, 96))
+        elif layer.id == "floor":
+            p.rect(0, 0, width, height, layer.color)
+            for y in range(0, height, 85):
+                p.rect(0, y, width, 1, (106, 115, 105))
+            for x in range(0, width, 128):
+                p.rect(x, 0, 1, height, (106, 115, 105))
+            p.rect(20, 20, width - 40, 5, (164, 161, 121))
+            p.rect(20, height - 26, width - 40, 5, (164, 161, 121))
+            p.rect(20, 20, 5, height - 40, (164, 161, 121))
+            p.rect(width - 25, 20, 5, height - 40, (164, 161, 121))
+        elif layer.id == "dirt":
+            for y in range(height):
+                fraction = (y / height - 0.5) * 2
+                radius = math.sqrt(max(0, 1 - fraction * fraction)) * width * 0.47
+                p.rect(width / 2 - radius, y, radius * 2, 1, (*layer.color[:3], 180))
+        else:
+            p.rect(0, 0, width, height, layer.color)
+            for _ in range(1200):
+                x, y = rng.randrange(width), rng.randrange(height)
+                shade = rng.choice((-6, -3, 4, 7))
+                color = tuple(max(0, min(255, component + shade)) for component in layer.color[:3])
+                p.rect(x, y, rng.randrange(2, 14), rng.randrange(1, 6), color)
+    return painted_image(backend, width, height, paint)
+
+
+def vignette_image(backend):
+    width, height = 256, 144
+    surface = backend.SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, backend.SDL_PIXELFORMAT_RGBA32)
+    if not surface:
+        raise RuntimeError("비네팅 표면 생성 실패")
+    pixels = bytearray(width * height * 4)
+    for y in range(height):
+        for x in range(width):
+            edge = max(abs(x / (width - 1) * 2 - 1), abs(y / (height - 1) * 2 - 1))
+            alpha = int(max(0, (edge - 0.45) / 0.55) ** 1.7 * 240)
+            index = (y * width + x) * 4
+            pixels[index:index + 4] = bytes((205, 18, 30, alpha))
+    ctypes.memmove(surface.contents.pixels, bytes(pixels), len(pixels))
+    texture = backend.SDL_CreateTextureFromSurface(backend.renderer, surface)
+    backend.SDL_FreeSurface(surface)
+    if not texture:
+        raise RuntimeError("비네팅 텍스처 생성 실패")
+    backend.SDL_SetTextureBlendMode(texture, backend.SDL_BLENDMODE_BLEND)
+    return pico2d.Image(texture)

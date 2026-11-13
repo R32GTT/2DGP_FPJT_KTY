@@ -49,6 +49,8 @@ class Collider:
     kind: str = "wall"
     active: bool = True
     blocks: tuple[str, ...] = ("movement", "sight", "bullet")
+    material: str = "concrete"
+    ai_access: bool = True
 
 
 @dataclass
@@ -97,7 +99,7 @@ class SpatialIndex:
             else:
                 y, next_y = y + step_y, next_y + delta_y
 
-    def raycast(self, start, end, *, padding=0.0, category="sight", ignore_doors=False):
+    def raycast(self, start, end, *, padding=0.0, category="sight", ignore_doors=False, ignore_ids=()):
         """Ray가 통과하는 셀의 후보만 검사하고 가장 가까운 충돌을 반환한다."""
         self.ray_queries += 1
         seen, nearest = set(), None
@@ -110,8 +112,9 @@ class SpatialIndex:
                             continue
                         seen.add(key)
                         collider = self.objects[key]
-                        if (not collider.active or category not in collider.blocks
-                                or (ignore_doors and collider.kind == "door")):
+                        if (key in ignore_ids or not collider.active or category not in collider.blocks
+                                or (ignore_doors and collider.kind == "door"
+                                    and (ignore_doors == "all" or collider.ai_access))):
                             continue
                         self.candidate_tests += 1
                         fraction = collider.rect.expanded(padding).segment_entry(start, end)

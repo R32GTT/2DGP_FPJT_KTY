@@ -16,9 +16,11 @@ class PlayCamera(Camera):
     def set_zoom(self, zoom):
         self.scale = 64 * max(0.5, min(4.0, zoom))
 
-    def follow(self, position):
-        self.offset_x = self.width / 2 - position[0] * self.scale
-        self.offset_y = self.height / 2 - position[1] * self.scale
+    def follow(self, position, mouse=None):
+        ahead_x = max(-2, min(2, (mouse[0] - self.width / 2) / self.scale * 0.2)) if mouse else 0
+        ahead_y = max(-2, min(2, (mouse[1] - self.height / 2) / self.scale * 0.2)) if mouse else 0
+        self.offset_x = self.width / 2 - (position[0] + ahead_x) * self.scale
+        self.offset_y = self.height / 2 - (position[1] + ahead_y) * self.scale
 
     def visible(self, rect):
         x0, y0 = self.world(0, 0)

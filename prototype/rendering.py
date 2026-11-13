@@ -1,43 +1,50 @@
-"""PNG 레이어·동적 개체 표시. 리소스는 시작 시 로드하고 HUD 텍스처는 캐시한다."""
+"""그림·회전된 몸통/무기·화면 효과. 모든 리소스는 시작 시 준비한다."""
 
+from copy import copy
 import importlib
 import math
-import os
-from pathlib import Path
 from time import perf_counter
 
 import pico2d as pico
 
 from .geometry import Rect
+from .hud import HUD
+from .visual_assets import actor_image, layer_image, vignette_image, weapon_image
+from .weapons import load_weapons, weapon_pose
 from .world import ROOT
 
 
 class Renderer:
     def __init__(self, world):
         self.backend = importlib.import_module("pico2d.pico2d")
+        self.backend.SDL_SetWindowTitle(self.backend.window, b"REVENANT : L.O.S.T / Field Prototype")
         self.backend.SDL_SetRenderDrawBlendMode(self.backend.renderer, self.backend.SDL_BLENDMODE_BLEND)
         self.backend.SDL_SetHint(b"SDL_RENDER_SCALE_QUALITY", b"0")
-        self.images, self.missing, self.labels = {}, [], {}
-        self.layers = {layer.id: self._image(layer.image, layer.fallback) for layer in world.layers}
-        self.sprites = {key: self._image(f"assets/prototype/{key}.png") for key in ("player", "guard")}
+        self.backend.SDL_ShowCursor(self.backend.SDL_DISABLE)
+        self.images, self.missing = {}, []
+        self.layers = {layer.id: self._image(layer.image, layer.fallback) or layer_image(self.backend, layer)
+                       for layer in world.layers}
+        self.sprites = {key: self._image(f"assets/prototype/{key}.png") or actor_image(self.backend, key == "player")
+                        for key in ("player", "guard")}
+        self.guns = {key: self._image(spec.image) or weapon_image(self.backend, key == "ar_b")
+                     for key, spec in load_weapons().items()}
         self.door = self._image("assets/prototype/door.png", "assets/generated/entities/door_door_wood_horizontal_64x32.png")
-        font_path = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf"
-        self.font = pico.load_font(str(font_path), 16)
-        self.hud_at = 0.0
+        self.vignette = self._image("assets/prototype/alert_vignette.png") or vignette_image(self.backend)
+        self.hud = HUD(self.backend)
         self.last_draw_ms = 0.0
         for name in self.missing:
-            print(f"임시 표현 사용: {name}")
+            print(f"임시 그래픽 사용: {name}")
 
     def _image(self, name, fallback=""):
+        if not name and not fallback:
+            return None
         for candidate in (name, fallback):
-            if not candidate:
-                continue
-            path = ROOT / candidate
-            if path.is_file():
+            if candidate and (ROOT / candidate).is_file():
                 if candidate not in self.images:
-                    self.images[candidate] = pico.load_image(str(path))
+                    self.images[candidate] = pico.load_image(str(ROOT / candidate))
                 return self.images[candidate]
-        self.missing.append(name)
+        if name:
+            self.missing.append(name)
         return None
 
     @staticmethod
@@ -46,100 +53,104 @@ class Renderer:
         right, bottom = camera.pico(rect.right, rect.bottom)
         pico.draw_rectangle(left, bottom, right, top, *color, filled=filled)
 
-    def _label(self, key, text):
-        if key in self.labels and self.labels[key][0] == text:
-            return
-        backend = self.backend
-        surface = backend.TTF_RenderUTF8_Blended(self.font.font, text.encode("utf-8"), backend.SDL_Color(235, 238, 218))
-        texture = backend.SDL_CreateTextureFromSurface(backend.renderer, surface)
-        backend.SDL_FreeSurface(surface)
-        if not texture:
-            raise RuntimeError("HUD 텍스처 생성 실패")
-        self.labels[key] = (text, pico.Image(texture))
+    @staticmethod
+    def _rotated_bounds(center, size, facing):
+        cosine, sine = abs(math.cos(facing)), abs(math.sin(facing))
+        width, height = size[0] * cosine + size[1] * sine, size[0] * sine + size[1] * cosine
+        return Rect(center[0] - width / 2, center[1] - height / 2, width, height)
 
-    def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0):
+    def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None):
         started = perf_counter()
+        view = copy(camera)
+        shake_x, shake_y = simulation.feedback.offset
+        view.offset_x += shake_x
+        view.offset_y += shake_y
         pico.clear_canvas()
-        pico.draw_rectangle(0, 0, camera.width - 1, camera.height - 1, 21, 30, 30, filled=True)
+        pico.draw_rectangle(0, 0, view.width - 1, view.height - 1, 18, 28, 29, filled=True)
         world = simulation.world
         for layer in world.layers:
-            if not camera.visible(layer.rect):
+            if not view.visible(layer.rect):
                 continue
             image = self.layers[layer.id]
             if image is not None:
-                x, y = camera.pico(layer.rect.x + layer.rect.w / 2, layer.rect.y + layer.rect.h / 2)
-                image.draw(x, y, layer.rect.w * camera.scale, layer.rect.h * camera.scale)
-            elif layer.id != "walls":
-                self._rect(camera, layer.rect, layer.color)
+                x, y = view.pico(layer.rect.x + layer.rect.w / 2, layer.rect.y + layer.rect.h / 2)
+                image.draw(x, y, layer.rect.w * view.scale, layer.rect.h * view.scale)
         for collider in world.geometry.objects.values():
-            if not camera.visible(collider.rect):
+            if not view.visible(collider.rect):
                 continue
             if collider.kind == "door":
                 if collider.active:
-                    if self.door is not None:
-                        rect = collider.rect
-                        x, y = camera.pico(rect.x + rect.w / 2, rect.y + rect.h / 2)
-                        self.door.draw(x, y, rect.w * camera.scale, rect.h * camera.scale)
+                    if self.door:
+                        x, y = view.pico(collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
+                        self.door.draw(x, y, collider.rect.w * view.scale, collider.rect.h * view.scale)
                     else:
-                        self._rect(camera, collider.rect, (121, 89, 49))
+                        self._rect(view, collider.rect, (140, 104, 62))
                 else:
-                    self._rect(camera, Rect(collider.rect.x, collider.rect.y, 0.12, 0.25), (70, 174, 105))
+                    self._rect(view, Rect(collider.rect.x, collider.rect.y, 0.12, 0.25), (78, 184, 132))
             elif collider.kind == "cover" or self.layers.get("walls") is None:
-                self._rect(camera, collider.rect, (90, 97, 91))
+                rect = collider.rect
+                self._rect(view, Rect(rect.x + 0.08, rect.y + 0.09, rect.w, rect.h), (20, 29, 28, 130))
+                self._rect(view, rect, (126, 111, 77) if collider.material == "wood" else (139, 148, 133))
+                self._rect(view, rect, (185, 184, 153), filled=False)
             if debug:
-                self._rect(camera, collider.rect, (238, 121, 75) if collider.active else (87, 207, 137), filled=False)
-        self._rect(camera, Rect(world.crate[0] - 0.35, world.crate[1] - 0.35, 0.7, 0.7), (190, 163, 74))
+                self._rect(view, collider.rect, (233, 111, 77) if collider.active else (91, 213, 150), filled=False)
+        crate = Rect(world.crate[0] - 0.35, world.crate[1] - 0.35, 0.7, 0.7)
+        self._rect(view, crate, (183, 156, 76))
+        self._rect(view, crate, (228, 205, 137), filled=False)
+        safe = Rect(world.safehouse[0] - 1.2, world.safehouse[1] - 1.2, 2.4, 2.4)
+        if view.visible(safe):
+            self._rect(view, safe, (47, 94, 82))
+            self._rect(view, safe, (124, 206, 175), filled=False)
+            self._rect(view, Rect(world.safehouse[0] - 0.1, world.safehouse[1] - 0.5, 0.2, 1), (206, 225, 202))
+            self._rect(view, Rect(world.safehouse[0] - 0.5, world.safehouse[1] - 0.1, 1, 0.2), (206, 225, 202))
+        for point, _ in simulation.dropped:
+            self._rect(view, Rect(point[0] - 0.25, point[1] - 0.15, 0.5, 0.3), (218, 181, 106))
         for actor in [*simulation.guards, simulation.player]:
-            if not camera.visible(Rect(actor.position.x - 1, actor.position.y - 1, 2, 2)):
+            body_bounds = self._rotated_bounds(actor.xy, (0.75, 0.375), actor.facing)
+            weapon = actor.weapon
+            center, muzzle = weapon_pose(actor)
+            gun_bounds = self._rotated_bounds(center, weapon.spec.size_m, actor.facing) if weapon else body_bounds
+            if not (view.visible(body_bounds) or view.visible(gun_bounds)):
                 continue
-            image = self.sprites["player" if actor is simulation.player else "guard"]
-            x, y = camera.pico(*actor.xy)
-            if image is not None and actor.hp > 0:
-                image.rotate_draw(-actor.facing, x, y, 0.75 * camera.scale, 0.375 * camera.scale)
-            else:
-                color = ((91, 199, 208) if actor is simulation.player else
-                         (231, 109, 83) if actor.state == "chase" else (209, 185, 114)) if actor.hp else (74, 71, 67)
-                self._rect(camera, Rect(actor.position.x - 0.24, actor.position.y - 0.18, 0.48, 0.36), color)
-            if actor.hp:
-                aim_x = actor.position.x + math.cos(actor.facing) * 0.65
-                aim_y = actor.position.y + math.sin(actor.facing) * 0.65
-                pico.draw_line(x, y, *camera.pico(aim_x, aim_y), 35, 40, 39)
+            x, y = view.pico(*actor.xy)
+            image = self.sprites["player" if actor.team == "player" else "guard"]
+            if actor.hp <= 0:
+                image.opacify(0.35)
+            image.rotate_draw(-actor.facing, x, y, 0.75 * view.scale, 0.375 * view.scale)
+            image.opacify(1.0)
+            if actor.hp > 0 and weapon:
+                gun_x, gun_y = view.pico(*center)
+                gun = self.guns[weapon.spec.id]
+                gun.rotate_draw(-actor.facing, gun_x, gun_y,
+                                weapon.spec.size_m[0] * view.scale, weapon.spec.size_m[1] * view.scale)
             if debug:
-                self._rect(camera, Rect(actor.position.x - actor.radius, actor.position.y - actor.radius,
-                                        actor.radius * 2, actor.radius * 2), (245, 224, 130), filled=False)
+                self._rect(view, Rect(actor.position.x - actor.radius, actor.position.y - actor.radius,
+                                      actor.radius * 2, actor.radius * 2), (244, 211, 119), filled=False)
+                self._rect(view, gun_bounds, (107, 187, 212), filled=False)
                 brain = simulation.ai.brains.get(actor.id)
-                if brain is not None and actor.hp:
-                    pico.draw_line(x, y, *camera.pico(*simulation.player.xy), 238 if brain.visible else 80, 100, 90)
-        for bullet in simulation.projectiles.bullets:
-            pico.draw_line(*camera.pico(bullet.x, bullet.y),
-                           *camera.pico(bullet.x - bullet.vx * 0.007, bullet.y - bullet.vy * 0.007), 255, 234, 149)
-        self._hud(simulation, camera, paused, debug, update_ms)
+                if brain and actor.hp and brain.memory.last_seen:
+                    pico.draw_line(x, y, *view.pico(*brain.memory.last_seen), 212, 103, 75)
+        for trace in simulation.combat.traces:
+            color = (249, 225, 137) if trace.team == "player" else (230, 128, 92)
+            pico.draw_line(*view.pico(*trace.start), *view.pico(*trace.end), *color)
+        if mouse is not None and simulation.player.hp > 0:
+            # 흔들리는 화면에서도 실제 조준한 월드 지점에 조준점을 함께 그린다.
+            x, y = view.pico(*camera.world(*mouse))
+            for dx, dy in ((-9, 0), (9, 0), (0, -9), (0, 9)):
+                pico.draw_line(x + dx * 0.5, y + dy * 0.5, x + dx, y + dy, 226, 230, 202)
+        if simulation.feedback.alpha > 0.001:
+            self.vignette.opacify(simulation.feedback.alpha)
+            self.vignette.draw(camera.width / 2, camera.height / 2, camera.width, camera.height)
+        self.hud.render(simulation, camera, paused=paused, debug=debug,
+                        update_ms=update_ms, draw_ms=self.last_draw_ms)
         self.last_draw_ms = (perf_counter() - started) * 1000
         pico.update_canvas()
 
-    def _hud(self, simulation, camera, paused, debug, update_ms):
-        now = perf_counter()
-        if now >= self.hud_at:
-            self.hud_at = now + 0.2
-            state = simulation.campaign.simulation.state
-            self._label("title", f"IMAGE MAP PROTOTYPE  |  줌 {camera.magnification:.0%}  |  {'일시정지' if paused else '실행 중'}")
-            self._label("controls", "WASD 이동 · Shift 달리기 · 마우스 발사 · 휠/+/- 줌 · F 문 · E 보급품 · P 정지 · F1 판정 · Esc 종료")
-            self._label("state", f"사격 {simulation.projectiles.shots} / 명중 {simulation.projectiles.hits} / 활성 탄환 {len(simulation.projectiles.bullets)}"
-                        f"  |  실제 창고 {simulation.campaign.supplies} / 확보 {state.player_stock['supplies']}")
-            self._label("timing", f"갱신 {update_ms:.2f}ms / 그리기 {self.last_draw_ms:.2f}ms  |  누적 벽 후보 검사 {simulation.world.geometry.candidate_tests}"
-                        f"  |  {'판정 표시 ON' if debug else '판정 표시 OFF'}")
-            self._label("message", simulation.message)
-        pico.draw_rectangle(0, camera.height - 125, camera.width - 1, camera.height - 1, 19, 28, 30, 220, filled=True)
-        for index, key in enumerate(("title", "controls", "state", "timing", "message")):
-            if key in self.labels:
-                image = self.labels[key][1]
-                image.draw(12 + image.w / 2, camera.height - 17 - index * 23)
-
     def close(self):
-        # SDL 렌더러를 닫기 전에 모든 텍스처 참조를 해제한다.
-        self.labels.clear()
+        self.hud.close()
         self.layers.clear()
         self.sprites.clear()
-        self.door = None
+        self.guns.clear()
+        self.door = self.vignette = None
         self.images.clear()
-        self.backend.TTF_CloseFont(self.font.font)
+        self.backend.SDL_ShowCursor(self.backend.SDL_ENABLE)
