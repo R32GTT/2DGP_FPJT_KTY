@@ -5,7 +5,7 @@ import math
 from .models import CampaignState, Operation, Reservation, RESOURCE_TYPES, stock, validate_state
 
 
-TERMINAL_PHASES = {"completed", "cancelled"}
+TERMINAL_PHASES = {"completed", "cancelled", "destroyed"}
 
 
 def quantities(values: dict[str, int]) -> dict[str, int]:
@@ -107,6 +107,21 @@ def reconcile_reservations(state: CampaignState, owner_id: str) -> None:
 def depart(state: CampaignState, operation_id: str) -> bool:
     operation = state.operations[operation_id]
     if operation.phase != "loading" or operation_id not in state.reservations:
+        return False
+    origin = owner(state, operation.origin_id)
+    if operation.origin_id == state.source.id:
+        nodes, required = {origin.node_id}, origin.minimum_garrison
+    else:
+        region = state.regions[origin.region_id]
+        nodes = {state.facilities[fid].node_id for fid in region.facility_ids}
+        required = region.minimum_garrison
+    escorts = sum(state.units[uid].soldiers for uid in operation.unit_ids)
+    remaining = sum(u.soldiers for u in state.units.values()
+                    if u.node_id in nodes and u.status == "available")
+    if (remaining < required or escorts < state.rules["escort_soldiers"] * len(operation.vehicle_ids)
+            or any(a.status != "reserved" or a.operation_id != operation.id
+                   for a in _assets(state, operation))):
+        cancel(state, operation_id)
         return False
     reconcile_reservations(state, operation.origin_id)
     if operation.phase != "loading":
@@ -251,3 +266,17 @@ def assert_invariants(state: CampaignState) -> None:
                        if state.vehicles[vid].status != "destroyed")
         if sum(operation.cargo.values()) + sum(operation.provisions.values()) > capacity:
             raise ValueError("운송 적재량 초과")
+    for asset in (*state.units.values(), *state.vehicles.values()):
+        if asset.status == "destroyed":
+            continue
+        if asset.operation_id is not None:
+            if (type(asset).__name__, asset.id) not in assigned:
+                raise ValueError("작전에 속하지 않는 배정 자산")
+            operation = state.operations[asset.operation_id]
+            if operation.phase == "loading":
+                if asset.status != "reserved" or asset.node_id != operation.home_node:
+                    raise ValueError("예약 자산의 위치·상태 불일치")
+            elif asset.status != "in_transit" or asset.node_id is not None:
+                raise ValueError("이동 자산의 위치·상태 불일치")
+        elif asset.status != "available" or asset.node_id is None:
+            raise ValueError("가용 자산의 위치·상태 불일치")

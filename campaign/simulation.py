@@ -1,11 +1,13 @@
 """고정 전략 틱·사건·외부 개입을 묶는 독립 실행 코어."""
 
+from copy import deepcopy
+
 from . import clock
 from .logistics import plan_exports, plan_supplies
 from .models import CampaignState, Event
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
                         finish_return, handover, owner, remove)
-from .routes import move_one_second, request_return, set_route
+from .routes import move_one_second, position, request_return, set_route
 
 
 class Simulation:
@@ -123,6 +125,8 @@ class Simulation:
             state.roads[action["road_id"]].blocked = action["blocked"]
         elif kind in {"capture", "destroy_stock"}:
             owner_id = action.get("owner_id")
+            if owner_id is not None and "operation_id" in action:
+                raise ValueError("시설과 작전 중 하나만 지정해야 함")
             if "operation_id" in action:
                 operation = state.operations[action["operation_id"]]
                 if operation.phase in TERMINAL_PHASES:
@@ -136,6 +140,8 @@ class Simulation:
                 inventory = state.facilities[owner_id].inventory
             remove(state, inventory, action["amount"],
                    outcome="captured" if kind == "capture" else "destroyed", owner_id=owner_id)
+        elif kind in {"destroy_vehicle", "damage_unit"}:
+            self._damage_asset(action)
         elif kind == "damage_facility":
             damage = action["damage"]
             if type(damage) is not int or damage < 0:
@@ -153,5 +159,66 @@ class Simulation:
                 self._moving.add(operation.id)
         else:
             raise ValueError(f"지원하지 않는 행동: {kind}")
-        state.record("action", action=dict(action))
+        state.record("action", action=deepcopy(action))
         assert_invariants(state)
+
+    def _damage_asset(self, action: dict) -> None:
+        state = self.state
+        vehicle_loss = action["type"] == "destroy_vehicle"
+        asset = (state.vehicles[action["vehicle_id"]] if vehicle_loss
+                 else state.units[action["unit_id"]])
+        if asset.status == "destroyed":
+            raise ValueError("이미 격파된 자산")
+        losses = 0 if vehicle_loss else action["soldiers"]
+        if not vehicle_loss and (type(losses) is not int or not 0 <= losses <= asset.soldiers):
+            raise ValueError("잘못된 병력 손실량")
+        operation = state.operations.get(asset.operation_id)
+        location = deepcopy(position(state, operation) if asset.node_id is None
+                            else state.nodes[asset.node_id].position)
+        if vehicle_loss:
+            if operation is not None and operation.phase != "loading":
+                capacity = sum(state.vehicles[vid].capacity for vid in operation.vehicle_ids
+                               if state.vehicles[vid].status != "destroyed")
+                # 원거리 화물은 적재 용량 비율로 분산된 것으로 취급한다.
+                for inventory in (operation.cargo, operation.provisions):
+                    amount = {name: (value * asset.capacity + capacity - 1) // capacity
+                              for name, value in inventory.items()}
+                    remove(state, inventory, amount, outcome="destroyed")
+            asset.status = "destroyed"
+        else:
+            asset.soldiers -= losses
+            asset.losses += losses
+            if asset.soldiers == 0:
+                asset.status = "destroyed"
+        if asset.status == "destroyed":
+            asset.position, asset.operation_id = location, None
+        if operation is not None:
+            if operation.phase == "loading":
+                cancel(state, operation.id)
+            else:
+                vehicles = [state.vehicles[vid] for vid in operation.vehicle_ids
+                            if state.vehicles[vid].status != "destroyed"]
+                soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
+                if not vehicles:
+                    operation.phase = "stranded" if soldiers else "destroyed"
+                    operation.waiting_reason = "no_vehicle"
+                    if not soldiers:
+                        operation.completed_at = state.world_time
+                    self._moving.discard(operation.id)
+                elif (soldiers < state.rules["escort_soldiers"] * len(vehicles)
+                      and operation.phase in {"outbound", "unloading"}):
+                    request_return(state, operation)
+                    self._moving.add(operation.id)
+        if asset.node_id is not None:
+            # 주둔 손실 이후 미출발 동원이 최소 주둔량을 침해하지 않게 한다.
+            for candidate in reversed(list(state.operations.values())):
+                if candidate.phase != "loading" or candidate.origin_id == state.source.id:
+                    continue
+                origin = state.facilities[candidate.origin_id]
+                region = state.regions[origin.region_id]
+                nodes = {state.facilities[fid].node_id for fid in region.facility_ids}
+                if asset.node_id in nodes:
+                    remaining = sum(u.soldiers for u in state.units.values()
+                                    if u.node_id in nodes and u.status == "available")
+                    if remaining < region.minimum_garrison:
+                        cancel(state, candidate.id)
