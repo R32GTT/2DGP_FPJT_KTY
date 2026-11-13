@@ -1,5 +1,6 @@
 {
   "description": "소형 지역 3개 후방 군수 검증 월드. 모든 수치는 임시 검증값.",
+  "resource_priority": ["supplies", "ammunition", "repair_parts"],
   "nodes": [
     {"id":"outside", "position":{"x":-2000.0,"y":0.0}},
     {"id":"entry", "position":{"x":-1000.0,"y":0.0}},

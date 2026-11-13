@@ -180,6 +180,7 @@ class CampaignState:
     history: list[dict] = field(default_factory=list)
     initial_soldiers: int = 0
     initial_vehicle_ids: list[str] = field(default_factory=list)
+    resource_priority: list[str] = field(default_factory=lambda: list(RESOURCE_TYPES))
 
     def new_id(self) -> str:
         result = f"operation_{self.next_id}"
@@ -206,6 +207,8 @@ def validate_state(state: CampaignState) -> None:
 
     require(state.source.mode in {"finite", "infinite"}, "잘못된 외부 지원 모드")
     require(state.world_time >= 0, "음수 세계 시각")
+    require(len(state.resource_priority) == len(RESOURCE_TYPES)
+            and set(state.resource_priority) == set(RESOURCE_TYPES), "잘못된 자원 우선순위")
     require(state.source.node_id in state.nodes, "외부 공급원 노드 누락")
     require(state.demand.node_id in state.nodes, "외부 출하 노드 누락")
     for mapping in (state.nodes, state.roads, state.regions, state.facilities,

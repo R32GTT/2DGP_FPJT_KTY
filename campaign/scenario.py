@@ -35,6 +35,7 @@ def load_scenario(path=DEFAULT_SCENARIO, *, seed: int = 42,
         units=indexed(Unit, data["units"]), vehicles=indexed(Vehicle, data["vehicles"]),
         source=source, demand=ExternalDemand(**data["demand"]), rules=data["rules"],
         rng_state=random.Random(seed).getstate(),
+        resource_priority=data.get("resource_priority", list(stock())),
     )
     for name in stock():
         state.ledger.initial[name] = sum(f.inventory[name] for f in facilities.values())

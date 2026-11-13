@@ -56,7 +56,7 @@ def reserve(state: CampaignState, operation: Operation, cargo: dict[str, int],
     if sum(cargo.values()) + sum(provisions.values()) > capacity:
         raise ValueError("차량 적재량 초과")
     soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
-    if soldiers < state.rules["escort_soldiers"]:
+    if soldiers < state.rules["escort_soldiers"] * len(operation.vehicle_ids):
         raise ValueError("호위 병력 부족")
     if operation.origin_id == state.source.id:
         nodes, required = {state.source.node_id}, state.source.minimum_garrison
