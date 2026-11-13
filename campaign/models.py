@@ -151,6 +151,7 @@ class Ledger:
     destroyed: dict[str, int] = field(default_factory=stock)
     delivered: dict[str, int] = field(default_factory=stock)
     captured: dict[str, int] = field(default_factory=stock)
+    returned_external: dict[str, int] = field(default_factory=stock)
 
 
 @dataclass
@@ -177,6 +178,8 @@ class CampaignState:
     ledger: Ledger = field(default_factory=Ledger)
     player_stock: dict[str, int] = field(default_factory=stock)
     history: list[dict] = field(default_factory=list)
+    initial_soldiers: int = 0
+    initial_vehicle_ids: list[str] = field(default_factory=list)
 
     def new_id(self) -> str:
         result = f"operation_{self.next_id}"

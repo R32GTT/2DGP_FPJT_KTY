@@ -40,5 +40,7 @@ def load_scenario(path=DEFAULT_SCENARIO, *, seed: int = 42,
         state.ledger.initial[name] = sum(f.inventory[name] for f in facilities.values())
         if support == "finite":
             state.ledger.initial[name] += source.inventory[name]
+    state.initial_soldiers = sum(unit.soldiers for unit in state.units.values())
+    state.initial_vehicle_ids = sorted(state.vehicles)
     validate_state(state)
     return state
