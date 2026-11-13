@@ -4,16 +4,17 @@ import argparse
 from collections import Counter
 from time import perf_counter
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 from pathlib import Path
 
 from .mapview import ACCENT, BACKGROUND, FONT, MUTED, TEXT, StrategicMap
-from .persistence import load_campaign
+from .persistence import load_campaign, save_campaign
 from .playback import Playback
 from .resources import TERMINAL_PHASES, available
 from .scenario import DEFAULT_SCENARIO, load_scenario
 from .simulation import Simulation
 from .viewmodel import world_clock
+from .viewer_actions import allowed_commands, build_action
 
 
 PHASES = {"loading": "집결·적재", "outbound": "운송 중", "unloading": "하역 중",
@@ -31,7 +32,7 @@ class Visualizer(tk.Tk):
         super().__init__()
         self.title("Revenant : L.O.S.T — 군수 전략 관측기")
         self.geometry(f"{min(1440, self.winfo_screenwidth() - 80)}x{min(900, self.winfo_screenheight() - 80)}")
-        self.minsize(1080, 680)
+        self.minsize(1080, 720)
         self.configure(background=BACKGROUND)
         self.playback = Playback(simulation, speed=speed)
         self.playback.set_paused(paused)
@@ -43,7 +44,7 @@ class Visualizer(tk.Tk):
         self._style()
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close)
-        self.bind("<space>", lambda event: self.toggle_pause())
+        self.bind("<space>", self._space)
         self.bind("<Home>", lambda event: self.map.fit())
         self.after_idle(self._initial_render)
         if autostart:
@@ -70,7 +71,15 @@ class Visualizer(tk.Tk):
         style.configure("TNotebook", background=BACKGROUND, borderwidth=0)
         style.configure("TNotebook.Tab", background="#263b48", foreground=TEXT, padding=(10, 5))
         style.map("TNotebook.Tab", background=[("selected", "#345564")])
-        style.configure("TCombobox", fieldbackground="#263b48", foreground=TEXT)
+        style.configure("TCombobox", fieldbackground="#263b48", foreground=TEXT,
+                        background="#263b48", arrowcolor=TEXT)
+        style.map("TCombobox", fieldbackground=[("readonly", "#263b48")],
+                  foreground=[("readonly", TEXT)], selectbackground=[("readonly", "#263b48")],
+                  selectforeground=[("readonly", TEXT)])
+        style.configure("TSpinbox", fieldbackground="#263b48", foreground=TEXT,
+                        background="#263b48", arrowcolor=TEXT)
+        self.option_add("*TCombobox*Listbox.background", "#263b48")
+        self.option_add("*TCombobox*Listbox.foreground", TEXT)
 
     def _build(self):
         header = ttk.Frame(self, padding=(16, 10))
@@ -94,29 +103,55 @@ class Visualizer(tk.Tk):
             ttk.Button(toolbar, text=label, command=lambda value=seconds: self.playback.request_skip(value)).pack(side="left", padx=3)
         ttk.Button(toolbar, text="스킵 취소", command=self.playback.cancel_skip).pack(side="left", padx=3)
         ttk.Button(toolbar, text="전체 지도 [Home]", command=lambda: self.map.fit()).pack(side="right", padx=3)
+        ttk.Button(toolbar, text="불러오기", command=self.load_dialog).pack(side="right", padx=3)
+        ttk.Button(toolbar, text="저장", command=self.save_dialog).pack(side="right", padx=3)
         self.statistics = tk.StringVar()
         ttk.Label(self, textvariable=self.statistics, padding=(16, 6), style="Muted.TLabel").pack(fill="x")
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True, padx=12)
         sidebar = ttk.Frame(body, width=330)
         sidebar.pack(side="right", fill="y", padx=(12, 0))
-        sidebar.pack_propagate(False)
+        sidebar.grid_propagate(False)
+        sidebar.columnconfigure(0, weight=1)
+        sidebar.rowconfigure(2, weight=1)
         self.map = StrategicMap(body, self.state, on_select=self.select)
         self.map.pack(side="left", fill="both", expand=True)
-        notebook = ttk.Notebook(sidebar, height=220)
-        notebook.pack(fill="x")
+        notebook = ttk.Notebook(sidebar, height=150)
+        notebook.grid(row=0, column=0, sticky="ew")
         self.facilities = self._tree(notebook, "시설", ("병력", "차량"))
         self.operations = self._tree(notebook, "수송대", ("상태", "화물"))
         self.facilities.bind("<<TreeviewSelect>>", lambda event: self._tree_select(self.facilities, "facility"))
         self.operations.bind("<<TreeviewSelect>>", lambda event: self._tree_select(self.operations, "operation"))
-        ttk.Label(sidebar, text="선택 정보", style="Title.TLabel", padding=(0, 12, 0, 5)).pack(anchor="w")
-        self.details = tk.Text(sidebar, height=15, wrap="word", background="#14232e", foreground=TEXT,
+        ttk.Label(sidebar, text="선택 정보", style="Title.TLabel", padding=(0, 8, 0, 5)).grid(row=1, column=0, sticky="w")
+        self.details = tk.Text(sidebar, height=6, wrap="word", background="#14232e", foreground=TEXT,
                                relief="flat", padx=12, pady=10, font=(FONT, 9), state="disabled")
-        self.details.pack(fill="both", expand=True)
-        ttk.Label(sidebar, text="최근 세계 사건", padding=(0, 9, 0, 4)).pack(anchor="w")
+        self.details.grid(row=2, column=0, sticky="nsew")
+        controls = ttk.Frame(sidebar, padding=(0, 8))
+        controls.grid(row=3, column=0, sticky="ew")
+        ttk.Label(controls, text="디버그 개입", style="Muted.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+        quantity = ttk.Frame(controls)
+        quantity.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
+        self.resource_text = tk.StringVar(value="보급품")
+        resource = ttk.Combobox(quantity, textvariable=self.resource_text,
+                                values=tuple(RESOURCES.values()), state="readonly", width=10)
+        resource.pack(side="left")
+        self.amount_text = tk.StringVar(value="10")
+        ttk.Spinbox(quantity, textvariable=self.amount_text, from_=1, to=10000, width=7).pack(side="left", padx=5)
+        ttk.Label(quantity, text="개").pack(side="left")
+        self.action_buttons = {}
+        actions = (("capture", "선택 물자 탈취"), ("destroy_stock", "선택 물자 파괴"),
+                   ("toggle_road", "도로 차단 / 개방"), ("damage_facility", "시설 피해 +25%"),
+                   ("destroy_vehicle", "차량 1대 격파"), ("damage_unit", "호위 1명 손실"),
+                   ("return_operation", "귀환 / 예약 취소"))
+        for index, (command, label) in enumerate(actions):
+            button = ttk.Button(controls, text=label, command=lambda value=command: self.intervene(value))
+            button.grid(row=2 + index // 2, column=index % 2, sticky="ew", padx=2, pady=2)
+            self.action_buttons[command] = button
+        controls.columnconfigure((0, 1), weight=1)
+        ttk.Label(sidebar, text="최근 세계 사건", padding=(0, 5, 0, 4)).grid(row=4, column=0, sticky="w")
         self.events_text = tk.StringVar()
         ttk.Label(sidebar, textvariable=self.events_text, style="Muted.TLabel",
-                  justify="left", wraplength=320).pack(fill="x", pady=(0, 8))
+                  justify="left", wraplength=320).grid(row=5, column=0, sticky="ew", pady=(0, 8))
         self.status = tk.StringVar(value="좌클릭 선택 · 우/중클릭 드래그 이동 · 휠 확대 · 방향키/WASD 이동 · Space 재생/정지")
         ttk.Label(self, textvariable=self.status, padding=(14, 8), style="Muted.TLabel").pack(fill="x")
 
@@ -144,6 +179,12 @@ class Visualizer(tk.Tk):
         self.playback.set_paused(not self.playback.paused)
         self.refresh_panel(force=True)
 
+    def _space(self, event):
+        if event.widget.winfo_class() in {"Text", "Entry", "TEntry", "TCombobox", "TSpinbox", "TButton"}:
+            return None
+        self.toggle_pause()
+        return "break"
+
     def step(self):
         self.playback.set_paused(True)
         self.playback.request_skip(1)
@@ -156,6 +197,68 @@ class Visualizer(tk.Tk):
         selection = tree.selection()
         if selection:
             self.select((kind, selection[0]))
+
+    def intervene(self, command):
+        try:
+            resource = next(key for key, label in RESOURCES.items() if label == self.resource_text.get())
+            amount = int(self.amount_text.get()) if command in {"capture", "destroy_stock"} else 1
+            action = build_action(self.state, self.selection, command, resource=resource, amount=amount)
+            self.playback.simulation.apply_action(action)
+        except (ValueError, KeyError, StopIteration) as exc:
+            self.status.set(f"개입 실패: {exc}")
+            return
+        self.playback.refresh()
+        self.map.dirty = True
+        self.map.render(self.playback.markers())
+        self.refresh_panel(force=True)
+        self.status.set(f"{world_clock(self.state.world_time)}  개입 적용: {action}")
+
+    def save_to(self, path):
+        self.playback.set_paused(True)
+        save_campaign(self.state, path)
+        self.refresh_panel(force=True)
+        self.status.set(f"저장 완료: {path}")
+
+    def load_from(self, path):
+        state = load_campaign(path)
+        self.playback = Playback(Simulation(state), speed=self.playback.speed)
+        self.playback.set_paused(True)
+        self.map.state = state
+        self.selection = self.map.selection = None
+        for tree in (self.facilities, self.operations):
+            children = tree.get_children()
+            if children:
+                tree.delete(*children)
+        self._panel_time = -1
+        self._last_frame = perf_counter()
+        self.map.fit()
+        self.map.render(self.playback.markers())
+        self.refresh_panel(force=True)
+        self.status.set(f"불러오기 완료: {path}  /  일시정지 상태")
+
+    def save_dialog(self):
+        self.playback.set_paused(True)
+        self.refresh_panel(force=True)
+        path = filedialog.asksaveasfilename(parent=self, title="캠페인 저장", defaultextension=".json",
+                                          filetypes=[("캠페인 저장", "*.json")])
+        try:
+            if path:
+                self.save_to(path)
+        except ValueError as exc:
+            self.status.set(f"저장 실패: {exc}")
+        self._last_frame = perf_counter()
+
+    def load_dialog(self):
+        self.playback.set_paused(True)
+        self.refresh_panel(force=True)
+        path = filedialog.askopenfilename(parent=self, title="캠페인 불러오기",
+                                         filetypes=[("캠페인 저장", "*.json")])
+        try:
+            if path:
+                self.load_from(path)
+        except ValueError as exc:
+            self.status.set(f"불러오기 실패: {exc}")
+        self._last_frame = perf_counter()
 
     def _frame(self):
         started = perf_counter()
@@ -179,6 +282,9 @@ class Visualizer(tk.Tk):
         if not force and self._panel_time == state.world_time:
             return
         self._panel_time = state.world_time
+        commands = allowed_commands(state, self.selection)
+        for command, button in self.action_buttons.items():
+            button.configure(state="normal" if command in commands else "disabled")
         active = {op.id: op for op in state.operations.values() if op.phase not in TERMINAL_PHASES}
         vehicle_states = Counter(vehicle.status for vehicle in state.vehicles.values())
         mode = "유한" if state.source.mode == "finite" else "무한"

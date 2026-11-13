@@ -93,6 +93,11 @@ class StrategicMap(tk.Canvas):
         self._selected_route()
         self._counts()
         width, height = self.winfo_width(), self.winfo_height()
+        for vehicle in self.state.vehicles.values():
+            if vehicle.status == "destroyed" and vehicle.position is not None:
+                x, y = self.camera.screen(vehicle.position.x, vehicle.position.y)
+                if -20 <= x <= width + 20 and -20 <= y <= height + 20:
+                    self.create_text(x, y, text="×", fill=RED, font=(FONT, 16), tags="dynamic")
         for marker in markers.values():
             x, y = self.camera.screen(marker.x, marker.y)
             if not -30 <= x <= width + 30 or not -30 <= y <= height + 30:
