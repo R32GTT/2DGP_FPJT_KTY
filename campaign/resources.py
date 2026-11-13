@@ -254,7 +254,11 @@ def assert_invariants(state: CampaignState) -> None:
     assigned = set()
     for operation in state.operations.values():
         if operation.phase in TERMINAL_PHASES:
+            if any(operation.cargo.values()) or any(operation.provisions.values()):
+                raise ValueError("종료 작전에 남은 화물")
             continue
+        if (operation.phase == "loading") != (operation.id in state.reservations):
+            raise ValueError("작전 예약 누락 또는 중복")
         for asset in _assets(state, operation):
             if asset.status == "destroyed":
                 continue
@@ -264,7 +268,10 @@ def assert_invariants(state: CampaignState) -> None:
             assigned.add(key)
         capacity = sum(state.vehicles[vid].capacity for vid in operation.vehicle_ids
                        if state.vehicles[vid].status != "destroyed")
-        if sum(operation.cargo.values()) + sum(operation.provisions.values()) > capacity:
+        reservation = state.reservations.get(operation.id)
+        load = (sum(reservation.cargo.values()) + sum(reservation.provisions.values())
+                if reservation else sum(operation.cargo.values()) + sum(operation.provisions.values()))
+        if load > capacity:
             raise ValueError("운송 적재량 초과")
     for asset in (*state.units.values(), *state.vehicles.values()):
         if asset.status == "destroyed":
