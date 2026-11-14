@@ -135,7 +135,10 @@ def layer_image(backend, layer):
         return None
     road = role.startswith("road")
     vertical = role == "road_v"
-    width, height = ((64, 512) if vertical else (512, 64)) if road else (768, 512)
+    if road or role in {"trail", "footbridge"}:
+        width, height = (64, 512) if vertical else (512, 64)
+    else:
+        width, height = 768, 512
 
     def paint(p):
         rng = random.Random(f"prototype-art:{role}:{layer.variant}")
@@ -149,6 +152,16 @@ def layer_image(backend, layer):
                 p.rect(0, 5, width, height - 10, (75, 81, 78))
                 for x in range(0, width, 45):
                     p.rect(x, height / 2, 22, 2, (185, 180, 145))
+        elif role == "footbridge":
+            p.rect(0, 0, width, height, (75, 65, 52))
+            for x in range(0, width, 18):
+                p.rect(x, 5, 16, height - 10, layer.color)
+        elif role == "roof":
+            p.rect(0, 0, width, height, (55, 61, 55))
+            p.rect(10, 10, width - 20, height - 20, layer.color)
+            for y in range(26, height - 10, 38):
+                p.rect(10, y, width - 20, 3, (69, 73, 66))
+            p.rect(10, height / 2 - 5, width - 20, 10, (179, 168, 131))
         elif role in {"floor", "yard"}:
             p.rect(0, 0, width, height, layer.color)
             for y in range(0, height, 85):

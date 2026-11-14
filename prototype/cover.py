@@ -12,7 +12,7 @@ class CoverFinder:
         self.points = []
         self.index = BoundsIndex(8)
         for collider in world.geometry.objects.values():
-            if collider.kind == "door":
+            if collider.kind == "door" or "bullet" not in collider.blocks:
                 continue
             rect = collider.rect
             offset = 0.4

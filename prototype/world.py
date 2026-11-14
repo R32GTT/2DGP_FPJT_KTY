@@ -25,7 +25,7 @@ class ImageLayer:
     fallback: str = ""
     style: str = ""
     variant: int = 0
-    rotation: int = 0
+    rotation: float = 0
     image_size: tuple = ()
     order: int = 0
 
@@ -59,6 +59,8 @@ class World:
             collider = Collider(row["id"], rect, row.get("kind", "wall"), row.get("active", True),
                                 material=row.get("material", "concrete"), ai_access=row.get("ai_access", True),
                                 visual_layer=row.get("visual_layer", ""), rotation=row.get("rotation", 0))
+            if "blocks" in row:
+                collider.blocks = tuple(row["blocks"])
             self.geometry.add(collider)
             self.collider_index.add(collider.id, rect, collider)
         self.navigation = Navigation({key: tuple(point) for key, point in self.data["navigation"].items()},

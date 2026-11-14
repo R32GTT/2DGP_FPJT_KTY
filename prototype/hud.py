@@ -203,8 +203,10 @@ class HUD:
 
         world = simulation.world
         if world.facilities:
+            self._draw_field_terrain(world, point)
             for road in world.roads:
-                pico.draw_line(*point(*road["start"]), *point(*road["end"]), 82, 99, 90)
+                color = (112, 102, 75) if road.get("kind") == "footpath" else (82, 99, 90)
+                pico.draw_line(*point(*road["start"]), *point(*road["end"]), *color)
             for facility in world.facilities:
                 x, y, w, h = facility["rect"]
                 a, b = point(x, y), point(x + w, y + h)
@@ -225,6 +227,14 @@ class HUD:
                 x, y = point(convoy.x, convoy.y)
                 pico.draw_rectangle(x - 2, y - 1, x + 2, y + 1, 221, 186, 100, filled=True)
 
+    @staticmethod
+    def _draw_field_terrain(world, point):
+        for layer in world.layers:
+            if layer.role in {"water", "roof"}:
+                rect = layer.rect
+                a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
+                pico.draw_rectangle(a[0], b[1], b[0], a[1], *layer.color, filled=True)
+
     def _region_map(self, simulation, camera, debug):
         self.panel(60, 166, camera.width - 120, camera.height - 246)
         self.text("map_title", 84, camera.height - 111)
@@ -240,8 +250,10 @@ class HUD:
 
         right, bottom = point(world.bounds.right, world.bounds.bottom)
         pico.draw_rectangle(left, bottom, right, top, 34, 49, 43, filled=True)
+        self._draw_field_terrain(world, point)
         for road in world.roads:
-            pico.draw_line(*point(*road["start"]), *point(*road["end"]), 153, 155, 123)
+            color = (114, 103, 77) if road.get("kind") == "footpath" else (153, 155, 123)
+            pico.draw_line(*point(*road["start"]), *point(*road["end"]), *color)
         if not world.facilities:
             for layer in world.layers:
                 a, b = point(layer.rect.x, layer.rect.y), point(layer.rect.right, layer.rect.bottom)

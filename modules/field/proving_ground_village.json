@@ -1,0 +1,41 @@
+{
+  "field_colliders": [
+    {"id":"village_shop", "kind":"building", "rect":[-88,-21,13,8], "color":[144,114,93]},
+    {"id":"village_storehouse", "kind":"building", "rect":[-73,-29,10,7], "color":[119,128,112]},
+    {"id":"village_longhouse", "kind":"building", "rect":[-83,7,12,9], "color":[138,126,101]},
+    {"id":"village_workshop", "kind":"building", "rect":[-65,-8,9,10], "color":[123,119,111]},
+    {"id":"village_house_east", "kind":"building", "rect":[-65,17,12,8], "color":[142,119,100]},
+    {"id":"village_house_south", "kind":"building", "rect":[-90,25,13,8], "color":[114,125,112]},
+    {"id":"village_shed", "kind":"building", "rect":[-76,30,5,5], "color":[120,113,96]},
+    {"id":"village_shop_wall", "kind":"cover", "rect":[-91,-11,6,0.6]},
+    {"id":"village_store_wall", "kind":"cover", "rect":[-75,-19,7,0.55]},
+    {"id":"village_longhouse_wall", "kind":"cover", "rect":[-84,17.5,12,0.55]},
+    {"id":"village_downhill_wall", "kind":"cover", "rect":[-69,16,0.7,11]},
+    {"id":"village_woodpile", "kind":"cover", "material":"wood", "rect":[-77,-9,3.5,1.7]},
+    {"id":"village_garden_wall", "kind":"cover", "rect":[-100,20,6,0.65]},
+    {"id":"village_vehicle", "kind":"parked_truck", "material":"metal", "rect":[-86,-0.5,5.6,2.4]},
+    {"id":"village_delivery_van", "kind":"parked_truck", "material":"metal", "rect":[-60,-18,2.4,5.6], "rotation":90},
+    {"id":"village_creek_stack", "kind":"cover", "material":"wood", "rect":[-53,10,3,2]},
+    {"id":"village_south_rocks", "kind":"cover", "rect":[-55,34,4,2]}
+  ],
+  "walk_nodes": {
+    "village_start": [-94,4], "village_square": [-88,-4], "shop_corner": [-72,-12],
+    "village_north": [-61,-22], "workshop_corner": [-68,4], "village_back": [-70,12],
+    "village_south": [-70,22], "village_yard_end": [-70,28], "village_orchard": [-57,29], "creek_bank": [-55,6],
+    "footbridge_west": [-49,8]
+  },
+  "footpaths": [
+    {"id":"village_lane_start", "start":"village_start", "end":"village_square"},
+    {"id":"village_shop_lane", "start":"village_square", "end":"shop_corner"},
+    {"id":"village_north_lane", "start":"shop_corner", "end":"village_north"},
+    {"id":"village_gate_lane", "start":"village_north", "end":"gate_a"},
+    {"id":"village_workshop_lane", "start":"shop_corner", "end":"workshop_corner"},
+    {"id":"village_workshop_return", "start":"workshop_corner", "end":"village_back"},
+    {"id":"village_back_lane", "start":"village_back", "end":"village_south"},
+    {"id":"village_creek_lane", "start":"workshop_corner", "end":"creek_bank"},
+    {"id":"village_footbridge_lane", "start":"creek_bank", "end":"footbridge_west"},
+    {"id":"village_orchard_exit", "start":"village_orchard", "end":"south_crossing_west"}
+  ],
+  "walk_edges": [["village_south","village_yard_end"], ["village_yard_end","village_orchard"],
+                 ["village_start","entry"]]
+}

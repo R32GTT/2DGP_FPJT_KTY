@@ -104,14 +104,23 @@ class Renderer:
                 x, y = view.pico(layer.rect.x + layer.rect.w / 2, layer.rect.y + layer.rect.h / 2)
                 size = layer.image_size or (layer.rect.w, layer.rect.h)
                 image.rotate_draw(-math.radians(layer.rotation), x, y, size[0] * view.scale, size[1] * view.scale)
-            elif layer.role != "walls":
+            elif layer.role != "walls" and not layer.rotation % 90:
                 self._rect(view, layer.rect, layer.color)
         for collider in world.visible_colliders(view.viewport(4)):
+            if collider.kind in {"building", "terrain"}:
+                continue
             if collider.kind == "tree":
                 x, y = view.pico(collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
                 self.tree.draw(x, y, 3.6 * view.scale, 3.6 * view.scale)
                 if debug:
                     self._rect(view, collider.rect, (148, 190, 124), filled=False)
+                continue
+            if collider.kind == "parked_truck":
+                rect = collider.rect
+                x, y = view.pico(rect.x + rect.w / 2, rect.y + rect.h / 2)
+                width, height = (rect.h, rect.w) if collider.rotation % 180 else (rect.w, rect.h)
+                self.truck.rotate_draw(-math.radians(collider.rotation), x, y,
+                                       width * view.scale, height * view.scale)
                 continue
             if collider.kind == "door":
                 if world.data.get("training_facility"):
