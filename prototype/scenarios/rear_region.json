@@ -1,0 +1,46 @@
+{
+  "format":"revenant.region_scene.v1", "name":"A구역 / 후방 군수 지역", "seed":42,
+  "bounds":[-224,-160,448,320], "chunk_size":64,
+  "player_spawn":[-160,80], "safehouse_spawn":[-160,80],
+  "campaign_facility":"depot_a", "player_weapons":["ar_a","ar_b"],
+  "prefabs":"prototype/data/facility_prefabs.json",
+  "road_nodes":{
+    "outside":[-264,64], "entry":[-224,64], "gate_a":[-160,64], "depot_a":[-64,64],
+    "junction_hq":[64,64], "hq_a":[64,-32], "junction_comms":[144,64], "comms_a":[144,40],
+    "exit_a":[224,64], "north_west_a":[-224,-112], "bypass":[224,-112],
+    "depot_b":[2000,0], "depot_c":[4000,0]
+  },
+  "roads":[
+    {"id":"external_entry","start":"outside","end":"entry"},
+    {"id":"entry_a","start":"entry","end":"gate_a"},
+    {"id":"a_depot","start":"gate_a","end":"depot_a"},
+    {"id":"a_hq","start":"depot_a","end":"junction_hq"},
+    {"id":"a_hq_access","start":"junction_hq","end":"hq_a"},
+    {"id":"a_comms","start":"junction_hq","end":"junction_comms"},
+    {"id":"a_comms_access","start":"junction_comms","end":"comms_a"},
+    {"id":"a_exit","start":"junction_comms","end":"exit_a"},
+    {"id":"a_b","start":"exit_a","end":"depot_b"},
+    {"id":"a_bypass","start":"entry","end":"north_west_a"},
+    {"id":"a_bypass_top","start":"north_west_a","end":"bypass"},
+    {"id":"a_bypass_down","start":"bypass","end":"exit_a"},
+    {"id":"bypass_c","start":"bypass","end":"depot_c"}
+  ],
+  "facilities":[
+    {"id":"safehouse","name":"안전가옥","prefab":"safehouse","position":[-160,80],"rotation":180,
+     "service_node":"gate_a","closed":false,"ai_access":false},
+    {"id":"depot_a","name":"물류창고","prefab":"warehouse","position":[-64,48],
+     "service_node":"depot_a","campaign_id":"depot_a"},
+    {"id":"hq_a","name":"지역 HQ","prefab":"hq","position":[64,-56],
+     "service_node":"hq_a","campaign_id":"hq_a"},
+    {"id":"comms_a","name":"통신시설","prefab":"comms","position":[144,24],
+     "service_node":"comms_a","campaign_id":"comms_a"}
+  ],
+  "garrisons":[
+    {"unit":"a_garrison","count":10,"facility":"hq_a"},
+    {"unit":"a_comms_guard","count":2,"facility":"comms_a"},
+    {"unit":"a_escort_1","count":2,"facility":"depot_a"},
+    {"unit":"a_escort_2","count":2,"facility":"depot_a"}
+  ],
+  "tree_count":160,
+  "campaign_remove_roads":["external_entry","entry_a","a_hq","a_comms","a_b","a_bypass","bypass_c"]
+}

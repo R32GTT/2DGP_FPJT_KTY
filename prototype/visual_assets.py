@@ -64,21 +64,26 @@ def weapon_image(backend, alternate=False):
 
 
 def layer_image(backend, layer):
-    if layer.id == "walls":
+    role = layer.role
+    if role == "walls":
         return None
-    road = layer.id.startswith("road")
-    width, height = (512, 64) if road else (768, 512)
+    road = role.startswith("road")
+    vertical = role == "road_v"
+    width, height = ((64, 512) if vertical else (512, 64)) if road else (768, 512)
 
     def paint(p):
-        rng = random.Random(f"prototype-art:{layer.id}")
+        rng = random.Random(f"prototype-art:{role}:{layer.variant}")
         if road:
             p.rect(0, 0, width, height, (144, 135, 107))
-            p.rect(0, 5, width, height - 10, (75, 81, 78))
-            for x in range(0, width, 45):
-                p.rect(x, height / 2, 22, 2, (185, 180, 145))
-            p.rect(0, 8, width, 1, (104, 111, 96))
-            p.rect(0, height - 9, width, 1, (104, 111, 96))
-        elif layer.id == "floor":
+            if vertical:
+                p.rect(5, 0, width - 10, height, (75, 81, 78))
+                for y in range(0, height, 45):
+                    p.rect(width / 2, y, 2, 22, (185, 180, 145))
+            else:
+                p.rect(0, 5, width, height - 10, (75, 81, 78))
+                for x in range(0, width, 45):
+                    p.rect(x, height / 2, 22, 2, (185, 180, 145))
+        elif role in {"floor", "yard"}:
             p.rect(0, 0, width, height, layer.color)
             for y in range(0, height, 85):
                 p.rect(0, y, width, 1, (106, 115, 105))
@@ -88,7 +93,7 @@ def layer_image(backend, layer):
             p.rect(20, height - 26, width - 40, 5, (164, 161, 121))
             p.rect(20, 20, 5, height - 40, (164, 161, 121))
             p.rect(width - 25, 20, 5, height - 40, (164, 161, 121))
-        elif layer.id == "dirt":
+        elif role == "dirt":
             for y in range(height):
                 fraction = (y / height - 0.5) * 2
                 radius = math.sqrt(max(0, 1 - fraction * fraction)) * width * 0.47

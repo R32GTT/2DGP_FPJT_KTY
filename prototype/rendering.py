@@ -79,7 +79,8 @@ class Renderer:
             image = self.layers[layer.id]
             if image is not None:
                 x, y = view.pico(layer.rect.x + layer.rect.w / 2, layer.rect.y + layer.rect.h / 2)
-                image.draw(x, y, layer.rect.w * view.scale, layer.rect.h * view.scale)
+                size = layer.image_size or (layer.rect.w, layer.rect.h)
+                image.rotate_draw(-math.radians(layer.rotation), x, y, size[0] * view.scale, size[1] * view.scale)
         for collider in world.geometry.objects.values():
             if not view.visible(collider.rect):
                 continue
@@ -92,7 +93,7 @@ class Renderer:
                         self._rect(view, collider.rect, (140, 104, 62))
                 else:
                     self._rect(view, Rect(collider.rect.x, collider.rect.y, 0.12, 0.25), (78, 184, 132))
-            elif collider.kind == "cover" or self.layers.get("walls") is None:
+            elif collider.kind != "wall" or self.layers.get(collider.visual_layer or "walls") is None:
                 rect = collider.rect
                 self._rect(view, Rect(rect.x + 0.08, rect.y + 0.09, rect.w, rect.h), (20, 29, 28, 130))
                 self._rect(view, rect, (126, 111, 77) if collider.material == "wood" else (139, 148, 133))

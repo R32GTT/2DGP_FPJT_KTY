@@ -75,6 +75,12 @@ AR-02는 단계 시간 차이를 확인하기 위한 임시 총기 데이터다.
 기존 중앙 36×24m 배경 이미지는 같은 영역에 유지하고 주변은 별도 지형 레이어로 확장했다.
 그림 위의 내비게이션 노드·희소 연결과 충돌 영역은 미터 단위 데이터이며 타일맵을 생성하지 않는다.
 
+지역형 입력 `scenarios/rear_region.json`도 제공한다. 448×320m에 안전가옥·창고·HQ·통신시설을
+배치하고, 90도 회전 프리팹의 그림·벽·문·노드를 함께 변환한다. 안전가옥에서 HQ까지 검증용
+이동 경로는 360m다. `--scene prototype/scenarios/rear_region.json`으로 선택할 수 있다.
+시설 형태는 `data/facility_prefabs.json`, 배치 조립은 `prefabs.py`·`region.py`,
+정적 범위 조회는 `spatial.py`에서 관리한다.
+
 | 모듈 | 책임 |
 | --- | --- |
 | `world.py`, `geometry.py`, `navigation.py`, `movement.py` | 그림 배치·공간 해시·희소 경로·몸체 이동 |

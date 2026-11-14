@@ -51,6 +51,7 @@ class Collider:
     blocks: tuple[str, ...] = ("movement", "sight", "bullet")
     material: str = "concrete"
     ai_access: bool = True
+    visual_layer: str = ""
 
 
 @dataclass
