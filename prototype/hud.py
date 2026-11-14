@@ -51,7 +51,7 @@ class HUD:
         pico.draw_rectangle(x, y, x + w, y + h, 17, 28, 31, 238, filled=True)
         pico.draw_rectangle(x, y, x + w, y + h, 67, 86, 82, 255)
 
-    def _update_ai(self, simulation, camera):
+    def _update_ai(self, simulation):
         nearby = sorted((actor for actor in simulation.guards if actor.hp > 0),
                         key=lambda actor: math.dist(actor.xy, simulation.player.xy))
         self.ai_rows = min(4, len(nearby))
@@ -62,7 +62,7 @@ class HUD:
             cues = [(memory.seen_at, "목격", memory.last_seen),
                     (memory.sound_at, "소리", memory.last_sound),
                     (memory.reported_at, "보고", memory.reported)]
-            stamp, kind, point = max(cues, key=lambda cue: cue[0])
+            stamp, kind, point = max(cues, key=lambda cue: cue[0] if cue[2] is not None else -math.inf)
             cue = f"{kind} {point[0]:.0f}, {point[1]:.0f} · {time - stamp:.1f}초 전" if point else "단서 없음"
             action = AI_ACTIONS.get(brain.action, "") if actor.state in {"combat", "retreat"} else ""
             role = AI_ROLES.get(brain.role, "")
@@ -70,6 +70,9 @@ class HUD:
             route = "목표 없음"
             if time < brain.scan_until:
                 route = "주변 관찰"
+            elif brain.pending_goal is not None:
+                x, y = brain.pending_goal
+                route = f"{x:.1f}, {y:.1f} · 경로 계산 대기"
             elif brain.goal is not None:
                 if brain.path_revision != simulation.world.revision:
                     status = "장애물 변경 · 재계산 대기"
@@ -106,7 +109,7 @@ class HUD:
             self.label("map_help", "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보", 13)
             self.label("map_size", f"{simulation.world.bounds.w:g} × {simulation.world.bounds.h:g} m", 13)
             if debug:
-                self._update_ai(simulation, camera)
+                self._update_ai(simulation)
             for facility in simulation.world.facilities:
                 self.label("site/" + facility["id"], facility["name"], 13)
                 campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])

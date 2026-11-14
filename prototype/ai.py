@@ -20,6 +20,7 @@ class Brain:
     path_revision: int = -1
     route_failed: bool = False
     route_origin: tuple | None = None
+    pending_goal: tuple | None = None
     fire_at: float = 0.0
     burst: int = 0
     action: str = ""
@@ -30,6 +31,9 @@ class Brain:
     radio_at: float = 0.0
     contact_at: float = 0.0
     role: str = ""
+    incident: str = ""
+    role_changed: bool = False
+    completed_report_at: float = -1000.0
     cue: tuple | None = None
     search_points: list = field(default_factory=list)
     scan_until: float = 0.0
@@ -53,11 +57,22 @@ class Intent:
     step_dt: float = 1 / 60
 
 
+@dataclass
+class Incident:
+    updated_at: float
+    heading: float
+    point: tuple
+    checked: list = field(default_factory=list)
+
+
 class EnemyAI:
     def __init__(self, world, actors, patrols, *, can_radio=None):
         self.world = world
         self.cover_finder = CoverFinder(world)
         self.can_radio = can_radio
+        self.exits = {point for key, point in world.navigation.nodes.items() if key.endswith("/outside")}
+        self.incidents = {}
+        self.assign_at = 0.0
         self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.01)
                        for index, (actor, patrol) in enumerate(zip(actors, patrols))}
 
@@ -100,14 +115,80 @@ class EnemyAI:
             radio = not local and distance <= 75 and self.can_radio and self.can_radio(actor, other)
             if local or radio:
                 receivers.append(other)
-        for index, other in enumerate(sorted(receivers, key=lambda other: math.dist(other.xy, point))):
-            ally = self.brains[other.id]
-            if time - ally.memory.reported_at < 4 and math.dist(point, ally.memory.reported) <= 6:
+        if not receivers:
+            return
+        key = brain.incident if brain.incident in self.incidents else actor.id
+        heading = brain.memory.seen_heading
+        if heading is None:
+            heading = actor.facing
+        incident = self.incidents.get(key)
+        if incident is None:
+            incident = self.incidents[key] = Incident(time, heading, point)
+        elif math.dist(point, incident.point) > 4:
+            incident.point = point
+            incident.checked = [checked for checked in incident.checked if math.dist(point, checked) >= 4]
+        incident.updated_at, incident.heading = time, heading
+        for member in (actor, *receivers):
+            ally = self.brains[member.id]
+            if ally.incident != key:
+                ally.incident = key
+                self._set_role(ally, "")
+                ally.completed_report_at = -1000.0
+            if ally.memory.reported == incident.point:
+                if ally.completed_report_at >= ally.memory.reported_at:
+                    ally.completed_report_at = time
+                ally.memory.reported_at = time
                 continue
-            ally.memory.reported = point
+            ally.memory.reported = incident.point
             ally.memory.reported_at = time
-            ally.role = ("pursue", "intercept", "sweep", "hold")[min(index, 3)]
             ally.sense_at = min(ally.sense_at, time)
+
+    @staticmethod
+    def _set_role(brain, role):
+        if brain.role != role:
+            brain.role = role
+            brain.role_changed = True
+            brain.cue = None
+
+    def _assign_roles(self, actors, time):
+        if time < self.assign_at:
+            return
+        self.assign_at = time + 0.35
+        self.incidents = {key: incident for key, incident in self.incidents.items()
+                          if time - incident.updated_at < 18}
+        groups = {}
+        for actor in actors:
+            brain = self.brains[actor.id]
+            if (actor.hp > 0 and brain.incident in self.incidents
+                    and brain.memory.reported is not None and time - brain.memory.reported_at < 18):
+                groups.setdefault(brain.incident, []).append(actor)
+        for members in groups.values():
+            available = []
+            for actor in members:
+                brain = self.brains[actor.id]
+                weapon = actor.weapon
+                can_fight = weapon is not None and (weapon.chambered or weapon.reserve > 0 or weapon.stage >= 2)
+                if (actor.hp >= 20 and can_fight and brain.suppression < 0.55
+                        and actor.state != "retreat" and (brain.visible
+                             or brain.completed_report_at < brain.memory.reported_at)):
+                    available.append(actor)
+                else:
+                    self._set_role(brain, "hold")
+            for role in ("pursue", "intercept", "sweep"):
+                if not available:
+                    break
+                current = next((actor for actor in available if self.brains[actor.id].role == role), None)
+                if current is None:
+                    def priority(actor):
+                        brain = self.brains[actor.id]
+                        return (not brain.memory.visible if role == "pursue" else brain.memory.visible,
+                                math.dist(actor.xy, brain.memory.reported), actor.id)
+
+                    current = min(available, key=priority)
+                available.remove(current)
+                self._set_role(self.brains[current.id], role)
+            for actor in available:
+                self._set_role(self.brains[actor.id], "hold")
 
     def _combat_action(self, actor, brain, actors, threat, time):
         weapon = actor.weapon
@@ -116,9 +197,10 @@ class EnemyAI:
         route_failed = brain.action_goal is not None and brain.action_goal == brain.goal and brain.route_failed
         safe_action = brain.action in {"cover", "retreat", "pin"}
         needs_reload = weapon is not None and (weapon.reloading or not weapon.chambered)
-        if (time < brain.action_until and not route_failed
+        if (time < brain.action_until and not route_failed and not brain.role_changed
                 and (not urgent or safe_action) and (not needs_reload or safe_action or brain.action == "reload")):
             return
+        brain.role_changed = False
         brain.action_goal = None
         if urgent or needs_reload:
             occupied = [ally.action_goal for other in actors if other.id != actor.id and other.hp > 0
@@ -158,10 +240,11 @@ class EnemyAI:
                 break
 
     def _search(self, actor, brain, cue, time):
+        incident = self.incidents.get(brain.incident)
         if cue != brain.cue:
             brain.cue = cue
             heading = brain.memory.seen_heading if cue[0] == "search" else None
-            angle = actor.facing if heading is None else heading
+            angle = heading if heading is not None else incident.heading if incident else actor.facing
             x, y = cue[1]
             if brain.role == "intercept":
                 offsets = ((7, 0), (5, 3), (5, -3))
@@ -178,13 +261,18 @@ class EnemyAI:
                 exits = [nav.nodes[key] for key in exits if key.endswith("/outside")
                          and math.dist(nav.nodes[key], cue[1]) <= 14]
                 if exits:
-                    brain.search_points.insert(0, min(exits, key=lambda point: math.dist(point, brain.search_points[0])))
+                    predicted = brain.search_points[0]
+                    exits.sort(key=lambda point: (math.dist(point, predicted), math.dist(actor.xy, point), point))
+                    brain.search_points[:0] = exits
             brain.scan_until = 0
         if time < brain.scan_until:
             actor.facing = brain.scan_angle + math.sin((brain.scan_until - time) * 5) * 0.95
             return None
         while brain.search_points:
             point = brain.search_points[0]
+            if incident and any(math.dist(point, checked) < 2 for checked in incident.checked):
+                brain.search_points.pop(0)
+                continue
             if (brain.goal == point and not brain.path and brain.route_failed
                     and brain.path_revision == self.world.revision):
                 brain.search_points.pop(0)
@@ -192,13 +280,18 @@ class EnemyAI:
             if (math.dist(actor.xy, point) < 0.35
                     or (brain.goal == point and not brain.path and not brain.route_failed)):
                 brain.search_points.pop(0)
+                if incident and math.dist(actor.xy, point) < 1:
+                    incident.checked.append(point)
+                    del incident.checked[:-32]
                 self._face(actor, cue[1])
-                brain.scan_until, brain.scan_angle = time + 0.85, actor.facing
+                duration = 3.0 if brain.role == "intercept" else 0.85
+                brain.scan_until, brain.scan_angle = time + duration, actor.facing
                 return None
             return point
         return None
 
     def _move(self, actor, brain, intent, goal, time, budget, *, face=True, approximate=False):
+        brain.pending_goal = None
         if goal is None:
             brain.path.clear()
             brain.goal = None
@@ -221,6 +314,8 @@ class EnemyAI:
             brain.goal, brain.path_revision, brain.plan_at = goal, self.world.revision, time + 0.2
             brain.route_failed = not brain.path
             budget -= 1
+        elif changed or invalid:
+            brain.pending_goal = goal
         if changed and brain.goal != goal and actor.state != "combat":
             return budget
         if invalid and brain.path_revision != self.world.revision:
@@ -252,9 +347,12 @@ class EnemyAI:
 
     def reset(self):
         self.brains = {key: Brain(brain.patrol) for key, brain in self.brains.items()}
+        self.incidents.clear()
+        self.assign_at = 0.0
 
     def update(self, actors, player, time):
         intents, budget = {}, 1
+        self._assign_roles(actors, time)
         self.near_count = 0
         for actor in sorted(actors, key=lambda actor: math.dist(actor.xy, player.xy)):
             if actor.hp <= 0:
@@ -315,7 +413,7 @@ class EnemyAI:
                 if investigating and (point is None or memory.sound_at > (
                         memory.seen_at + 0.5 if tracking else memory.reported_at)):
                     point = memory.last_sound
-                holding = brain.role == "hold" and not (tracking or investigating)
+                holding = brain.role == "hold" and reported and not (tracking or investigating)
                 if holding:
                     goal = None
                     self._face(actor, point)
@@ -324,8 +422,11 @@ class EnemyAI:
                 if not holding and not brain.search_points and time >= brain.scan_until:
                     brain.checked_sound_at = memory.sound_at
                     memory.last_seen = None
-                    memory.reported = None
-                    actor.state, goal = self._patrol(actor, brain)
+                    if reported:
+                        brain.completed_report_at = memory.reported_at
+                        self._set_role(brain, "hold")
+                    else:
+                        actor.state, goal = self._patrol(actor, brain)
                 elif (brain.suppression >= 0.55 or actor.hurt_until > time or actor.hp < 20
                       or (brain.action in {"cover", "pin", "retreat"} and time < brain.action_until)):
                     self._combat_action(actor, brain, actors, point, time)
@@ -335,12 +436,12 @@ class EnemyAI:
                 actor.state, goal = "idle", None
             else:
                 brain.cue = None
-                brain.role = ""
+                self._set_role(brain, "")
                 actor.state, goal = self._patrol(actor, brain)
             weapon = actor.weapon
             if weapon and not weapon.chambered and not weapon.reloading:
                 intent.reload = weapon.reserve > 0 or weapon.stage >= 2
             budget = self._move(actor, brain, intent, goal, time, budget,
-                                face=not memory.visible, approximate=actor.state != "combat")
+                                face=not memory.visible, approximate=actor.state != "combat" and goal not in self.exits)
             intents[actor.id] = intent
         return intents

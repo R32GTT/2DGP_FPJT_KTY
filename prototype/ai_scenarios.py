@@ -43,5 +43,15 @@ def configure(simulation, name):
         actor.facing = facing
         simulation.roster.spawns[actor.id] = point
         simulation.ai.brains[actor.id].patrol = [point]
+    # 기존 도로 순찰의 첫 웨이포인트도 창고 앞이다. 장면 시작점과 겹치지 않게 다음 교차로에서 시작한다.
+    for actor in simulation.guard_records:
+        if actor in escorts or math.dist(actor.xy, depot["position"]) > 24:
+            continue
+        brain = simulation.ai.brains[actor.id]
+        junction = world.navigation.nodes["junction_hq"]
+        index = min(range(len(brain.patrol)), key=lambda i: math.dist(brain.patrol[i], junction))
+        brain.patrol = brain.patrol[index:] + brain.patrol[:index]
+        actor.position = Position(*brain.patrol[0])
+        simulation.roster.spawns[actor.id] = actor.xy
     simulation.message = f"AI 검증 · {title} · F2 재시작 / F3 다음"
     simulation.ai_hint = hint
