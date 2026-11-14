@@ -27,7 +27,7 @@ def run_window(simulation, *, frames=0):
             for action in controls.poll(camera):
                 if not controls.paused:
                     if (controls.firing or controls.map_open) and action in {"door", "supplies"}:
-                        simulation.message = "사격 중에는 상호작용할 수 없음"
+                        simulation.message = "지도를 닫은 뒤 상호작용" if controls.map_open else "사격 중에는 상호작용할 수 없음"
                         continue
                     if action == "door":
                         simulation.use_door()
@@ -55,7 +55,8 @@ def run_window(simulation, *, frames=0):
                     simulation.step((0, 0) if controls.map_open else controls.direction,
                                     None if controls.map_open else camera.world(*controls.mouse),
                                     not controls.map_open and (controls.firing or pressed),
-                                    controls.sprint, aiming=controls.aiming, trigger_pressed=pressed, walking=controls.walking)
+                                    controls.sprint, aiming=controls.aiming and not controls.map_open,
+                                    trigger_pressed=pressed and not controls.map_open, walking=controls.walking)
                     accumulator -= FIXED_DT
                     steps += 1
             camera.follow(simulation.player.xy, controls.mouse)

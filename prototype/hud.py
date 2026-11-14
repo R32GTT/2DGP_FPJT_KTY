@@ -9,6 +9,7 @@ import pico2d as pico
 
 from campaign.viewmodel import world_clock
 from .weapons import STAGE_NAMES
+from .interactions import nearby_facility
 
 
 class HUD:
@@ -57,6 +58,8 @@ class HUD:
             self.label("help", "WASD 이동  Shift 달리기  Ctrl 걷기  우클릭 조준  F 문  E 사용  M 지도  P 정지  F1 정보", 13)
             self.label("timing", f"update {update_ms:.2f}ms / draw {draw_ms:.2f}ms | cache {cache_count}/24 | 근거리 AI {getattr(simulation.ai, 'near_count', 0)}", 13)
             self.label("stock", f"DEPOT {simulation.campaign.supplies}  /  확보 {simulation.campaign.simulation.state.player_stock['supplies']}", 13)
+            facility_here = nearby_facility(simulation.world, simulation.player.xy)
+            self.label("prompt", f"[E] {facility_here['name']} 사용" if facility_here else "", 16, (241, 211, 135))
             self.label("map_title", simulation.world.data.get("name", "지역 지도"), 24, (118, 215, 191))
             self.label("map_help", "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보", 13)
             self.label("map_size", f"{simulation.world.bounds.w:g} × {simulation.world.bounds.h:g} m", 13)
@@ -111,6 +114,9 @@ class HUD:
         if paused:
             self.panel(width / 2 - 190, height / 2 - 27, 380, 54)
             self.text("paused", width / 2 - 160, height / 2)
+        if "prompt" in self.labels:
+            self.panel(width / 2 - 150, 168, 300, 36)
+            self.text("prompt", width / 2 - 132, 186)
         self._minimap(simulation, camera, debug)
         if map_open:
             self._region_map(simulation, camera, debug)
@@ -141,6 +147,12 @@ class HUD:
                 x, y = point(*actor.xy)
                 color = (108, 213, 197) if actor.team == "player" else (218, 131, 100)
                 pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *color, filled=True)
+        if world.region_layout:
+            for convoy in simulation.campaign.convoys(simulation.time):
+                if not bounds.x <= convoy.x <= bounds.right or not bounds.y <= convoy.y <= bounds.bottom:
+                    continue
+                x, y = point(convoy.x, convoy.y)
+                pico.draw_rectangle(x - 2, y - 1, x + 2, y + 1, 221, 186, 100, filled=True)
 
     def _region_map(self, simulation, camera, debug):
         self.panel(60, 166, camera.width - 120, camera.height - 246)
@@ -171,6 +183,11 @@ class HUD:
             x, y = point(*actor.xy)
             color = (112, 230, 205) if actor.team == "player" else (226, 131, 92)
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *color, filled=True)
+        for convoy in simulation.campaign.convoys(simulation.time):
+            if not world.bounds.x <= convoy.x <= world.bounds.right or not world.bounds.y <= convoy.y <= world.bounds.bottom:
+                continue
+            x, y = point(convoy.x, convoy.y)
+            pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, 221, 186, 100, filled=True)
         self.text("map_size", camera.width - 350, 245)
 
     def close(self):

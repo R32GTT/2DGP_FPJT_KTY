@@ -11,8 +11,9 @@ from .routes import move_one_second, position, request_return, set_route
 
 
 class Simulation:
-    def __init__(self, state: CampaignState):
+    def __init__(self, state: CampaignState, *, departure_ready=None):
         self.state = state
+        self.departure_ready = departure_ready
         self._moving = {op.id for op in state.operations.values()
                         if op.phase in {"outbound", "returning"}}
 
@@ -78,10 +79,17 @@ class Simulation:
                     invalid |= origin.damage == 100 or state.regions[origin.region_id].owner != "enemy"
                 if invalid:
                     cancel(state, operation.id)
+                elif self.departure_ready is not None and not self.departure_ready(operation):
+                    if operation.waiting_reason != "crew_gathering":
+                        state.record("departure_wait", operation_id=operation.id, reason="crew_gathering")
+                    operation.waiting_reason = "crew_gathering"
+                    clock.schedule(state, state.world_time + 5, "depart",
+                                   priority=clock.TRANSFER, operation_id=operation.id)
                 elif operation.origin_id == state.source.id and state.world_time < state.source.next_departure:
                     clock.schedule(state, state.source.next_departure, "depart",
                                    priority=clock.TRANSFER, operation_id=operation.id)
                 elif depart(state, operation.id):
+                    operation.waiting_reason = ""
                     if operation.origin_id == state.source.id:
                         state.source.next_departure = state.world_time + state.rules["external_departure_interval_s"]
                     set_route(state, operation)

@@ -74,6 +74,23 @@ def tree_image(backend):
     return painted_image(backend, 128, 128, paint)
 
 
+def truck_image(backend):
+    def paint(p):
+        p.rect(5, 2, 11, 4, (16, 24, 23))
+        p.rect(5, 24, 11, 4, (16, 24, 23))
+        p.rect(45, 2, 11, 4, (16, 24, 23))
+        p.rect(45, 24, 11, 4, (16, 24, 23))
+        p.rect(2, 6, 59, 18, (56, 78, 64))
+        p.rect(4, 7, 37, 16, (102, 115, 80))
+        for x in (8, 19, 30):
+            p.rect(x, 8, 2, 14, (75, 91, 67))
+        p.rect(43, 7, 16, 16, (116, 130, 95))
+        p.rect(52, 9, 5, 12, (35, 62, 62))
+        p.rect(59, 7, 3, 4, (225, 224, 161))
+        p.rect(59, 19, 3, 4, (225, 224, 161))
+    return painted_image(backend, 64, 30, paint)
+
+
 def prop_image(backend, kind):
     def paint(p):
         p.rect(4, 6, 120, 54, (22, 31, 29, 150))

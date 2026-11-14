@@ -45,7 +45,17 @@ def build_region(layout, root):
                            "rect": rect, "image": "", "color": [105, 103, 84]})
     for row in layout["facilities"]:
         building_layers, building_colliders, building_nodes, building_edges, facility = instantiate(row, definitions[row["prefab"]])
-        layers.extend(building_layers)
+        layers.append(building_layers[0])
+        start, end = local_nodes[row["service_node"]], building_nodes[row["id"] + "/outside"]
+        if start != end:
+            horizontal = start[1] == end[1]
+            if start[0] == end[0] or horizontal:
+                rect = ([min(start[0], end[0]), start[1] - 1.5, abs(start[0] - end[0]), 3]
+                        if horizontal else [start[0] - 1.5, min(start[1], end[1]), 3, abs(start[1] - end[1])])
+                layers.append({"id": row["id"] + "/driveway", "style": "road_h" if horizontal else "road_v",
+                               "rect": rect, "image": "", "color": [105, 103, 84]})
+                roads.append({"id": row["id"] + "/driveway", "start": start, "end": end, "width": 3})
+        layers.extend(building_layers[1:])
         colliders.extend(building_colliders)
         nodes.update(building_nodes)
         edges.extend(building_edges)
@@ -59,8 +69,13 @@ def build_region(layout, root):
             occupied_slots[facility_id] = slot + 1
             start = patrol[slot % 4]
             route = patrol[slot % 4:] + patrol[:slot % 4]
+            position = [start[0] + slot // 4 * 0.6, start[1]]
+            if member >= group["count"] - group.get("patrol_members", 0):
+                offset = -0.45 if member % 2 == 0 else 0.45
+                route = [(local_nodes[key][0] + offset, local_nodes[key][1] + offset) for key in group["patrol_nodes"]]
+                position = list(route[0])
             guards.append({"id": f"{group['unit']}:{member}", "source_unit": group["unit"], "member": member,
-                           "home_node": facility_id, "position": [start[0] + slot // 4 * 0.6, start[1]],
+                           "home_node": facility_id, "position": position,
                            "patrol": route})
     rng = random.Random(layout.get("seed", 42))
     attempts = 0

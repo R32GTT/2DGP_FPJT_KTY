@@ -10,7 +10,7 @@ import pico2d as pico
 from .geometry import Rect
 from .hud import HUD
 from .map_images import MapImages
-from .visual_assets import actor_image, prop_image, tree_image, vignette_image, weapon_image
+from .visual_assets import actor_image, prop_image, tree_image, truck_image, vignette_image, weapon_image
 from .weapons import load_weapons, weapon_pose
 from .world import ROOT
 
@@ -33,6 +33,7 @@ class Renderer:
         spawn = world.data["player_spawn"]
         self.map_images.prepare(world.visible_layers(Rect(spawn[0] - 20, spawn[1] - 16, 40, 32)), budget=12)
         self.tree = tree_image(self.backend)
+        self.truck = truck_image(self.backend)
         self.props = {kind: prop_image(self.backend, kind) for kind in ("cover", "desk", "rack", "bed", "antenna")}
         self.sprites = {key: self._image(f"assets/prototype/{key}.png") or actor_image(self.backend, key == "player")
                         for key in ("player", "guard")}
@@ -120,9 +121,21 @@ class Renderer:
                 self._rect(view, rect, (185, 184, 153), filled=False)
             if debug:
                 self._rect(view, collider.rect, (233, 111, 77) if collider.active else (91, 213, 150), filled=False)
-        crate = Rect(world.crate[0] - 0.35, world.crate[1] - 0.35, 0.7, 0.7)
-        self._rect(view, crate, (183, 156, 76))
-        self._rect(view, crate, (228, 205, 137), filled=False)
+        if world.facilities:
+            for facility in world.facilities:
+                point = facility["terminal"]
+                marker = Rect(point[0] - 0.35, point[1] - 0.35, 0.7, 0.7)
+                if not view.visible(marker):
+                    continue
+                state = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
+                color = ((119, 191, 157) if facility["kind"] == "safehouse" else
+                         (177, 85, 69) if state and state.damage >= 100 else (193, 166, 83))
+                self._rect(view, marker, color)
+                self._rect(view, marker, (228, 219, 174), filled=False)
+        else:
+            crate = Rect(world.crate[0] - 0.35, world.crate[1] - 0.35, 0.7, 0.7)
+            self._rect(view, crate, (183, 156, 76))
+            self._rect(view, crate, (228, 205, 137), filled=False)
         safe = Rect(world.safehouse[0] - 1.2, world.safehouse[1] - 1.2, 2.4, 2.4)
         if view.visible(safe):
             self._rect(view, safe, (47, 94, 82))
@@ -131,6 +144,15 @@ class Renderer:
             self._rect(view, Rect(world.safehouse[0] - 0.5, world.safehouse[1] - 0.1, 1, 0.2), (206, 225, 202))
         for point, _ in simulation.dropped:
             self._rect(view, Rect(point[0] - 0.25, point[1] - 0.15, 0.5, 0.3), (218, 181, 106))
+        if world.region_layout:
+            for x, y, _ in simulation.campaign.parked(simulation.roster.nodes):
+                if view.visible(Rect(x - 2.8, y - 1.2, 5.6, 2.4)):
+                    self.truck.draw(*view.pico(x, y), 5.6 * view.scale, 2.4 * view.scale)
+            for convoy in simulation.campaign.convoys(simulation.time):
+                bounds = self._rotated_bounds((convoy.x, convoy.y), (5.6, 2.4), convoy.heading)
+                if convoy.vehicles and view.visible(bounds):
+                    x, y = view.pico(convoy.x, convoy.y)
+                    self.truck.rotate_draw(-convoy.heading, x, y, 5.6 * view.scale, 2.4 * view.scale)
         for actor in [*simulation.guards, simulation.player]:
             body_angle = actor.facing + BODY_FORWARD_OFFSET
             body_bounds = self._rotated_bounds(actor.xy, BODY_SIZE_M, body_angle)
@@ -181,6 +203,6 @@ class Renderer:
         self.sprites.clear()
         self.props.clear()
         self.guns.clear()
-        self.door = self.vignette = self.tree = None
+        self.door = self.vignette = self.tree = self.truck = None
         self.images.clear()
         self.backend.SDL_ShowCursor(self.backend.SDL_ENABLE)

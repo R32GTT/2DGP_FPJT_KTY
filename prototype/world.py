@@ -12,8 +12,8 @@ from .spatial import BoundsIndex
 
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SCENE = Path(__file__).parent / "scenarios" / "image_yard.json"
 REGION_SCENE = Path(__file__).parent / "scenarios" / "rear_region.json"
+DEFAULT_SCENE = REGION_SCENE
 
 
 @dataclass(frozen=True)

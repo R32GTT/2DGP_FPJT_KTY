@@ -65,8 +65,8 @@ class PatrolAI:
                 elapsed = min(0.5, max(0, time - brain.far_updated))
                 brain.far_at, brain.far_updated = time + 0.5, time
                 brain.memory.visible = False
-                goal = brain.patrol[brain.waypoint]
-                if math.dist(actor.xy, goal) < 0.35:
+                goal = actor.boarding_goal or brain.patrol[brain.waypoint]
+                if actor.boarding_goal is None and math.dist(actor.xy, goal) < 0.35:
                     brain.waypoint = (brain.waypoint + 1) % len(brain.patrol)
                     goal = brain.patrol[brain.waypoint]
                 if budget and (brain.goal != goal or not brain.path or brain.path_revision != self.world.revision):
@@ -75,7 +75,7 @@ class PatrolAI:
                     budget -= 1
                 while brain.path and math.dist(actor.xy, brain.path[0]) < 0.16:
                     brain.path.pop(0)
-                actor.state = "patrol"
+                actor.state = "boarding" if actor.boarding_goal is not None else "patrol"
                 if brain.path:
                     dx, dy = brain.path[0][0] - actor.position.x, brain.path[0][1] - actor.position.y
                     actor.facing = math.atan2(dy, dx)
@@ -88,6 +88,20 @@ class PatrolAI:
                 observe(actor, player, self.world.geometry, memory, time)
                 brain.sense_at = time + 0.15
                 memory.suspicion = max(0, memory.suspicion - 0.01)
+            if actor.boarding_goal is not None and not memory.visible and time >= actor.hurt_until:
+                goal, actor.state = actor.boarding_goal, "boarding"
+                if budget and (brain.goal != goal or not brain.path or brain.path_revision != self.world.revision):
+                    brain.path = self.world.navigation.route(actor.xy, goal, allow_doors=True)
+                    brain.goal, brain.path_revision, brain.plan_at = goal, self.world.revision, time + 0.6
+                    budget -= 1
+                while brain.path and math.dist(actor.xy, brain.path[0]) < 0.16:
+                    brain.path.pop(0)
+                if brain.path:
+                    dx, dy = brain.path[0][0] - actor.position.x, brain.path[0][1] - actor.position.y
+                    actor.facing = math.atan2(dy, dx)
+                    intent.direction, intent.open_door = (dx, dy), True
+                intents[actor.id] = intent
+                continue
             old_state = actor.state
             if memory.visible:
                 actor.state = "combat"

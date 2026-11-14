@@ -11,6 +11,8 @@ from .combat import Combat
 from .events import EventBus
 from .feedback import Feedback
 from .movement import move_actor
+from .interactions import nearby_facility, use_facility
+from .roster import CampaignRoster
 from .weapons import WeaponState, load_weapons
 from .world import DEFAULT_SCENE, World
 
@@ -24,18 +26,22 @@ class PlaySimulation:
         self.specs = load_weapons()
         self.player = Actor("player", Position(*self.world.data["player_spawn"]), speed=3.0,
                             hp=100, armor=40, team="player", state="player")
-        self.guards = [Actor(row["id"], Position(*row["position"]), armor=15) for row in self.world.data["guards"]]
+        self.guard_records = [Actor(row["id"], Position(*row["position"]), armor=15,
+                                     source_unit=row.get("source_unit", ""), member=row.get("member", -1),
+                                     home_node=row.get("home_node", "")) for row in self.world.data["guards"]]
         self.player.loadout = {key: WeaponState.ready(self.specs[key])
                                for key in self.world.data.get("player_weapons", ["ar_a", "ar_b"])}
         self.player.active_weapon = next(iter(self.player.loadout), "")
-        for actor, row in zip(self.guards, self.world.data["guards"]):
+        for actor, row in zip(self.guard_records, self.world.data["guards"]):
             key = row.get("weapon", "ar_a")
             actor.loadout = {key: WeaponState.ready(self.specs[key])}
             actor.active_weapon = key
-        self.ai = PatrolAI(self.world, self.guards, [row["patrol"] for row in self.world.data["guards"]])
+        self.campaign = CampaignBridge(self.world.data["campaign_facility"], world=self.world)
+        self.roster = CampaignRoster(self.campaign, self.guard_records, self.world)
+        self.guards = self.roster.sync()
+        self.ai = PatrolAI(self.world, self.guard_records, [row["patrol"] for row in self.world.data["guards"]])
         self.events, self.feedback = EventBus(), Feedback()
         self.combat = Combat(self.events)
-        self.campaign = CampaignBridge(self.world.data["campaign_facility"])
         self.time, self.footstep_at = 0.0, 0.0
         self.message = "R 재장전 / C 취소 / 1·2 총기 교체 / V 단발·연사 / F 문 / E 상호작용"
         self.respawn_target = None
@@ -71,6 +77,14 @@ class PlaySimulation:
 
     def _dispatch(self):
         events = self.events.drain()
+        for event in events:
+            if event.kind == "killed" and event.source in self.roster.by_id:
+                actor = self.roster.by_id[event.source]
+                self.roster.record_loss(actor)
+                if actor.loadout:
+                    self.dropped.append((actor.xy, actor.loadout))
+                    actor.loadout, actor.active_weapon = {}, ""
+        self.guards = self.roster.sync()
         self.ai.receive(self.guards, events)
         self.feedback.receive(events)
         if any(event.kind == "killed" and event.source == "player" for event in events):
@@ -99,7 +113,9 @@ class PlaySimulation:
                 self.respawn_target = None
                 self.player.position = Position(*self.world.safehouse)
                 self.player.hp, self.player.armor = 100, 0
-                for actor in self.guards:
+                self.roster.materialized = True
+                self.guards = self.roster.sync(restore=True)
+                for actor in self.guard_records:
                     if actor.hp > 0 and actor.weapon is not None:
                         actor.weapon.tick(21600)
                 self.message = "무장 없이 안전가옥 복귀 — E: 훈련용 키트, 또는 바닥의 무기 회수"
@@ -151,6 +167,7 @@ class PlaySimulation:
         self._dispatch()
         self.feedback.update(FIXED_DT, self.danger if self.player.hp > 0 else 0)
         self.campaign.advance_to(self.time)
+        self.guards = self.roster.sync()
 
     def use_door(self):
         if self.player.hp <= 0:
@@ -178,6 +195,13 @@ class PlaySimulation:
                 self.dropped.pop(index)
                 self.message = "떨어진 무기 회수 — 탄약·완료된 재장전 단계 보존"
                 return
+        facility = nearby_facility(self.world, self.player.xy)
+        if facility is not None:
+            self.message = use_facility(self, facility)
+            return
+        if self.world.facilities:
+            self.message = "시설 단말·보급 상자 가까이에서 E"
+            return
         if not self.player.loadout and self.kit_available and math.dist(self.player.xy, self.world.safehouse) < 2:
             self.player.loadout = {"ar_a": WeaponState.ready(self.specs["ar_a"])}
             self.player.active_weapon, self.kit_available = "ar_a", False
@@ -191,5 +215,7 @@ class PlaySimulation:
         if self.player.hp <= 0 and self.respawn_target is None:
             self._drop_equipment()
             self.combat.traces.clear()
+            self.roster.materialized = False
+            self.guards = self.roster.sync()
             self.respawn_target = self.campaign.simulation.state.world_time + 21600
             self.message = "안전가옥으로 복귀 중 — 실제 군수 세계 시간 6시간 진행"

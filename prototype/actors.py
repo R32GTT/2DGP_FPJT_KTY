@@ -24,6 +24,12 @@ class Actor:
     active_weapon: str = ""
     equip_until: float = 0.0
     hurt_until: float = 0.0
+    source_unit: str = ""
+    member: int = -1
+    home_node: str = ""
+    last_node: str = ""
+    present: bool = True
+    boarding_goal: tuple | None = None
 
     @property
     def xy(self):

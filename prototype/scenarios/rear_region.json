@@ -36,7 +36,8 @@
      "service_node":"comms_a","campaign_id":"comms_a"}
   ],
   "garrisons":[
-    {"unit":"a_garrison","count":10,"facility":"hq_a"},
+    {"unit":"a_garrison","count":10,"facility":"hq_a","patrol_members":2,
+     "patrol_nodes":["depot_a","gate_a","depot_a","junction_hq","hq_a"]},
     {"unit":"a_comms_guard","count":2,"facility":"comms_a"},
     {"unit":"a_escort_1","count":2,"facility":"depot_a"},
     {"unit":"a_escort_2","count":2,"facility":"depot_a"}
