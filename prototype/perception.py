@@ -11,6 +11,7 @@ class Knowledge:
     seen_at: float = -1000.0
     last_sound: tuple | None = None
     sound_at: float = -1000.0
+    sound_priority: float = 0.0
     suspicion: float = 0.0
 
 
@@ -31,10 +32,17 @@ def hear(actor, memory, event):
         return
     distance = math.dist(actor.xy, event.position)
     radius = event.data["radius"]
-    if distance > min(radius, 30):
+    if radius <= 0 or distance > radius:
         return
-    # 청각 정보는 직접 목격이 아니다. 먼 소리일수록 조사 위치를 거칠게 한다.
+    strength = event.data.get("strength", 0.4)
+    memory.suspicion = min(1.0, memory.suspicion + strength * (1 - distance / radius * 0.4))
+    if memory.suspicion < 0.15:
+        return
+    # 가까운 총성도 뒤따른 약한 발소리 하나로 덮어쓰지 않는다.
+    priority = strength * (1 - distance / radius * 0.4)
+    if event.time - memory.sound_at < 2 and priority < memory.sound_priority * 0.75:
+        return
     resolution = 0.75 if distance < 5 else 3.0
     memory.last_sound = tuple(round(value / resolution) * resolution for value in event.position)
     memory.sound_at = event.time
-    memory.suspicion = min(1.0, memory.suspicion + event.data.get("strength", 0.4) * (1 - distance / max(radius, 1) * 0.5))
+    memory.sound_priority = priority

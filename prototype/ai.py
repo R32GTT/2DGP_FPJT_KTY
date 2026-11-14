@@ -59,7 +59,9 @@ class PatrolAI:
             if actor.hp <= 0:
                 continue
             brain, intent = self.brains[actor.id], Intent()
-            if math.dist(actor.xy, player.xy) > 60:
+            memory = brain.memory
+            investigating = memory.last_sound is not None and time - memory.sound_at < 14
+            if math.dist(actor.xy, player.xy) > 60 and not investigating:
                 if time < brain.far_at:
                     continue
                 elapsed = min(0.5, max(0, time - brain.far_updated))
@@ -83,12 +85,13 @@ class PatrolAI:
                                                step_dt=min(elapsed, math.hypot(dx, dy) / actor.speed))
                 continue
             self.near_count += 1
-            memory = brain.memory
             if time >= brain.sense_at:
                 observe(actor, player, self.world.geometry, memory, time)
                 brain.sense_at = time + 0.15
                 memory.suspicion = max(0, memory.suspicion - 0.01)
-            if actor.boarding_goal is not None and not memory.visible and time >= actor.hurt_until:
+            tracking = memory.last_seen is not None and time - memory.seen_at < 10
+            if (actor.boarding_goal is not None and not memory.visible and not investigating
+                    and not tracking and time >= actor.hurt_until):
                 goal, actor.state = actor.boarding_goal, "boarding"
                 if budget and (brain.goal != goal or not brain.path or brain.path_revision != self.world.revision):
                     brain.path = self.world.navigation.route(actor.xy, goal, allow_doors=True)
@@ -114,14 +117,14 @@ class PatrolAI:
                     brain.fire_at = time + (0.25 if brain.burst < 3 else 1.2)
                     if brain.burst == 3:
                         brain.burst = 0
-            elif memory.last_seen is not None and time - memory.seen_at < 10:
+            elif tracking:
                 actor.state = "search"
                 offsets = ((0, 0), (2, 0), (0, 2), (-2, 0), (0, -2))
                 dx, dy = offsets[brain.search_index % len(offsets)]
                 goal = memory.last_seen[0] + dx, memory.last_seen[1] + dy
                 if math.dist(actor.xy, goal) < 0.5:
                     brain.search_index += 1
-            elif memory.last_sound is not None and time - memory.sound_at < 8 and memory.suspicion > 0.2:
+            elif investigating:
                 actor.state, goal = "alert", memory.last_sound
             else:
                 goal = brain.patrol[brain.waypoint]
