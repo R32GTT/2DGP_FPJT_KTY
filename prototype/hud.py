@@ -70,6 +70,10 @@ class HUD:
             route = "목표 없음"
             if time < brain.scan_until:
                 route = "주변 관찰"
+            elif (actor.state == "retreat" and brain.action == "cover" and brain.action_goal is not None
+                  and math.dist(actor.xy, brain.action_goal) <= 0.3):
+                x, y = brain.action_goal
+                route = f"{x:.1f}, {y:.1f} · 엄폐 도착"
             elif brain.pending_goal is not None:
                 x, y = brain.pending_goal
                 route = f"{x:.1f}, {y:.1f} · 경로 계산 대기"

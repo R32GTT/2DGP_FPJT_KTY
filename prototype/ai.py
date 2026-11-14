@@ -24,6 +24,7 @@ class Brain:
     progress_at: float = 0.0
     pending_goal: tuple | None = None
     fire_at: float = 0.0
+    fired_at: float = -1000.0
     burst: int = 0
     action: str = ""
     action_goal: tuple | None = None
@@ -40,6 +41,7 @@ class Brain:
     completed_report_at: float = -1000.0
     cue: tuple | None = None
     search_points: list = field(default_factory=list)
+    search_target: tuple | None = None
     scan_until: float = 0.0
     scan_angle: float = 0.0
     look_until: float = 0.0
@@ -67,6 +69,7 @@ class Incident:
     heading: float
     point: tuple
     checked: list = field(default_factory=list)
+    claims: dict = field(default_factory=dict)
 
 
 class EnemyAI:
@@ -83,6 +86,8 @@ class EnemyAI:
     def receive(self, actors, events):
         noises = [event for event in events if event.kind == "noise"]
         for event in events:
+            if event.kind == "weapon_fired" and event.source in self.brains:
+                self.brains[event.source].fired_at = event.time
             if event.kind == "pressure" and event.source in self.brains:
                 brain = self.brains[event.source]
                 strength = event.data["strength"] * min(1.5, event.data["caliber"] / 18)
@@ -129,6 +134,7 @@ class EnemyAI:
         elif math.dist(point, incident.point) > 4:
             incident.point = point
             incident.checked = [checked for checked in incident.checked if math.dist(point, checked) >= 4]
+            incident.claims.clear()
         incident.updated_at, incident.heading = time, heading
         for member in (actor, *receivers):
             ally = self.brains[member.id]
@@ -151,6 +157,7 @@ class EnemyAI:
             brain.role = role
             brain.role_changed = True
             brain.cue = None
+            brain.search_target = None
 
     def _assign_roles(self, actors, time):
         if time < self.assign_at:
@@ -192,6 +199,16 @@ class EnemyAI:
             for actor in available:
                 self._set_role(self.brains[actor.id], "hold")
 
+    def _has_support(self, actor, brain, actors, time):
+        return any(other.id != actor.id and other.hp > 0
+                   and (ally := self.brains[other.id]).incident == brain.incident
+                   and ally.action in {"advance", "fire"} and ally.visible
+                   and time - ally.fired_at < 1.5
+                   and other.weapon is not None and other.weapon.chambered and not other.weapon.reloading
+                   and ally.suppression < 0.55 and math.dist(other.xy, actor.xy) <= 18
+                   and math.dist(other.xy, brain.memory.last_seen) <= other.weapon.spec.range_m
+                   for other in actors)
+
     def _combat_action(self, actor, brain, actors, threat, time):
         weapon = actor.weapon
         empty = weapon is None or (not weapon.chambered and weapon.stage < 2 and weapon.reserve <= 0)
@@ -209,6 +226,8 @@ class EnemyAI:
                 if math.dist(actor.xy, brain.action_goal) > 0.3 or (needs_reload and not empty) or urgent:
                     return
         elif (time < brain.action_until and not route_failed and not brain.role_changed
+                and (brain.action != "flank" or (math.dist(actor.xy, brain.action_goal) > 0.35
+                                                and self._has_support(actor, brain, actors, time)))
                 and (not urgent or safe_action) and (not needs_reload or safe_action or brain.action == "reload")):
             return
         brain.role_changed = False
@@ -242,23 +261,25 @@ class EnemyAI:
             return
         if not 3 < distance <= 13 or brain.role not in {"intercept", "sweep"}:
             return
-        if not any(other.id != actor.id and other.hp > 0
-                   and self.brains[other.id].action in {"advance", "fire"}
-                   and math.dist(other.xy, actor.xy) <= 18
-                   and self.world.geometry.raycast(actor.xy, other.xy) is None for other in actors):
+        if not self._has_support(actor, brain, actors, time):
             return
         dx, dy = threat[0] - actor.position.x, threat[1] - actor.position.y
-        for side in (1, -1) if brain.role == "intercept" else (-1, 1):
-            point = (actor.position.x - side * dy / distance * 4, actor.position.y + side * dx / distance * 4)
-            nav = self.world.navigation
-            if nav.walkable(point, True) and nav.clear(actor.xy, point, ignore_doors=True):
-                brain.action, brain.action_goal, brain.action_until = "flank", point, time + 2.4
-                break
+        nav = self.world.navigation
+        for side in ((1, -1) if brain.role == "intercept" else (-1, 1)):
+            for lateral in (4, 6):
+                point = (actor.position.x + (dx - side * dy * lateral) / distance,
+                         actor.position.y + (dy + side * dx * lateral) / distance)
+                if (point != rejected and nav.walkable(point)
+                        and nav.clear(actor.xy, point, ignore_doors=True)
+                        and self.world.geometry.raycast(point, threat, category="bullet") is None):
+                    brain.action, brain.action_goal, brain.action_until = "flank", point, time + 3.2
+                    return
 
     def _search(self, actor, brain, cue, time):
         incident = self.incidents.get(brain.incident)
         if cue != brain.cue:
             brain.cue = cue
+            brain.search_target = None
             heading = brain.memory.seen_heading if cue[0] == "search" else None
             angle = heading if heading is not None else incident.heading if incident else actor.facing
             x, y = cue[1]
@@ -272,21 +293,32 @@ class EnemyAI:
             brain.search_points = [(x + dx * cos_a - dy * sin_a, y + dx * sin_a + dy * cos_a)
                                    for dx, dy in offsets]
             nav = self.world.navigation
-            if brain.role == "intercept":
-                exits = nav.point_index.query(Rect(x - 14, y - 14, 28, 28))
-                exits = [nav.nodes[key] for key in exits if key.endswith("/outside")
-                         and math.dist(nav.nodes[key], cue[1]) <= 14]
-                if exits:
-                    predicted = brain.search_points[0]
-                    exits.sort(key=lambda point: (math.dist(point, predicted), math.dist(actor.xy, point), point))
-                    brain.search_points[:0] = exits
+            if incident or cue[0] == "search":
+                keys = nav.point_index.query(Rect(x - 18, y - 18, 36, 36))
+                suffixes = ("/outside",) if brain.role == "intercept" else ("/hall", "/inside", "/terminal", "/outside")
+                landmarks = [nav.nodes[key] for key in keys if key.endswith(suffixes)
+                             and math.dist(nav.nodes[key], cue[1]) <= 18]
+                predicted = brain.search_points[0]
+                landmarks.sort(key=lambda point: (math.dist(point, predicted), math.dist(actor.xy, point), point))
+                index = 1 if brain.role in {"", "pursue"} else 0
+                brain.search_points[index:index] = landmarks[:5]
             brain.scan_until = 0
         if time < brain.scan_until:
             actor.facing = brain.scan_angle + math.sin((brain.scan_until - time) * 5) * 0.95
+            if incident and brain.search_target is not None:
+                incident.claims[actor.id] = brain.search_target, time + 0.65
             return None
+        if brain.search_target is not None:
+            if incident:
+                incident.checked.append(brain.search_target)
+                del incident.checked[:-32]
+                incident.claims.pop(actor.id, None)
+            brain.search_target = None
         while brain.search_points:
             point = brain.search_points[0]
-            if incident and any(math.dist(point, checked) < 2 for checked in incident.checked):
+            if incident and (any(math.dist(point, checked) < 2 for checked in incident.checked)
+                             or any(owner != actor.id and time < expires and math.dist(point, reserved) < 2
+                                    for owner, (reserved, expires) in incident.claims.items())):
                 brain.search_points.pop(0)
                 continue
             if (brain.goal == point and not brain.path and brain.route_failed
@@ -294,15 +326,16 @@ class EnemyAI:
                 brain.search_points.pop(0)
                 continue
             if (math.dist(actor.xy, point) < 0.35
-                    or (brain.goal == point and not brain.path and not brain.route_failed)):
+                    or (brain.goal == point and not brain.path and not brain.route_failed
+                        and brain.path_revision == self.world.revision)):
                 brain.search_points.pop(0)
-                if incident and math.dist(actor.xy, point) < 1:
-                    incident.checked.append(point)
-                    del incident.checked[:-32]
+                brain.search_target = point if math.dist(actor.xy, point) < 1 else None
                 self._face(actor, cue[1])
                 duration = 3.0 if brain.role == "intercept" else 0.85
                 brain.scan_until, brain.scan_angle = time + duration, actor.facing
                 return None
+            if incident:
+                incident.claims[actor.id] = point, time + 0.65
             return point
         return None
 
@@ -426,6 +459,7 @@ class EnemyAI:
             if memory.visible:
                 actor.state = "combat"
                 brain.cue = None
+                brain.search_target = None
                 self._face(actor, memory.last_seen)
                 if time >= brain.radio_at and time - brain.contact_at >= 0.55:
                     self._report_sighting(actor, brain, actors, time)
@@ -476,6 +510,7 @@ class EnemyAI:
                 actor.state, goal = "idle", None
             else:
                 brain.cue = None
+                brain.search_target = None
                 self._set_role(brain, "")
                 actor.state, goal = self._patrol(actor, brain)
             weapon = actor.weapon
