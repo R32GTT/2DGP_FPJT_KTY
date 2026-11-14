@@ -46,6 +46,8 @@ class Brain:
     scan_angle: float = 0.0
     look_until: float = 0.0
     checked_sound_at: float = -1000.0
+    sound_response: str = ""
+    sound_response_at: float = -1000.0
     far_at: float = 0.0
     far_updated: float = 0.0
 
@@ -58,6 +60,7 @@ class Brain:
 class Intent:
     direction: tuple = (0, 0)
     fire: bool = False
+    retreat_fire: bool = False
     reload: bool = False
     open_door: bool = False
     step_dt: float = 1 / 60
@@ -100,7 +103,14 @@ class EnemyAI:
                 continue
             brain = self.brains[actor.id]
             for event in noises:
-                if hear(actor, brain.memory, event, self.world.navigation):
+                result = hear(actor, brain.memory, event, self.world.navigation,
+                              checked_sound_at=brain.checked_sound_at)
+                if result is not None and event.data.get("reason") == "gunshot":
+                    brain.sound_response = result
+                    brain.sound_response_at = event.time
+                if result in {"new", "renewed"}:
+                    if result == "renewed":
+                        brain.cue = None
                     brain.look_until = event.time + 0.65
                     brain.sense_at = min(brain.sense_at, event.time)
 
@@ -296,6 +306,8 @@ class EnemyAI:
             if sound_only:
                 brain.search_points = [point for point in brain.search_points
                                        if nav.walkable(point) and nav.clear(cue[1], point)]
+                if cue[1] not in brain.search_points:
+                    brain.search_points.append(cue[1])
             elif incident or cue[0] == "search":
                 keys = nav.point_index.query(Rect(x - 18, y - 18, 36, 36))
                 suffixes = ("/outside",) if brain.role == "intercept" else ("/hall", "/inside", "/terminal", "/outside")
@@ -501,7 +513,11 @@ class EnemyAI:
                 else:
                     goal = self._search(actor, brain, (actor.state, point), time, sound_only=sound_only)
                 if not continuing_cover and not holding and not brain.search_points and time >= brain.scan_until:
-                    brain.checked_sound_at = memory.sound_at
+                    if sound_only:
+                        brain.checked_sound_at = memory.sound_at
+                        if brain.sound_response != "out_of_range":
+                            brain.sound_response = "checked"
+                            brain.sound_response_at = time
                     memory.last_seen = None
                     if reported:
                         brain.completed_report_at = memory.reported_at
@@ -536,5 +552,10 @@ class EnemyAI:
                 approximate = False
             budget = self._move(actor, brain, intent, goal, time, budget,
                                 face=not memory.visible and actor.state != "retreat", approximate=approximate)
+            if (actor.state == "retreat" and memory.visible and any(intent.direction)
+                    and brain.action in {"cover", "retreat"} and brain.suppression < 0.85
+                    and weapon is not None and weapon.chambered and not weapon.reloading
+                    and time >= brain.fire_at):
+                intent.retreat_fire = True
             intents[actor.id] = intent
         return intents

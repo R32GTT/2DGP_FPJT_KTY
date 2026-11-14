@@ -17,6 +17,9 @@ AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding
 AI_ROLES = {"pursue": "추격", "intercept": "차단", "sweep": "수색", "hold": "경계"}
 AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reload": "재장전",
               "fire": "사격", "advance": "접근", "flank": "측면 이동"}
+SOUND_RESPONSES = {"new": "총성 감지", "renewed": "총성 재조사", "same_area": "총성 감지 · 경로 유지",
+                   "out_of_range": "총성 감지 범위 밖", "no_estimate": "총성 감지 · 위치 추정 실패",
+                   "checked": "총성 조사 종료"}
 
 
 class HUD:
@@ -90,6 +93,8 @@ class HUD:
             self.label(f"ai_id/{index}", f"{actor.id}   {state}", 13, (118, 215, 191))
             self.label(f"ai_cue/{index}", f"{cue}   의심 {memory.suspicion:.2f} · 제압 {brain.suppression:.2f}", 13)
             self.label(f"ai_route/{index}", route, 13)
+            sound = SOUND_RESPONSES.get(brain.sound_response, "") if time - brain.sound_response_at < 5 else ""
+            self.label(f"ai_sound/{index}", sound or "최근 총성 반응 없음", 13, (240, 187, 104))
         self.label("ai_hint", simulation.ai_hint, 13)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False, cache_count=0):
@@ -163,10 +168,10 @@ class HUD:
             if self.ai_rows:
                 top = height - 80
                 left = width - 365
-                self.panel(left, top - self.ai_rows * 64 - 10, 350, self.ai_rows * 64 + 10)
+                self.panel(left, top - self.ai_rows * 80 - 10, 350, self.ai_rows * 80 + 10)
                 for index in range(self.ai_rows):
-                    y = top - 15 - index * 64
-                    for row, key in enumerate(("ai_id", "ai_cue", "ai_route")):
+                    y = top - 15 - index * 80
+                    for row, key in enumerate(("ai_id", "ai_cue", "ai_route", "ai_sound")):
                         self.text(f"{key}/{index}", left + 12, y - row * 18)
             if "ai_hint" in self.labels:
                 self.text("ai_hint", 24, height - 136)

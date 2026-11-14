@@ -170,9 +170,15 @@ class PlaySimulation:
             self.combat.fire(self.player, self.world, self.time, aiming=aiming,
                              moving=math.dist(previous, self.player.xy) > 0.001, sprint=sprint and not walking)
         for actor in self.guards:
-            if (actor.hp > 0 and self.player.hp > 0 and intents.get(actor.id) is not None
-                    and intents[actor.id].fire):
-                self.combat.fire(actor, self.world, self.time, moving=any(intents[actor.id].direction))
+            intent = intents.get(actor.id)
+            if actor.hp <= 0 or self.player.hp <= 0 or intent is None:
+                continue
+            if intent.retreat_fire:
+                if (self.combat.clear_fire_line(actor, self.player, self.world)
+                        and self.combat.fire(actor, self.world, self.time, moving=True)):
+                    self.ai.brains[actor.id].fire_at = self.time + 0.7
+            elif intent.fire:
+                self.combat.fire(actor, self.world, self.time, moving=any(intent.direction))
         self._dispatch()
         self.feedback.update(FIXED_DT, self.danger if self.player.hp > 0 else 0)
         self.campaign.advance_to(self.time)

@@ -28,6 +28,15 @@ class Combat:
         self.shots = self.hits = 0
         self.random = random.Random(42)
 
+    def clear_fire_line(self, actor, target, world):
+        muzzle = weapon_pose(actor)[1]
+        if world.geometry.raycast(actor.xy, muzzle, category="bullet") is not None:
+            return False
+        if world.geometry.raycast(muzzle, target.xy, category="bullet") is not None:
+            return False
+        hit = self.actor_index.raycast(muzzle, target.xy, category="bullet", ignore_ids={actor.id})
+        return hit is not None and hit[1] == target.id
+
     def _pressure(self, shooter, world, start, end, time, damaged):
         reach = 1.25
         area = Rect(min(start[0], end[0]), min(start[1], end[1]),
