@@ -36,6 +36,8 @@ class Controls:
                     self.paused = not self.paused
                 elif key == sdl2.SDLK_F1:
                     self.debug = not self.debug
+                elif key in (sdl2.SDLK_F2, sdl2.SDLK_F3):
+                    actions.append("restart_ai" if key == sdl2.SDLK_F2 else "next_ai")
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
                 elif key in (sdl2.SDLK_f, sdl2.SDLK_e, sdl2.SDLK_r, sdl2.SDLK_c,

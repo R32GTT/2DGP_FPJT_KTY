@@ -177,8 +177,18 @@ class Renderer:
                                       actor.radius * 2, actor.radius * 2), (244, 211, 119), filled=False)
                 self._rect(view, gun_bounds, (107, 187, 212), filled=False)
                 brain = simulation.ai.brains.get(actor.id)
-                if brain and actor.hp and brain.memory.last_seen:
-                    pico.draw_line(x, y, *view.pico(*brain.memory.last_seen), 212, 103, 75)
+                if brain and actor.hp:
+                    previous = (x, y)
+                    for point in brain.path:
+                        current = view.pico(*point)
+                        pico.draw_line(*previous, *current, 102, 215, 194)
+                        previous = current
+                    if brain.goal is not None:
+                        gx, gy = view.pico(*brain.goal)
+                        color = (231, 107, 82) if brain.route_failed else (102, 215, 194)
+                        pico.draw_rectangle(gx - 4, gy - 4, gx + 4, gy + 4, *color, filled=False)
+                    if brain.memory.visible:
+                        pico.draw_line(x, y, *view.pico(*brain.memory.last_seen), 212, 103, 75)
         for trace in simulation.combat.traces:
             color = (249, 225, 137) if trace.team == "player" else (230, 128, 92)
             pico.draw_line(*view.pico(*trace.start), *view.pico(*trace.end), *color)

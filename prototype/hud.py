@@ -12,6 +12,13 @@ from .weapons import STAGE_NAMES
 from .interactions import nearby_facility
 
 
+AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결",
+             "alert": "조사", "search": "수색", "combat": "교전", "retreat": "엄폐·후퇴"}
+AI_ROLES = {"pursue": "추격", "intercept": "차단", "sweep": "수색", "hold": "경계"}
+AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reload": "재장전",
+              "fire": "사격", "advance": "접근", "flank": "측면 이동"}
+
+
 class HUD:
     def __init__(self, backend):
         self.backend = backend
@@ -19,6 +26,7 @@ class HUD:
         self.fonts = {size: pico.load_font(str(path), size) for size in (13, 16, 24)}
         self.labels = {}
         self.next_update = 0.0
+        self.ai_rows = 0
 
     def label(self, key, text, size=16, color=(223, 230, 218)):
         if not text:
@@ -43,6 +51,40 @@ class HUD:
         pico.draw_rectangle(x, y, x + w, y + h, 17, 28, 31, 238, filled=True)
         pico.draw_rectangle(x, y, x + w, y + h, 67, 86, 82, 255)
 
+    def _update_ai(self, simulation, camera):
+        nearby = sorted((actor for actor in simulation.guards if actor.hp > 0),
+                        key=lambda actor: math.dist(actor.xy, simulation.player.xy))
+        self.ai_rows = min(4, len(nearby))
+        for index, actor in enumerate(nearby[:self.ai_rows]):
+            brain = simulation.ai.brains[actor.id]
+            memory = brain.memory
+            time = simulation.time
+            cues = [(memory.seen_at, "목격", memory.last_seen),
+                    (memory.sound_at, "소리", memory.last_sound),
+                    (memory.reported_at, "보고", memory.reported)]
+            stamp, kind, point = max(cues, key=lambda cue: cue[0])
+            cue = f"{kind} {point[0]:.0f}, {point[1]:.0f} · {time - stamp:.1f}초 전" if point else "단서 없음"
+            action = AI_ACTIONS.get(brain.action, "") if actor.state in {"combat", "retreat"} else ""
+            role = AI_ROLES.get(brain.role, "")
+            state = " / ".join(part for part in (AI_STATES.get(actor.state, actor.state), role, action) if part)
+            route = "목표 없음"
+            if time < brain.scan_until:
+                route = "주변 관찰"
+            elif brain.goal is not None:
+                if brain.path_revision != simulation.world.revision:
+                    status = "장애물 변경 · 재계산 대기"
+                elif brain.route_failed:
+                    status = "도달 경로 없음"
+                elif brain.path:
+                    status = f"경유점 {len(brain.path)}개"
+                else:
+                    status = "도착"
+                route = f"{brain.goal[0]:.1f}, {brain.goal[1]:.1f} · {status}"
+            self.label(f"ai_id/{index}", f"{actor.id}   {state}", 13, (118, 215, 191))
+            self.label(f"ai_cue/{index}", f"{cue}   의심 {memory.suspicion:.2f} · 제압 {brain.suppression:.2f}", 13)
+            self.label(f"ai_route/{index}", route, 13)
+        self.label("ai_hint", simulation.ai_hint, 13)
+
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False, cache_count=0):
         player, weapon = simulation.player, simulation.player.weapon
         if perf_counter() >= self.next_update:
@@ -63,6 +105,8 @@ class HUD:
             self.label("map_title", simulation.world.data.get("name", "지역 지도"), 24, (118, 215, 191))
             self.label("map_help", "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보", 13)
             self.label("map_size", f"{simulation.world.bounds.w:g} × {simulation.world.bounds.h:g} m", 13)
+            if debug:
+                self._update_ai(simulation, camera)
             for facility in simulation.world.facilities:
                 self.label("site/" + facility["id"], facility["name"], 13)
                 campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
@@ -109,9 +153,22 @@ class HUD:
         if debug:
             self.panel(12, height - 120, 650, 40)
             self.text("timing", 24, height - 100)
+            if self.ai_rows:
+                top = height - 80
+                left = width - 365
+                self.panel(left, top - self.ai_rows * 64 - 10, 350, self.ai_rows * 64 + 10)
+                for index in range(self.ai_rows):
+                    y = top - 15 - index * 64
+                    for row, key in enumerate(("ai_id", "ai_cue", "ai_route")):
+                        self.text(f"{key}/{index}", left + 12, y - row * 18)
+            if "ai_hint" in self.labels:
+                self.text("ai_hint", 24, height - 136)
         else:
             self.text("help", 24, height - 88)
-        if paused:
+        if paused and simulation.ai_scenario:
+            self.panel(width / 2 - 106, height - 63, 212, 45)
+            self.text("paused", width / 2 - 92, height - 40)
+        elif paused:
             self.panel(width / 2 - 190, height / 2 - 27, 380, 54)
             self.text("paused", width / 2 - 160, height / 2)
         if "prompt" in self.labels:

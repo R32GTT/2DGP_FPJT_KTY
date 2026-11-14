@@ -6,6 +6,7 @@ from campaign.models import Position
 
 from .actors import Actor
 from .ai import EnemyAI
+from .ai_scenarios import configure
 from .bridge import CampaignBridge
 from .combat import Combat
 from .events import EventBus
@@ -21,7 +22,7 @@ FIXED_DT = 1 / 60
 
 
 class PlaySimulation:
-    def __init__(self, scene=DEFAULT_SCENE):
+    def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None):
         self.world = World(scene)
         self.specs = load_weapons()
         self.player = Actor("player", Position(*self.world.data["player_spawn"]), speed=3.0,
@@ -48,6 +49,9 @@ class PlaySimulation:
         self.respawn_target = None
         self.dropped = []
         self.kit_available = True
+        self.ai_scenario, self.ai_hint = ai_scenario, ""
+        if ai_scenario:
+            configure(self, ai_scenario)
 
     def _signals(self, actor, signals):
         for signal in signals:
