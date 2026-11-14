@@ -26,14 +26,14 @@ class CoverFinder:
     def choose(self, actor, threat, occupied=()):
         nearby = self.index.query(Rect(actor.position.x - 8, actor.position.y - 8, 16, 16))
         for point in sorted(nearby, key=lambda point: math.dist(actor.xy, point)):
-            if not 0.5 < math.dist(actor.xy, point) < 8:
+            if math.dist(actor.xy, point) >= 8:
                 continue
             if any(math.dist(point, other) < 0.7 for other in occupied):
                 continue
             body = Rect(point[0] - actor.radius, point[1] - actor.radius, actor.radius * 2, actor.radius * 2)
             if any(body.overlaps(collider.rect) for collider in self.world.geometry.query(body)):
                 continue
-            if (self.world.geometry.raycast(threat, point) is not None
+            if (self.world.geometry.raycast(threat, point, category="bullet") is not None
                     and self.world.navigation.clear(actor.xy, point)):
                 return point
         return None

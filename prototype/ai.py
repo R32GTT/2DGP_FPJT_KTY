@@ -20,12 +20,16 @@ class Brain:
     path_revision: int = -1
     route_failed: bool = False
     route_origin: tuple | None = None
+    progress_point: tuple | None = None
+    progress_at: float = 0.0
     pending_goal: tuple | None = None
     fire_at: float = 0.0
     burst: int = 0
     action: str = ""
     action_goal: tuple | None = None
     action_until: float = 0.0
+    cover_threat: tuple | None = None
+    cover_revision: int = -1
     suppression: float = 0.0
     pressure_at: float = 0.0
     radio_at: float = 0.0
@@ -195,18 +199,32 @@ class EnemyAI:
         route_failed = brain.action_goal is not None and brain.action_goal == brain.goal and brain.route_failed
         safe_action = brain.action in {"cover", "retreat", "pin"}
         needs_reload = weapon is not None and (weapon.reloading or not weapon.chambered)
-        if (time < brain.action_until and not route_failed and not brain.role_changed
+        if brain.action == "cover" and brain.action_goal is not None and not route_failed:
+            if ((brain.cover_threat != threat or brain.cover_revision != self.world.revision)
+                    and self.world.geometry.raycast(threat, brain.action_goal, category="bullet") is None):
+                route_failed = True
+            else:
+                brain.cover_threat = threat
+                brain.cover_revision = self.world.revision
+                if math.dist(actor.xy, brain.action_goal) > 0.3 or (needs_reload and not empty) or urgent:
+                    return
+        elif (time < brain.action_until and not route_failed and not brain.role_changed
                 and (not urgent or safe_action) and (not needs_reload or safe_action or brain.action == "reload")):
             return
         brain.role_changed = False
+        rejected = brain.action_goal if route_failed else None
         brain.action_goal = None
         if urgent or needs_reload:
             occupied = [ally.action_goal for other in actors if other.id != actor.id and other.hp > 0
                         and (ally := self.brains[other.id]).action == "cover"
-                        and ally.action_goal is not None and time < ally.action_until]
+                        and ally.action_goal is not None and other.state == "retreat"]
+            if rejected is not None:
+                occupied.append(rejected)
             cover = self.cover_finder.choose(actor, threat, occupied)
             if cover is not None:
                 brain.action, brain.action_goal = "cover", cover
+                brain.cover_threat = threat
+                brain.cover_revision = self.world.revision
             elif empty or actor.hp < 20:
                 brain.action = "retreat"
                 brain.action_goal = max(brain.patrol, key=lambda point: math.dist(point, threat), default=None)
@@ -293,15 +311,29 @@ class EnemyAI:
         if goal is None:
             brain.path.clear()
             brain.goal = None
+            brain.progress_point = None
             return budget
         nav = self.world.navigation
         changed = brain.goal is None or math.dist(brain.goal, goal) > (0.9 if actor.state == "combat" else 0.15)
         invalid = brain.path_revision != self.world.revision
-        if brain.route_origin is not None and math.dist(actor.xy, brain.route_origin) > 2:
+        relocated = brain.route_origin is not None and math.dist(actor.xy, brain.route_origin) > 2
+        if relocated:
             brain.path.clear()
             brain.path_revision = -1
             invalid = True
         brain.route_origin = actor.xy
+        if invalid and not relocated and brain.path:
+            points = [actor.xy, *brain.path]
+            if all(nav.clear(start, end, ignore_doors=True) for start, end in zip(points, points[1:])):
+                brain.path_revision = self.world.revision
+                invalid = False
+        if brain.path and brain.progress_point is not None and not changed:
+            if math.dist(actor.xy, brain.progress_point) >= 0.18:
+                brain.progress_at, brain.progress_point = time, actor.xy
+            elif time - brain.progress_at >= 0.9:
+                brain.path.clear()
+                brain.path_revision = -1
+                invalid = True
         if budget and (changed or invalid) and time >= brain.plan_at:
             options = nav.nearby_goals(goal, True) if approximate else [goal]
             brain.path = []
@@ -311,6 +343,7 @@ class EnemyAI:
                     break
             brain.goal, brain.path_revision, brain.plan_at = goal, self.world.revision, time + 0.2
             brain.route_failed = not brain.path
+            brain.progress_at, brain.progress_point = time, actor.xy
             budget -= 1
         elif changed or invalid:
             brain.pending_goal = goal
@@ -415,12 +448,18 @@ class EnemyAI:
                         memory.seen_at + 0.5 if tracking else memory.reported_at)):
                     point = memory.last_sound
                 holding = brain.role == "hold" and reported and not (tracking or investigating)
-                if holding:
+                continuing_cover = brain.action == "cover" and old_state == "retreat"
+                if continuing_cover:
+                    self._combat_action(actor, brain, actors, point, time)
+                    continuing_cover = brain.action in {"cover", "retreat", "pin", "reload"}
+                if continuing_cover:
+                    actor.state, goal = "retreat", brain.action_goal
+                elif holding:
                     goal = None
                     self._face(actor, point)
                 else:
                     goal = self._search(actor, brain, (actor.state, point), time)
-                if not holding and not brain.search_points and time >= brain.scan_until:
+                if not continuing_cover and not holding and not brain.search_points and time >= brain.scan_until:
                     brain.checked_sound_at = memory.sound_at
                     memory.last_seen = None
                     if reported:
@@ -428,7 +467,7 @@ class EnemyAI:
                         self._set_role(brain, "hold")
                     else:
                         actor.state, goal = self._patrol(actor, brain)
-                elif (brain.suppression >= 0.55 or actor.hurt_until > time or actor.hp < 20
+                elif not continuing_cover and (brain.suppression >= 0.55 or actor.hurt_until > time or actor.hp < 20
                       or (brain.action in {"cover", "pin", "retreat"} and time < brain.action_until)):
                     self._combat_action(actor, brain, actors, point, time)
                     if brain.action in {"cover", "retreat", "pin"}:
@@ -441,7 +480,11 @@ class EnemyAI:
                 actor.state, goal = self._patrol(actor, brain)
             weapon = actor.weapon
             if weapon and not weapon.chambered and not weapon.reloading:
-                intent.reload = weapon.reserve > 0 or weapon.stage >= 2
+                moving_to_cover = (actor.state == "retreat" and brain.action == "cover" and goal is not None
+                                   and math.dist(actor.xy, goal) > 0.3)
+                intent.reload = not moving_to_cover and (weapon.reserve > 0 or weapon.stage >= 2)
+            if actor.state == "retreat" and brain.action == "cover" and goal is not None and math.dist(actor.xy, goal) <= 0.3:
+                goal = None
             budget = self._move(actor, brain, intent, goal, time, budget,
                                 face=not memory.visible, approximate=actor.state != "combat" and goal not in self.exits)
             intents[actor.id] = intent
