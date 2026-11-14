@@ -52,6 +52,9 @@ class PlaySimulation:
         self.ai_scenario, self.ai_hint = ai_scenario, ""
         if ai_scenario:
             configure(self, ai_scenario)
+        elif self.world.data.get("training_facility"):
+            self.message = "실내 AI 검증 · P 시작 · F2 재시작"
+            self.ai_hint = "F 문 사용 · M 전체 평면도 · F1 적군 판단 표시"
 
     def _signals(self, actor, signals):
         for signal in signals:

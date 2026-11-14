@@ -97,7 +97,9 @@ class Renderer:
                     self._rect(view, collider.rect, (148, 190, 124), filled=False)
                 continue
             if collider.kind == "door":
-                if collider.active:
+                if world.data.get("training_facility"):
+                    self._rect(view, collider.rect, (242, 190, 65), filled=collider.active)
+                elif collider.active:
                     if self.door:
                         x, y = view.pico(collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
                         width, height = (collider.rect.h, collider.rect.w) if collider.rotation % 180 else (collider.rect.w, collider.rect.h)

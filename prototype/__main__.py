@@ -19,18 +19,22 @@ def run_window(simulation, *, frames=0):
     renderer = None
     try:
         renderer = Renderer(simulation.world)
-        controls, camera = Controls(), PlayCamera(zoom=0.55 if simulation.ai_scenario else 1.0)
-        controls.debug = controls.paused = bool(simulation.ai_scenario)
+        facility_test = simulation.world.data.get("training_facility", False)
+        test_mode = facility_test or bool(simulation.ai_scenario)
+        controls, camera = Controls(), PlayCamera(zoom=0.55 if test_mode else 1.0)
+        controls.debug = controls.paused = test_mode
         camera.follow(simulation.player.xy)
         previous, accumulator, count = perf_counter(), 0.0, 0
         while controls.running and (not frames or count < frames):
             started = perf_counter()
             elapsed, previous = min(0.1, started - previous), started
             for action in controls.poll(camera):
-                if simulation.ai_scenario and action in {"restart_ai", "next_ai"}:
-                    cases = tuple(SCENARIOS)
-                    index = cases.index(simulation.ai_scenario) + (action == "next_ai")
-                    simulation = PlaySimulation(simulation.world.path, ai_scenario=cases[index % len(cases)])
+                if (test_mode and action == "restart_ai") or (simulation.ai_scenario and action == "next_ai"):
+                    scenario = simulation.ai_scenario
+                    if action == "next_ai":
+                        cases = tuple(SCENARIOS)
+                        scenario = cases[(cases.index(scenario) + 1) % len(cases)]
+                    simulation = PlaySimulation(simulation.world.path, ai_scenario=scenario)
                     controls.keys.clear()
                     controls.firing = controls.aiming = controls.trigger_pending = controls.map_open = False
                     controls.debug = controls.paused = True

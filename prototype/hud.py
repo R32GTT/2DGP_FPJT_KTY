@@ -172,7 +172,7 @@ class HUD:
                 self.text("ai_hint", 24, height - 136)
         else:
             self.text("help", 24, height - 88)
-        if paused and simulation.ai_scenario:
+        if paused and (simulation.ai_scenario or simulation.world.data.get("training_facility")):
             self.panel(width / 2 - 106, height - 63, 212, 45)
             self.text("paused", width / 2 - 92, height - 40)
         elif paused:
@@ -223,8 +223,9 @@ class HUD:
         self.text("map_title", 84, camera.height - 111)
         self.text("map_help", 84, camera.height - 140)
         world = simulation.world
-        scale = min((camera.width - 480) / world.bounds.w, (camera.height - 370) / world.bounds.h)
-        left = 84 + (camera.width - 480 - world.bounds.w * scale) / 2
+        plan_width = camera.width - (168 if not world.facilities else 480)
+        scale = min(plan_width / world.bounds.w, (camera.height - 370) / world.bounds.h)
+        left = 84 + (plan_width - world.bounds.w * scale) / 2
         top = camera.height - 176
 
         def point(x, y):
@@ -234,6 +235,15 @@ class HUD:
         pico.draw_rectangle(left, bottom, right, top, 34, 49, 43, filled=True)
         for road in world.roads:
             pico.draw_line(*point(*road["start"]), *point(*road["end"]), 153, 155, 123)
+        if not world.facilities:
+            for layer in world.layers:
+                a, b = point(layer.rect.x, layer.rect.y), point(layer.rect.right, layer.rect.bottom)
+                pico.draw_rectangle(a[0], b[1], b[0], a[1], *layer.color, filled=True)
+            for collider in world.geometry.objects.values():
+                rect = collider.rect
+                a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
+                color = (242, 190, 65) if collider.kind == "door" else (36, 43, 41)
+                pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=collider.active)
         for index, facility in enumerate(world.facilities):
             x, y, w, h = facility["rect"]
             a, b = point(x, y), point(x + w, y + h)
@@ -252,7 +262,7 @@ class HUD:
                 continue
             x, y = point(convoy.x, convoy.y)
             pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, 221, 186, 100, filled=True)
-        self.text("map_size", camera.width - 350, 245)
+        self.text("map_size", camera.width - (230 if not world.facilities else 350), 245)
 
     def close(self):
         self.labels.clear()
