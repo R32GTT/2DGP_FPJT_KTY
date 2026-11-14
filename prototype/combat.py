@@ -37,7 +37,7 @@ class Combat:
         hit = self.actor_index.raycast(muzzle, target.xy, category="bullet", ignore_ids={actor.id})
         return hit is not None and hit[1] == target.id
 
-    def _pressure(self, shooter, world, start, end, time, damaged):
+    def _pressure(self, shooter, world, start, end, time, damaged, *, impact=False):
         reach = 1.25
         area = Rect(min(start[0], end[0]), min(start[1], end[1]),
                     abs(end[0] - start[0]), abs(end[1] - start[1])).expanded(reach)
@@ -54,12 +54,18 @@ class Combat:
                 progress = ((actor.xy[0] - start[0]) * dx + (actor.xy[1] - start[1]) * dy) / length_squared
                 progress = max(0, min(1, progress))
                 closest = (start[0] + progress * dx, start[1] + progress * dy)
-                if world.geometry.raycast(actor.xy, closest, category="bullet") is not None:
+                blocked = world.geometry.raycast(actor.xy, closest, category="bullet") is not None
+                impact_distance = math.dist(actor.xy, end)
+                if blocked and (not impact or impact_distance >= 0.85):
                     continue
-                strength = 0.4 * (1 - distance / reach)
+                strength = (0.4 * (1 - distance / reach) if not blocked
+                            else 0.25 * (1 - impact_distance / 0.85))
             else:
                 continue
-            self.events.emit("pressure", time, actor, strength=strength, caliber=shooter.weapon.spec.damage)
+            # 탄도에서 대략적인 유입 방향만 얻는다.
+            self.events.emit("pressure", time, actor, strength=strength, caliber=shooter.weapon.spec.damage,
+                             incoming=math.atan2(-dy, -dx), hit=actor.id in damaged,
+                             close=math.dist(actor.xy, start) <= 10)
 
     def prepare(self, actors, dt):
         remaining = deque(maxlen=128)
@@ -99,10 +105,12 @@ class Combat:
         end = (muzzle[0] + math.cos(angle) * spec.range_m, muzzle[1] + math.sin(angle) * spec.range_m)
         ignored_actors, ignored_walls, endpoint = {actor.id}, set(), end
         damaged = set()
+        impact = False
         for count in range(spec.penetration + 1):
             wall = world.geometry.raycast(muzzle, end, category="bullet", ignore_ids=ignored_walls)
             target = self.actor_index.raycast(muzzle, end, category="bullet", ignore_ids=ignored_actors)
             if target is not None and (wall is None or target[0] < wall[0]):
+                impact = False
                 hit, key = target
                 victim = self.actors[key]
                 endpoint = (muzzle[0] + (end[0] - muzzle[0]) * hit, muzzle[1] + (end[1] - muzzle[1]) * hit)
@@ -120,15 +128,17 @@ class Combat:
                         self.events.emit("killed", time, victim)
                 ignored_actors.add(key)
             elif wall is not None:
+                impact = True
                 hit, key = wall
                 endpoint = (muzzle[0] + (end[0] - muzzle[0]) * hit, muzzle[1] + (end[1] - muzzle[1]) * hit)
                 if world.geometry.objects[key].material not in {"wood", "plaster", "plywood"}:
                     break
                 ignored_walls.add(key)
             else:
+                impact = False
                 endpoint = end
                 break
         self.traces.append(Tracer(muzzle, endpoint, actor.team))
         if actor.team == "player":
-            self._pressure(actor, world, muzzle, endpoint, time, damaged)
+            self._pressure(actor, world, muzzle, endpoint, time, damaged, impact=impact)
         return True

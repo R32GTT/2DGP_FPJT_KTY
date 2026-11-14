@@ -36,8 +36,12 @@ class Brain:
     action_until: float = 0.0
     cover_threat: tuple | None = None
     cover_revision: int = -1
+    peek_home: tuple | None = None
+    peek_at: float = 0.0
     suppression: float = 0.0
     pressure_at: float = 0.0
+    incoming: tuple | None = None
+    incoming_at: float = -1000.0
     radio_at: float = 0.0
     contact_at: float = 0.0
     combat_alert_until: float = 0.0
@@ -106,6 +110,14 @@ class EnemyAI:
                 strength = event.data["strength"] * min(1.5, event.data["caliber"] / 18)
                 brain.suppression = min(1.0, brain.suppression + strength)
                 brain.pressure_at = event.time
+                bearing = round(event.data["incoming"] / (math.pi / 8)) * (math.pi / 8)
+                distance = 6 if event.data["close"] else 11
+                origin = event.position
+                brain.incoming = (origin[0] + math.cos(bearing) * distance, origin[1] + math.sin(bearing) * distance)
+                brain.incoming_at = event.time
+                brain.sense_at = min(brain.sense_at, event.time)
+                if event.data["hit"] or event.data["close"]:
+                    brain.combat_alert_until = event.time + COMBAT_ALERT_SECONDS
         if not noises:
             return
         for actor in actors:
@@ -248,6 +260,7 @@ class EnemyAI:
                 brain.cover_revision = self.world.revision
                 if math.dist(actor.xy, brain.action_goal) > 0.3 or (needs_reload and not empty) or urgent:
                     return
+
         elif (time < brain.action_until and not route_failed and not brain.role_changed
                 and (brain.action != "flank" or (math.dist(actor.xy, brain.action_goal) > 0.35
                                                 and self._has_support(actor, brain, actors, time)))
@@ -298,6 +311,34 @@ class EnemyAI:
                     brain.action, brain.action_goal, brain.action_until = "flank", point, time + 3.2
                     return
 
+    def _peek(self, actor, brain, threat, time):
+        if brain.peek_home is not None:
+            if brain.action == "peek" and (time >= brain.action_until or brain.suppression >= 0.55
+                                          or actor.weapon is None or not actor.weapon.chambered
+                                          or (brain.goal == brain.action_goal and brain.route_failed)):
+                brain.action, brain.action_goal = "peek_return", brain.peek_home
+            if brain.action == "peek_return" and (
+                    math.dist(actor.xy, brain.peek_home) <= 0.3
+                    or (brain.goal == brain.peek_home and brain.route_failed)):
+                brain.action, brain.action_goal = "cover", brain.peek_home
+                brain.peek_home = None
+                brain.peek_at = time + 1.35
+                return False
+            return True
+        weapon = actor.weapon
+        if (threat is None or brain.action != "cover" or brain.action_goal is None
+                or math.dist(actor.xy, brain.action_goal) > 0.3 or time < brain.peek_at
+                or brain.suppression >= 0.4 or actor.hp < 20
+                or weapon is None or not weapon.chambered or weapon.reloading):
+            return False
+        brain.peek_at = time + 1.35
+        point = self.cover_finder.peek(actor, threat)
+        if point is None:
+            return False
+        brain.peek_home = brain.action_goal
+        brain.action, brain.action_goal, brain.action_until = "peek", point, time + 1.65
+        return True
+
     def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False):
         incident = self.incidents.get(brain.incident)
         if cue != brain.cue:
@@ -308,11 +349,12 @@ class EnemyAI:
             angle = heading if heading is not None else incident.heading if incident else actor.facing
             x, y = cue[1]
             if brain.role == "intercept":
-                offsets = ((7, 0), (5, 3), (5, -3))
+                offsets = ((8, 0), (7, 3), (7, -3))
             elif brain.role == "sweep":
-                offsets = ((3, -4), (0, -6), (-4, -3))
+                offsets = ((5, -3), (8, -4), (4, 4))
             else:
-                offsets = ((0, 0), (4, 0), (3, 3), (3, -3), (-2, 4), (-2, -4))
+                offsets = ((5, 0), (9, 0), (5, 3), (5, -3), (0, 0)) if confirmed else (
+                    (0, 0), (4, 0), (3, 3), (3, -3))
             cos_a, sin_a = math.cos(angle), math.sin(angle)
             brain.search_points = [(x + dx * cos_a - dy * sin_a, y + dx * sin_a + dy * cos_a)
                                    for dx, dy in offsets]
@@ -337,7 +379,7 @@ class EnemyAI:
                 if brain.sweep_pass and len(landmarks) > 5:
                     start = (brain.sweep_pass - 1) * 5 % len(landmarks)
                     landmarks = landmarks[start:] + landmarks[:start]
-                index = 1 if brain.role in {"", "pursue"} else 0
+                index = 1
                 brain.search_points[index:index] = landmarks[:5]
             brain.scan_until = 0
         if time < brain.scan_until:
@@ -482,9 +524,10 @@ class EnemyAI:
                              and time - memory.sound_heard_at < SOUND_MEMORY_SECONDS
                              and (memory.suspicion >= 0.3 or actor.state == "alert"))
             confirmed = time < brain.combat_alert_until
+            incoming = brain.incoming if time - brain.incoming_at < (12 if confirmed else 4) else None
             tracking = confirmed and memory.last_seen is not None
             reported = confirmed and memory.reported is not None
-            if math.dist(actor.xy, player.xy) > 60 and not (investigating or confirmed):
+            if math.dist(actor.xy, player.xy) > 60 and not (investigating or confirmed or incoming is not None):
                 if time < brain.far_at:
                     continue
                 intent.step_dt = min(0.5, time - brain.far_updated)
@@ -506,8 +549,10 @@ class EnemyAI:
                 was_visible = memory.visible
                 observe(actor, player, self.world.geometry, memory, time)
                 # 순찰 방향에서 먼저 확인하고, 발견하지 못했을 때 소리 쪽도 살핀다.
-                if not memory.visible and fresh_sound:
-                    self._face(actor, memory.last_sound)
+                fresh_incoming = incoming is not None and time - brain.incoming_at < 1
+                if not memory.visible and (fresh_incoming or fresh_sound):
+                    look = incoming if fresh_incoming else memory.last_sound
+                    self._face(actor, look)
                     observe(actor, player, self.world.geometry, memory, time)
                 if memory.visible and not was_visible:
                     brain.contact_at = time
@@ -526,18 +571,20 @@ class EnemyAI:
                 if time >= brain.radio_at and time - brain.contact_at >= 0.55:
                     self._report_sighting(actor, brain, actors, time)
                 if old_state not in {"combat", "retreat"}:
-                    brain.fire_at, brain.burst = time + 0.7, 0
+                    brain.fire_at, brain.burst = time + 0.28, 0
                     brain.action_until = time
-                self._combat_action(actor, brain, actors, memory.last_seen, time)
+                if not self._peek(actor, brain, memory.last_seen, time):
+                    self._combat_action(actor, brain, actors, memory.last_seen, time)
                 goal = brain.action_goal
-                if brain.action in {"cover", "retreat", "pin", "reload"}:
+                if brain.action in {"cover", "retreat", "pin", "reload", "peek_return"}:
                     actor.state = "retreat"
                 elif (time >= brain.fire_at and actor.weapon and not actor.weapon.reloading
-                      and actor.weapon.chambered and brain.action in {"fire", "advance"}):
+                      and actor.weapon.chambered and brain.action in {"fire", "advance", "peek"}):
                     intent.fire = True
-                    brain.burst = (brain.burst + 1) % 3
-                    brain.fire_at = time + (0.25 if brain.burst else 1.2)
-            elif tracking or investigating or reported:
+                    burst_size = 2 if brain.suppression >= 0.3 or brain.action == "peek" else 4
+                    brain.burst = (brain.burst + 1) % burst_size
+                    brain.fire_at = time + (0.20 if brain.burst else 0.58) * (1 + brain.suppression * 2)
+            elif tracking or investigating or reported or incoming is not None or (confirmed and brain.incoming is not None):
                 actor.state = "search" if confirmed else "alert"
                 point = memory.last_seen if tracking else None
                 contact_at = memory.seen_at if tracking else -math.inf
@@ -545,12 +592,15 @@ class EnemyAI:
                     point, contact_at = memory.reported, memory.reported_at
                 if investigating and (point is None or memory.sound_at > contact_at + 0.5):
                     point = memory.last_sound
+                if point is None:
+                    point = incoming or brain.incoming
                 threat = point
                 sound_only = investigating and point == memory.last_sound
                 holding = confirmed and not investigating and (
                     time < brain.next_sweep_at or (brain.role == "hold" and reported))
-                continuing_cover = brain.action == "cover" and old_state == "retreat"
-                if continuing_cover:
+                cover_context = brain.peek_home is not None or (brain.action == "cover" and old_state == "retreat")
+                continuing_cover = cover_context and self._peek(actor, brain, point, time)
+                if not continuing_cover and cover_context:
                     self._combat_action(actor, brain, actors, point, time)
                     continuing_cover = brain.action in {"cover", "retreat", "pin", "reload"}
                 if continuing_cover:
@@ -597,11 +647,13 @@ class EnemyAI:
                 brain.cue = None
                 brain.search_target = None
                 brain.search_cover = None
+                brain.peek_home = None
+                brain.incoming = None
                 memory.last_seen = memory.reported = None
                 self._set_role(brain, "")
                 actor.state, goal = self._patrol(actor, brain)
             if actor.state == "retreat" and not memory.visible:
-                watch_point = memory.last_sound if fresh_sound and not tracking else threat
+                watch_point = incoming if incoming is not None else memory.last_sound if fresh_sound and not tracking else threat
                 if watch_point is not None:
                     self._face(actor, watch_point)
             weapon = actor.weapon
@@ -617,7 +669,8 @@ class EnemyAI:
             if brain.cue is not None and brain.cue[1] == memory.last_sound:
                 approximate = False
             budget = self._move(actor, brain, intent, goal, time, budget,
-                                face=not memory.visible and actor.state not in {"retreat", "combat_guard"},
+                                face=not memory.visible and actor.state not in {"retreat", "combat_guard"}
+                                and brain.action != "peek",
                                 approximate=approximate)
             if (actor.state == "retreat" and memory.visible and any(intent.direction)
                     and brain.action in {"cover", "retreat"} and brain.suppression < 0.85

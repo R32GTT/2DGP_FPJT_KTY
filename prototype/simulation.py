@@ -185,7 +185,7 @@ class PlaySimulation:
                 if (self.combat.clear_fire_line(actor, self.player, self.world)
                         and self.combat.fire(actor, self.world, self.time, moving=True)):
                     self.ai.brains[actor.id].fire_at = self.time + 0.7
-            elif intent.fire:
+            elif intent.fire and self.combat.clear_fire_line(actor, self.player, self.world):
                 self.combat.fire(actor, self.world, self.time, moving=any(intent.direction))
         self._dispatch()
         self.feedback.update(FIXED_DT, self.danger if self.player.hp > 0 else 0)

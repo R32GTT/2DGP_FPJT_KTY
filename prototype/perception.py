@@ -14,6 +14,7 @@ class Knowledge:
     last_seen: tuple | None = None
     seen_at: float = -1000.0
     seen_heading: float | None = None
+    seen_motion_at: float = -1000.0
     last_sound: tuple | None = None
     sound_at: float = -1000.0
     sound_heard_at: float = -1000.0
@@ -35,9 +36,10 @@ def observe(actor, target, geometry, memory, time):
     if distance <= 16 and in_cone and geometry.raycast(actor.xy, target.xy) is None:
         if memory.last_seen is not None and time - memory.seen_at < 0.5:
             vx, vy = target.xy[0] - memory.last_seen[0], target.xy[1] - memory.last_seen[1]
-            if math.hypot(vx, vy) > 0.1:
+            if math.hypot(vx, vy) > 0.06:
                 memory.seen_heading = math.atan2(vy, vx)
-        else:
+                memory.seen_motion_at = time
+        if time - memory.seen_motion_at > 1.5:
             memory.seen_heading = None
         memory.visible, memory.last_seen, memory.seen_at = True, target.xy, time
         memory.suspicion = 1.0

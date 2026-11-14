@@ -54,3 +54,18 @@ class CoverFinder:
                     and self.world.geometry.raycast(threat, point, category="bullet") is not None):
                 return point
         return None
+
+    def peek(self, actor, threat):
+        x, y = actor.xy
+        distance = math.dist(actor.xy, threat)
+        if distance < 0.1:
+            return None
+        dx, dy = (threat[0] - x) / distance, (threat[1] - y) / distance
+        nav = self.world.navigation
+        for offset in (0.65, 1.1, 1.7, 2.3):
+            for side in (-1, 1):
+                point = (x - side * dy * offset, y + side * dx * offset)
+                if (nav.walkable(point) and nav.clear(actor.xy, point)
+                        and self.world.geometry.raycast(point, threat, category="bullet") is None):
+                    return point
+        return None

@@ -17,7 +17,8 @@ AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding
              "combat_guard": "전투 경계", "retreat": "엄폐·후퇴"}
 AI_ROLES = {"pursue": "추격", "intercept": "차단", "sweep": "수색", "hold": "경계"}
 AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reload": "재장전",
-              "fire": "사격", "advance": "접근", "flank": "측면 이동"}
+              "fire": "사격", "advance": "접근", "flank": "측면 이동",
+              "peek": "피킹", "peek_return": "엄폐 복귀"}
 SOUND_RESPONSES = {"new": "총성 감지", "renewed": "총성 재조사", "same_area": "총성 감지 · 경로 유지",
                    "out_of_range": "총성 감지 범위 밖", "no_estimate": "총성 감지 · 위치 추정 실패",
                    "checked": "총성 조사 종료"}
