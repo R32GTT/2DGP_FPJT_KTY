@@ -170,6 +170,8 @@ class HUD:
                         self.text(f"{key}/{index}", left + 12, y - row * 18)
             if "ai_hint" in self.labels:
                 self.text("ai_hint", 24, height - 136)
+            self.label("ai_legend", "파랑  맵 노드 · 청록  현재 경로 · 주황 +  소리 추정", 13)
+            self.text("ai_legend", 24, height - (156 if "ai_hint" in self.labels else 136))
         else:
             self.text("help", 24, height - 88)
         if paused and (simulation.ai_scenario or simulation.world.data.get("training_facility")):

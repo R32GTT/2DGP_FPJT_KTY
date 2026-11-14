@@ -32,8 +32,9 @@ class Navigation:
         self.edge_cache.clear()
         self.goal_cache.clear()
 
-    def clear(self, start, end, *, ignore_doors=False):
-        return self.geometry.raycast(start, end, padding=self.clearance, category="movement",
+    def clear(self, start, end, *, ignore_doors=False, clearance=None):
+        padding = self.clearance if clearance is None else clearance
+        return self.geometry.raycast(start, end, padding=padding, category="movement",
                                      ignore_doors=ignore_doors) is None
 
     def walkable(self, point, allow_doors=False):

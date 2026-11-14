@@ -42,7 +42,21 @@ def observe(actor, target, geometry, memory, time):
         memory.suspicion = 1.0
 
 
-def hear(actor, memory, event):
+def _estimate_sound(position, distance, navigation):
+    # 추정 오차가 벽을 건너면 오차를 줄이고, 가능한 가장 가까운 지점을 고른다.
+    resolution = 0.5 if distance < 6 else 1.0 if distance < 16 else 1.5
+    rounded = tuple(round(value / resolution) * resolution for value in position)
+    x, y = position
+    candidates = [rounded, (rounded[0], y), (x, rounded[1]), position]
+    for offset in (0.3, 0.6):
+        candidates.extend(((x + offset, y), (x - offset, y), (x, y + offset), (x, y - offset)))
+    for point in candidates:
+        if navigation.walkable(point) and navigation.clear(position, point, clearance=0):
+            return point
+    return None
+
+
+def hear(actor, memory, event, navigation):
     if event.kind != "noise" or event.data.get("team") == actor.team:
         return
     distance = math.dist(actor.xy, event.position)
@@ -56,13 +70,16 @@ def hear(actor, memory, event):
         # 비교 기준은 첫 총성의 위치다. 같은 구역의 총성은 조사 목표를 그대로 둔다.
         if not gunshot:
             return
-        if math.dist(event.position, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE:
+        if (math.dist(event.position, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE
+                and navigation.clear(memory.gunshot_origin, event.position, clearance=0)):
             memory.sound_heard_at = event.time
             return
     if not gunshot and event.time - memory.sound_at < 2 and priority < memory.sound_priority * 0.75:
         return
-    resolution = 0.75 if distance < 5 else 3.0
-    memory.last_sound = tuple(round(value / resolution) * resolution for value in event.position)
+    point = _estimate_sound(event.position, distance, navigation)
+    if point is None:
+        return False
+    memory.last_sound = point
     memory.sound_at = memory.sound_heard_at = event.time
     memory.sound_priority = priority
     memory.gunshot_origin = event.position if gunshot else None

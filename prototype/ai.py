@@ -100,7 +100,7 @@ class EnemyAI:
                 continue
             brain = self.brains[actor.id]
             for event in noises:
-                if hear(actor, brain.memory, event):
+                if hear(actor, brain.memory, event, self.world.navigation):
                     brain.look_until = event.time + 0.65
                     brain.sense_at = min(brain.sense_at, event.time)
 
@@ -275,7 +275,7 @@ class EnemyAI:
                     brain.action, brain.action_goal, brain.action_until = "flank", point, time + 3.2
                     return
 
-    def _search(self, actor, brain, cue, time):
+    def _search(self, actor, brain, cue, time, *, sound_only=False):
         incident = self.incidents.get(brain.incident)
         if cue != brain.cue:
             brain.cue = cue
@@ -293,7 +293,10 @@ class EnemyAI:
             brain.search_points = [(x + dx * cos_a - dy * sin_a, y + dx * sin_a + dy * cos_a)
                                    for dx, dy in offsets]
             nav = self.world.navigation
-            if incident or cue[0] == "search":
+            if sound_only:
+                brain.search_points = [point for point in brain.search_points
+                                       if nav.walkable(point) and nav.clear(cue[1], point)]
+            elif incident or cue[0] == "search":
                 keys = nav.point_index.query(Rect(x - 18, y - 18, 36, 36))
                 suffixes = ("/outside",) if brain.role == "intercept" else ("/hall", "/inside", "/terminal", "/outside")
                 landmarks = [nav.nodes[key] for key in keys if key.endswith(suffixes)
@@ -442,12 +445,13 @@ class EnemyAI:
                 continue
             brain.far_updated = time
             self.near_count += 1
-            looking_for_sound = not (tracking or investigating or reported) and time < brain.look_until
+            fresh_sound = time < brain.look_until
+            looking_for_sound = not (tracking or investigating or reported) and fresh_sound
             if time >= brain.sense_at:
                 was_visible = memory.visible
                 observe(actor, player, self.world.geometry, memory, time)
                 # 순찰 방향에서 먼저 확인하고, 발견하지 못했을 때 소리 쪽도 살핀다.
-                if not memory.visible and looking_for_sound:
+                if not memory.visible and fresh_sound:
                     self._face(actor, memory.last_sound)
                     observe(actor, player, self.world.geometry, memory, time)
                 if memory.visible and not was_visible:
@@ -456,6 +460,7 @@ class EnemyAI:
                 memory.suspicion = max(0, memory.suspicion - 0.01)
                 tracking = memory.last_seen is not None and time - memory.seen_at < 16
             old_state = actor.state
+            threat = None
             if memory.visible:
                 actor.state = "combat"
                 brain.cue = None
@@ -481,6 +486,8 @@ class EnemyAI:
                 if investigating and (point is None or memory.sound_at > (
                         memory.seen_at + 0.5 if tracking else memory.reported_at)):
                     point = memory.last_sound
+                threat = point
+                sound_only = investigating and point == memory.last_sound
                 holding = brain.role == "hold" and reported and not (tracking or investigating)
                 continuing_cover = brain.action == "cover" and old_state == "retreat"
                 if continuing_cover:
@@ -492,7 +499,7 @@ class EnemyAI:
                     goal = None
                     self._face(actor, point)
                 else:
-                    goal = self._search(actor, brain, (actor.state, point), time)
+                    goal = self._search(actor, brain, (actor.state, point), time, sound_only=sound_only)
                 if not continuing_cover and not holding and not brain.search_points and time >= brain.scan_until:
                     brain.checked_sound_at = memory.sound_at
                     memory.last_seen = None
@@ -513,6 +520,10 @@ class EnemyAI:
                 brain.search_target = None
                 self._set_role(brain, "")
                 actor.state, goal = self._patrol(actor, brain)
+            if actor.state == "retreat" and not memory.visible:
+                watch_point = memory.last_sound if fresh_sound and not tracking else threat
+                if watch_point is not None:
+                    self._face(actor, watch_point)
             weapon = actor.weapon
             if weapon and not weapon.chambered and not weapon.reloading:
                 moving_to_cover = (actor.state == "retreat" and brain.action == "cover" and goal is not None
@@ -520,7 +531,10 @@ class EnemyAI:
                 intent.reload = not moving_to_cover and (weapon.reserve > 0 or weapon.stage >= 2)
             if actor.state == "retreat" and brain.action == "cover" and goal is not None and math.dist(actor.xy, goal) <= 0.3:
                 goal = None
+            approximate = actor.state not in {"combat", "retreat"} and goal not in self.exits
+            if brain.cue is not None and brain.cue[1] == memory.last_sound:
+                approximate = False
             budget = self._move(actor, brain, intent, goal, time, budget,
-                                face=not memory.visible, approximate=actor.state != "combat" and goal not in self.exits)
+                                face=not memory.visible and actor.state != "retreat", approximate=approximate)
             intents[actor.id] = intent
         return intents

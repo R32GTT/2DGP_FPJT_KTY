@@ -10,6 +10,7 @@ import pico2d as pico
 from .geometry import Rect
 from .hud import HUD
 from .map_images import MapImages
+from .perception import SOUND_MEMORY_SECONDS
 from .visual_assets import actor_image, prop_image, tree_image, truck_image, vignette_image, weapon_image
 from .weapons import load_weapons, weapon_pose
 from .world import ROOT
@@ -69,6 +70,22 @@ class Renderer:
         cosine, sine = abs(math.cos(facing)), abs(math.sin(facing))
         width, height = size[0] * cosine + size[1] * sine, size[0] * sine + size[1] * cosine
         return Rect(center[0] - width / 2, center[1] - height / 2, width, height)
+
+    @staticmethod
+    def _draw_navigation(navigation, view):
+        keys = set(navigation.point_index.query(view.viewport(1)))
+        drawn = set()
+        for key in sorted(keys):
+            point = navigation.nodes[key]
+            x, y = view.pico(*point)
+            for neighbor in navigation.edges[key]:
+                edge = tuple(sorted((key, neighbor)))
+                if edge not in drawn:
+                    drawn.add(edge)
+                    pico.draw_line(x, y, *view.pico(*navigation.nodes[neighbor]), 100, 139, 177)
+        for key in keys:
+            x, y = view.pico(*navigation.nodes[key])
+            pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 152, 198, 240, filled=True)
 
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False):
         started = perf_counter()
@@ -155,6 +172,8 @@ class Renderer:
                 if convoy.vehicles and view.visible(bounds):
                     x, y = view.pico(convoy.x, convoy.y)
                     self.truck.rotate_draw(-convoy.heading, x, y, 5.6 * view.scale, 2.4 * view.scale)
+        if debug:
+            self._draw_navigation(world.navigation, view)
         for actor in [*simulation.guards, simulation.player]:
             body_angle = actor.facing + BODY_FORWARD_OFFSET
             body_bounds = self._rotated_bounds(actor.xy, BODY_SIZE_M, body_angle)
@@ -184,6 +203,8 @@ class Renderer:
                     for point in brain.path:
                         current = view.pico(*point)
                         pico.draw_line(*previous, *current, 102, 215, 194)
+                        px, py = current
+                        pico.draw_rectangle(px - 2, py - 2, px + 2, py + 2, 102, 215, 194, filled=True)
                         previous = current
                     if brain.goal is not None:
                         gx, gy = view.pico(*brain.goal)
@@ -191,6 +212,11 @@ class Renderer:
                         pico.draw_rectangle(gx - 4, gy - 4, gx + 4, gy + 4, *color, filled=False)
                     if brain.memory.visible:
                         pico.draw_line(x, y, *view.pico(*brain.memory.last_seen), 212, 103, 75)
+                    if (brain.memory.last_sound is not None
+                            and simulation.time - brain.memory.sound_heard_at < SOUND_MEMORY_SECONDS):
+                        sx, sy = view.pico(*brain.memory.last_sound)
+                        pico.draw_line(sx - 5, sy, sx + 5, sy, 244, 184, 88)
+                        pico.draw_line(sx, sy - 5, sx, sy + 5, 244, 184, 88)
         for trace in simulation.combat.traces:
             color = (249, 225, 137) if trace.team == "player" else (230, 128, 92)
             pico.draw_line(*view.pico(*trace.start), *view.pico(*trace.end), *color)
