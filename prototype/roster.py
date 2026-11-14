@@ -43,6 +43,7 @@ class CampaignRoster:
                         state.units[key].status, state.units[key].operation_id) for key in self.unit_ids))
         if not restore and stamp == self._stamp:
             return self._active
+        repositioned = []
         for unit_id in self.unit_ids:
             members = [actor for actor in self.actors if actor.source_unit == unit_id]
             unit = state.units[unit_id]
@@ -61,6 +62,7 @@ class CampaignRoster:
                 if restore or actor.last_node != unit.node_id:
                     point = state.nodes[unit.node_id].position
                     actor.position = Position(*(self.spawns[actor.id] if unit.node_id == actor.home_node else (point.x, point.y)))
+                    repositioned.append(actor)
                 actor.last_node = unit.node_id
                 if unit.status == "reserved":
                     point = state.nodes[unit.node_id].position
@@ -71,4 +73,23 @@ class CampaignRoster:
                 actor.present = self.materialized or actor.hp <= 0
         self._stamp = stamp
         self._active = [actor for actor in self.actors if actor.present]
+        nav = self.world.navigation
+        for actor in repositioned:
+            others = [other for other in self._active if other is not actor and other.hp > 0
+                      and other.position.floor == actor.position.floor]
+            x, y = actor.xy
+            if all(math.dist(actor.xy, other.xy) >= actor.radius + other.radius for other in others):
+                continue
+            for step in range(1, 7):
+                distance = step * (2 * actor.radius + 0.1)
+                for index in range(8):
+                    angle = index * math.pi / 4
+                    candidate = x + math.cos(angle) * distance, y + math.sin(angle) * distance
+                    if (nav.walkable(candidate) and nav.clear((x, y), candidate, clearance=actor.radius)
+                            and all(math.dist(candidate, other.xy) >= actor.radius + other.radius for other in others)):
+                        actor.position.x, actor.position.y = candidate
+                        break
+                else:
+                    continue
+                break
         return self._active

@@ -83,6 +83,8 @@ class HUD:
             elif brain.pending_goal is not None:
                 x, y = brain.pending_goal
                 route = f"{x:.1f}, {y:.1f} · 경로 계산 대기"
+            elif brain.blocked_by:
+                route = f"병력 통과 대기 · {brain.blocked_by}"
             elif brain.goal is not None:
                 if brain.path_revision != simulation.world.revision:
                     status = "장애물 변경 · 재계산 대기"

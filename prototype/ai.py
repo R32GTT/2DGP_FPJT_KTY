@@ -27,6 +27,7 @@ class Brain:
     progress_point: tuple | None = None
     progress_at: float = 0.0
     pending_goal: tuple | None = None
+    blocked_by: str = ""
     fire_at: float = 0.0
     fired_at: float = -1000.0
     burst: int = 0

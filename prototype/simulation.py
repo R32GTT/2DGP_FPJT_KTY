@@ -150,7 +150,11 @@ class PlaySimulation:
                 self.footstep_at = self.time + (0.35 if sprint else 0.5)
         self._dispatch()
         intents = self.ai.update(self.guards, self.player, self.time)
-        for actor in self.guards:
+        active_guards = [actor for actor in self.guards if actor.hp > 0]
+        # 이동 방향과 무관하게 처리 순서가 특정 병사에게 계속 유리하지 않도록 번갈아 적용한다.
+        if int(round(self.time / FIXED_DT)) % 2:
+            active_guards.reverse()
+        for actor in active_guards:
             intent = intents.get(actor.id)
             if intent is not None:
                 brain = self.ai.brains[actor.id]
@@ -161,7 +165,11 @@ class PlaySimulation:
                         self.events.emit("noise", self.time, actor, radius=4, strength=0.25, reason="door")
                 speed = actor.speed * intent.move_multiplier * (actor.weapon.spec.reload_move_multiplier
                                        if actor.weapon and actor.weapon.reloading else 1)
-                move_actor(actor, intent.direction, self.world, intent.step_dt, speed=speed)
+                blocker = move_actor(actor, intent.direction, self.world, intent.step_dt, speed=speed,
+                                     neighbors=active_guards)
+                brain.blocked_by = blocker.id if blocker is not None else ""
+                if blocker is not None:
+                    brain.progress_at = self.time
                 if intent.reload:
                     self.reload(actor)
         self.combat.prepare([self.player, *self.guards], FIXED_DT)
