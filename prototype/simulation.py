@@ -107,7 +107,7 @@ class PlaySimulation:
 
     @property
     def danger(self):
-        weights = {"combat": 1.0, "search": 0.65, "alert": 0.4, "retreat": 0.8}
+        weights = {"combat": 1.0, "search": 0.65, "combat_guard": 0.55, "alert": 0.4, "retreat": 0.8}
         return max((weights.get(actor.state, 0) for actor in self.guards
                     if actor.hp > 0 and math.dist(actor.xy, self.player.xy) < 24), default=0.0)
 
@@ -159,7 +159,7 @@ class PlaySimulation:
                     if door:
                         self.events.emit("door_opened", self.time, actor, door=door.id)
                         self.events.emit("noise", self.time, actor, radius=4, strength=0.25, reason="door")
-                speed = actor.speed * (actor.weapon.spec.reload_move_multiplier
+                speed = actor.speed * intent.move_multiplier * (actor.weapon.spec.reload_move_multiplier
                                        if actor.weapon and actor.weapon.reloading else 1)
                 move_actor(actor, intent.direction, self.world, intent.step_dt, speed=speed)
                 if intent.reload:

@@ -13,7 +13,8 @@ from .interactions import nearby_facility
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결",
-             "alert": "조사", "search": "수색", "combat": "교전", "retreat": "엄폐·후퇴"}
+             "alert": "조사", "search": "전투 수색", "combat": "교전",
+             "combat_guard": "전투 경계", "retreat": "엄폐·후퇴"}
 AI_ROLES = {"pursue": "추격", "intercept": "차단", "sweep": "수색", "hold": "경계"}
 AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reload": "재장전",
               "fire": "사격", "advance": "접근", "flank": "측면 이동"}
@@ -70,6 +71,8 @@ class HUD:
             action = AI_ACTIONS.get(brain.action, "") if actor.state in {"combat", "retreat"} else ""
             role = AI_ROLES.get(brain.role, "")
             state = " / ".join(part for part in (AI_STATES.get(actor.state, actor.state), role, action) if part)
+            if time < brain.combat_alert_until:
+                state += f" · 경계 {math.ceil(brain.combat_alert_until - time)}초"
             route = "목표 없음"
             if time < brain.scan_until:
                 route = "주변 관찰"
@@ -90,6 +93,8 @@ class HUD:
                 else:
                     status = "도착"
                 route = f"{brain.goal[0]:.1f}, {brain.goal[1]:.1f} · {status}"
+                if brain.goal == brain.search_cover:
+                    route += " · 엄폐 이동"
             self.label(f"ai_id/{index}", f"{actor.id}   {state}", 13, (118, 215, 191))
             self.label(f"ai_cue/{index}", f"{cue}   의심 {memory.suspicion:.2f} · 제압 {brain.suppression:.2f}", 13)
             self.label(f"ai_route/{index}", route, 13)

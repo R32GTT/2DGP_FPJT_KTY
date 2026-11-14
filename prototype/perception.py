@@ -22,6 +22,7 @@ class Knowledge:
     suspicion: float = 0.0
     reported: tuple | None = None
     reported_at: float = -1000.0
+    report_source: str = ""
 
 
 def observe(actor, target, geometry, memory, time):
