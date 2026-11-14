@@ -9,7 +9,8 @@ import pico2d as pico
 
 from .geometry import Rect
 from .hud import HUD
-from .visual_assets import actor_image, layer_image, vignette_image, weapon_image
+from .map_images import MapImages
+from .visual_assets import actor_image, prop_image, tree_image, vignette_image, weapon_image
 from .weapons import load_weapons, weapon_pose
 from .world import ROOT
 
@@ -27,8 +28,12 @@ class Renderer:
         self.backend.SDL_SetHint(b"SDL_RENDER_SCALE_QUALITY", b"0")
         self.backend.SDL_ShowCursor(self.backend.SDL_DISABLE)
         self.images, self.missing = {}, []
-        self.layers = {layer.id: self._image(layer.image, layer.fallback) or layer_image(self.backend, layer)
-                       for layer in world.layers}
+        self.map_images = MapImages(self.backend)
+        self.layers = {}
+        spawn = world.data["player_spawn"]
+        self.map_images.prepare(world.visible_layers(Rect(spawn[0] - 20, spawn[1] - 16, 40, 32)), budget=12)
+        self.tree = tree_image(self.backend)
+        self.props = {kind: prop_image(self.backend, kind) for kind in ("cover", "desk", "rack", "bed", "antenna")}
         self.sprites = {key: self._image(f"assets/prototype/{key}.png") or actor_image(self.backend, key == "player")
                         for key in ("player", "guard")}
         self.guns = {key: self._image(spec.image) or weapon_image(self.backend, key == "ar_b")
@@ -64,7 +69,7 @@ class Renderer:
         width, height = size[0] * cosine + size[1] * sine, size[0] * sine + size[1] * cosine
         return Rect(center[0] - width / 2, center[1] - height / 2, width, height)
 
-    def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None):
+    def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False):
         started = perf_counter()
         view = copy(camera)
         shake_x, shake_y = simulation.feedback.offset
@@ -73,26 +78,41 @@ class Renderer:
         pico.clear_canvas()
         pico.draw_rectangle(0, 0, view.width - 1, view.height - 1, 18, 28, 29, filled=True)
         world = simulation.world
-        for layer in world.layers:
-            if not view.visible(layer.rect):
-                continue
+        visible_layers = world.visible_layers(view.viewport(1))
+        self.layers = self.map_images.prepare(visible_layers)
+        for layer in visible_layers:
             image = self.layers[layer.id]
             if image is not None:
                 x, y = view.pico(layer.rect.x + layer.rect.w / 2, layer.rect.y + layer.rect.h / 2)
                 size = layer.image_size or (layer.rect.w, layer.rect.h)
                 image.rotate_draw(-math.radians(layer.rotation), x, y, size[0] * view.scale, size[1] * view.scale)
-        for collider in world.geometry.objects.values():
-            if not view.visible(collider.rect):
+            elif layer.role != "walls":
+                self._rect(view, layer.rect, layer.color)
+        for collider in world.visible_colliders(view.viewport(4)):
+            if collider.kind == "tree":
+                x, y = view.pico(collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
+                self.tree.draw(x, y, 3.6 * view.scale, 3.6 * view.scale)
+                if debug:
+                    self._rect(view, collider.rect, (148, 190, 124), filled=False)
                 continue
             if collider.kind == "door":
                 if collider.active:
                     if self.door:
                         x, y = view.pico(collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
-                        self.door.draw(x, y, collider.rect.w * view.scale, collider.rect.h * view.scale)
+                        width, height = (collider.rect.h, collider.rect.w) if collider.rotation % 180 else (collider.rect.w, collider.rect.h)
+                        self.door.rotate_draw(-math.radians(collider.rotation), x, y, width * view.scale, height * view.scale)
                     else:
                         self._rect(view, collider.rect, (140, 104, 62))
                 else:
-                    self._rect(view, Rect(collider.rect.x, collider.rect.y, 0.12, 0.25), (78, 184, 132))
+                    jamb = (Rect(collider.rect.x, collider.rect.y, collider.rect.w, 0.12) if collider.rotation % 180 else
+                            Rect(collider.rect.x, collider.rect.y, 0.12, collider.rect.h))
+                    self._rect(view, jamb, (78, 184, 132))
+            elif collider.kind in self.props and (collider.material == "wood" or collider.kind != "cover"):
+                rect = collider.rect
+                x, y = view.pico(rect.x + rect.w / 2, rect.y + rect.h / 2)
+                width, height = (rect.h, rect.w) if collider.rotation % 180 else (rect.w, rect.h)
+                self.props[collider.kind].rotate_draw(-math.radians(collider.rotation), x, y,
+                                                      width * view.scale, height * view.scale)
             elif collider.kind != "wall" or self.layers.get(collider.visual_layer or "walls") is None:
                 rect = collider.rect
                 self._rect(view, Rect(rect.x + 0.08, rect.y + 0.09, rect.w, rect.h), (20, 29, 28, 130))
@@ -149,15 +169,18 @@ class Renderer:
             self.vignette.opacify(simulation.feedback.alpha)
             self.vignette.draw(camera.width / 2, camera.height / 2, camera.width, camera.height)
         self.hud.render(simulation, camera, paused=paused, debug=debug,
-                        update_ms=update_ms, draw_ms=self.last_draw_ms)
+                        update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=map_open,
+                        cache_count=len(self.map_images.cache))
         self.last_draw_ms = (perf_counter() - started) * 1000
         pico.update_canvas()
 
     def close(self):
         self.hud.close()
         self.layers.clear()
+        self.map_images.close()
         self.sprites.clear()
+        self.props.clear()
         self.guns.clear()
-        self.door = self.vignette = None
+        self.door = self.vignette = self.tree = None
         self.images.clear()
         self.backend.SDL_ShowCursor(self.backend.SDL_ENABLE)

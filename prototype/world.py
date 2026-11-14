@@ -58,7 +58,7 @@ class World:
                 raise ValueError("충돌 영역 치수 오류")
             collider = Collider(row["id"], rect, row.get("kind", "wall"), row.get("active", True),
                                 material=row.get("material", "concrete"), ai_access=row.get("ai_access", True),
-                                visual_layer=row.get("visual_layer", ""))
+                                visual_layer=row.get("visual_layer", ""), rotation=row.get("rotation", 0))
             self.geometry.add(collider)
             self.collider_index.add(collider.id, rect, collider)
         self.navigation = Navigation({key: tuple(point) for key, point in self.data["navigation"].items()},

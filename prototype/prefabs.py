@@ -47,10 +47,11 @@ def instantiate(row, definition):
                   "visual_layer": prefix + "walls"} for index, wall in enumerate(walls)]
     colliders.append({"id": prefix + "door", "rect": placement.rect([-door / 2, height / 2 - thick, door, thick]),
                       "kind": "door", "active": row.get("closed", True),
-                      "ai_access": row.get("ai_access", True), "material": "wood"})
+                      "ai_access": row.get("ai_access", True), "material": "wood", "rotation": angle})
     for index, prop in enumerate(definition.get("props", [])):
         colliders.append({"id": prefix + f"prop_{index}", "rect": placement.rect(prop["rect"]),
-                          "kind": prop.get("kind", "cover"), "material": prop.get("material", "wood")})
+                          "kind": prop.get("kind", "cover"), "material": prop.get("material", "wood"),
+                          "rotation": angle})
     nodes = {prefix + "hall": placement.point((0, 0)),
              prefix + "inside": placement.point((0, height / 2 - 1.2)),
              prefix + "outside": placement.point((0, height / 2 + 1.2)),

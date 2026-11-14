@@ -52,6 +52,7 @@ class Collider:
     material: str = "concrete"
     ai_access: bool = True
     visual_layer: str = ""
+    rotation: int = 0
 
 
 @dataclass

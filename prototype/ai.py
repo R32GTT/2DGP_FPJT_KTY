@@ -22,6 +22,8 @@ class Brain:
     cover_until: float = 0.0
     search_index: int = 0
     path_revision: int = -1
+    far_at: float = 0.0
+    far_updated: float = 0.0
 
     @property
     def visible(self):
@@ -34,6 +36,7 @@ class Intent:
     fire: bool = False
     reload: bool = False
     open_door: bool = False
+    step_dt: float = 1 / 60
 
 
 class PatrolAI:
@@ -51,10 +54,35 @@ class PatrolAI:
 
     def update(self, actors, player, time):
         intents, budget = {}, 1
-        for actor in actors:
+        self.near_count = 0
+        for actor in sorted(actors, key=lambda actor: math.dist(actor.xy, player.xy)):
             if actor.hp <= 0:
                 continue
             brain, intent = self.brains[actor.id], Intent()
+            if math.dist(actor.xy, player.xy) > 60:
+                if time < brain.far_at:
+                    continue
+                elapsed = min(0.5, max(0, time - brain.far_updated))
+                brain.far_at, brain.far_updated = time + 0.5, time
+                brain.memory.visible = False
+                goal = brain.patrol[brain.waypoint]
+                if math.dist(actor.xy, goal) < 0.35:
+                    brain.waypoint = (brain.waypoint + 1) % len(brain.patrol)
+                    goal = brain.patrol[brain.waypoint]
+                if budget and (brain.goal != goal or not brain.path or brain.path_revision != self.world.revision):
+                    brain.path = self.world.navigation.route(actor.xy, goal, allow_doors=True)
+                    brain.goal, brain.path_revision = goal, self.world.revision
+                    budget -= 1
+                while brain.path and math.dist(actor.xy, brain.path[0]) < 0.16:
+                    brain.path.pop(0)
+                actor.state = "patrol"
+                if brain.path:
+                    dx, dy = brain.path[0][0] - actor.position.x, brain.path[0][1] - actor.position.y
+                    actor.facing = math.atan2(dy, dx)
+                    intents[actor.id] = Intent((dx, dy), open_door=True,
+                                               step_dt=min(elapsed, math.hypot(dx, dy) / actor.speed))
+                continue
+            self.near_count += 1
             memory = brain.memory
             if time >= brain.sense_at:
                 observe(actor, player, self.world.geometry, memory, time)

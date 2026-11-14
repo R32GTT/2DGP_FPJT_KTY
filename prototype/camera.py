@@ -1,6 +1,7 @@
 """기존 좌표 변환을 재사용하는 플레이어 추적 카메라."""
 
 from campaign.viewmodel import Camera
+from .geometry import Rect
 
 
 class PlayCamera(Camera):
@@ -26,6 +27,11 @@ class PlayCamera(Camera):
         x0, y0 = self.world(0, 0)
         x1, y1 = self.world(self.width, self.height)
         return rect.right >= x0 and rect.x <= x1 and rect.bottom >= y0 and rect.y <= y1
+
+    def viewport(self, padding=0):
+        left, top = self.world(0, 0)
+        return Rect(left - padding, top - padding, self.width / self.scale + padding * 2,
+                    self.height / self.scale + padding * 2)
 
     def pico(self, x, y):
         screen_x, screen_y = self.screen(x, y)

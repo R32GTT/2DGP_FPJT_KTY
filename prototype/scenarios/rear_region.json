@@ -41,6 +41,7 @@
     {"unit":"a_escort_1","count":2,"facility":"depot_a"},
     {"unit":"a_escort_2","count":2,"facility":"depot_a"}
   ],
-  "tree_count":160,
+  "tree_count":320,
+  "tree_clusters":[[-150,-64,24],[-20,-110,25],[32,116,26],[190,-24,22]],
   "campaign_remove_roads":["external_entry","entry_a","a_hq","a_comms","a_b","a_bypass","bypass_c"]
 }

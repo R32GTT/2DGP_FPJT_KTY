@@ -136,7 +136,7 @@ class PlaySimulation:
                         self.events.emit("noise", self.time, actor, radius=4, strength=0.25, reason="door")
                 speed = actor.speed * (actor.weapon.spec.reload_move_multiplier
                                        if actor.weapon and actor.weapon.reloading else 1)
-                move_actor(actor, intent.direction, self.world, FIXED_DT, speed=speed)
+                move_actor(actor, intent.direction, self.world, intent.step_dt, speed=speed)
                 if intent.reload:
                     self.reload(actor)
         self.combat.prepare([self.player, *self.guards], FIXED_DT)

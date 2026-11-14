@@ -68,7 +68,14 @@ def build_region(layout, root):
     placed = []
     while len(placed) < tree_count and attempts < tree_count * 30:
         attempts += 1
-        x, y = rng.uniform(bounds.x + 8, bounds.right - 8), rng.uniform(bounds.y + 8, bounds.bottom - 8)
+        clusters = layout.get("tree_clusters", [])
+        if clusters and rng.random() < 0.7:
+            cx, cy, spread = rng.choice(clusters)
+            x, y = rng.gauss(cx, spread), rng.gauss(cy, spread)
+        else:
+            x, y = rng.uniform(bounds.x + 8, bounds.right - 8), rng.uniform(bounds.y + 8, bounds.bottom - 8)
+        if not bounds.x + 8 <= x <= bounds.right - 8 or not bounds.y + 8 <= y <= bounds.bottom - 8:
+            continue
         if any(Rect(*facility["rect"]).expanded(14).segment_entry((x, y), (x, y)) is not None for facility in facilities):
             continue
         if any(segment_distance(x, y, *nodes[a], *nodes[b]) < 5 for a, b in edges):
@@ -77,7 +84,7 @@ def build_region(layout, root):
             continue
         placed.append((x, y))
         colliders.append({"id": f"tree/{len(placed)}", "rect": [x - 0.45, y - 0.45, 0.9, 0.9],
-                          "kind": "tree", "material": "wood"})
+                          "kind": "tree", "material": "tree_trunk"})
     depot = next(f for f in facilities if f["campaign_id"] == layout["campaign_facility"])
     result = {**layout, "format": "revenant.image_scene.v1", "layers": layers, "colliders": colliders,
               "navigation": nodes, "navigation_edges": edges, "guards": guards, "facilities": facilities,

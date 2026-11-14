@@ -63,6 +63,55 @@ def weapon_image(backend, alternate=False):
     return painted_image(backend, 64, 24, paint)
 
 
+def tree_image(backend):
+    def paint(p):
+        p.rect(58, 55, 12, 25, (84, 71, 47))
+        for radius, color, offset in ((48, (21, 36, 29, 140), 5), (45, (32, 62, 43), 0),
+                                      (34, (44, 79, 50), -5), (19, (60, 93, 57), -9)):
+            for y in range(-radius, radius + 1):
+                half = int(math.sqrt(max(0, radius * radius - y * y)))
+                p.rect(64 - half + offset, 62 + y + offset, half * 2, 1, color)
+    return painted_image(backend, 128, 128, paint)
+
+
+def prop_image(backend, kind):
+    def paint(p):
+        p.rect(4, 6, 120, 54, (22, 31, 29, 150))
+        if kind == "bed":
+            p.rect(2, 2, 122, 56, (88, 91, 77))
+            p.rect(9, 7, 108, 44, (111, 129, 97))
+            p.rect(12, 9, 27, 40, (195, 194, 160))
+            p.rect(45, 7, 3, 44, (150, 157, 123))
+        elif kind == "rack":
+            p.rect(2, 2, 122, 56, (38, 53, 55))
+            for x in range(8, 118, 28):
+                p.rect(x, 8, 22, 42, (73, 91, 87))
+                for y in (16, 27, 38):
+                    p.rect(x + 4, y, 12, 3, (31, 47, 46))
+                    p.rect(x + 16, y, 2, 2, (125, 201, 143))
+        elif kind == "desk":
+            p.rect(2, 2, 122, 56, (128, 119, 88))
+            p.rect(8, 8, 112, 44, (153, 144, 106))
+            p.rect(18, 12, 36, 24, (36, 52, 52))
+            p.rect(22, 15, 28, 17, (98, 153, 133))
+            p.rect(70, 13, 31, 30, (207, 204, 168))
+            p.rect(19, 41, 32, 7, (62, 72, 65))
+        elif kind == "antenna":
+            p.rect(12, 12, 104, 40, (103, 119, 109))
+            for y in range(-25, 26):
+                radius = int(math.sqrt(max(0, 625 - y * y)) * 1.7)
+                p.rect(64 - radius, 30 + y, radius * 2, 1, (184, 190, 163))
+            p.rect(62, 4, 4, 53, (76, 94, 84))
+            p.rect(21, 29, 86, 3, (76, 94, 84))
+        else:
+            p.rect(2, 2, 122, 56, (119, 101, 67))
+            p.rect(8, 8, 110, 44, (159, 140, 87))
+            for x in (11, 55, 99):
+                p.rect(x, 6, 8, 48, (100, 89, 62))
+            p.rect(6, 24, 114, 6, (189, 170, 112))
+    return painted_image(backend, 128, 64, paint)
+
+
 def layer_image(backend, layer):
     role = layer.role
     if role == "walls":

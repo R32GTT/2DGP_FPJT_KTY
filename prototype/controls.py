@@ -14,6 +14,7 @@ class Controls:
         self.running = True
         self.paused = False
         self.debug = False
+        self.map_open = False
 
     def poll(self, camera):
         actions = []
@@ -35,6 +36,8 @@ class Controls:
                     self.paused = not self.paused
                 elif key == sdl2.SDLK_F1:
                     self.debug = not self.debug
+                elif key == sdl2.SDLK_m:
+                    self.map_open = not self.map_open
                 elif key in (sdl2.SDLK_f, sdl2.SDLK_e, sdl2.SDLK_r, sdl2.SDLK_c,
                              sdl2.SDLK_v, sdl2.SDLK_1, sdl2.SDLK_2, sdl2.SDLK_RETURN):
                     actions.append({sdl2.SDLK_f: "door", sdl2.SDLK_e: "supplies", sdl2.SDLK_r: "reload",
