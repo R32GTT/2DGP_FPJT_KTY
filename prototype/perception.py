@@ -9,6 +9,7 @@ class Knowledge:
     visible: bool = False
     last_seen: tuple | None = None
     seen_at: float = -1000.0
+    seen_heading: float | None = None
     last_sound: tuple | None = None
     sound_at: float = -1000.0
     sound_priority: float = 0.0
@@ -23,6 +24,12 @@ def observe(actor, target, geometry, memory, time):
     distance = math.hypot(dx, dy)
     in_cone = distance < 1.2 or dx * math.cos(actor.facing) + dy * math.sin(actor.facing) >= distance * 0.5
     if distance <= 16 and in_cone and geometry.raycast(actor.xy, target.xy) is None:
+        if memory.last_seen is not None and time - memory.seen_at < 0.5:
+            vx, vy = target.xy[0] - memory.last_seen[0], target.xy[1] - memory.last_seen[1]
+            if math.hypot(vx, vy) > 0.1:
+                memory.seen_heading = math.atan2(vy, vx)
+        else:
+            memory.seen_heading = None
         memory.visible, memory.last_seen, memory.seen_at = True, target.xy, time
         memory.suspicion = 1.0
 
@@ -36,8 +43,6 @@ def hear(actor, memory, event):
         return
     strength = event.data.get("strength", 0.4)
     memory.suspicion = min(1.0, memory.suspicion + strength * (1 - distance / radius * 0.4))
-    if memory.suspicion < 0.15:
-        return
     # 가까운 총성도 뒤따른 약한 발소리 하나로 덮어쓰지 않는다.
     priority = strength * (1 - distance / radius * 0.4)
     if event.time - memory.sound_at < 2 and priority < memory.sound_priority * 0.75:

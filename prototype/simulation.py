@@ -5,7 +5,7 @@ import math
 from campaign.models import Position
 
 from .actors import Actor
-from .ai import PatrolAI
+from .ai import EnemyAI
 from .bridge import CampaignBridge
 from .combat import Combat
 from .events import EventBus
@@ -39,7 +39,7 @@ class PlaySimulation:
         self.campaign = CampaignBridge(self.world.data["campaign_facility"], world=self.world)
         self.roster = CampaignRoster(self.campaign, self.guard_records, self.world)
         self.guards = self.roster.sync()
-        self.ai = PatrolAI(self.world, self.guard_records, [row["patrol"] for row in self.world.data["guards"]])
+        self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in self.world.data["guards"]])
         self.events, self.feedback = EventBus(), Feedback()
         self.combat = Combat(self.events)
         self.time, self.footstep_at = 0.0, 0.0

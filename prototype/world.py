@@ -62,7 +62,7 @@ class World:
             self.geometry.add(collider)
             self.collider_index.add(collider.id, rect, collider)
         self.navigation = Navigation({key: tuple(point) for key, point in self.data["navigation"].items()},
-                                     self.data["navigation_edges"], self.geometry)
+                                     self.data["navigation_edges"], self.geometry, bounds=self.bounds)
         self.crate = tuple(self.data["supply_point"])
         self.safehouse = tuple(self.data.get("safehouse_spawn", self.data["player_spawn"]))
         self.facilities = self.data.get("facilities", [])

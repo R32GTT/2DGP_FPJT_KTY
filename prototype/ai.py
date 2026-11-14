@@ -1,4 +1,4 @@
-"""관측 정보에서 순찰·조사·교전·수색·복귀를 선택한다. 그리기·입력과 독립적이다."""
+"""관측한 정보와 현재 임무로 적군의 이동과 전투를 결정한다."""
 
 from dataclasses import dataclass, field
 import math
@@ -16,12 +16,18 @@ class Brain:
     plan_at: float = 0.0
     path: list = field(default_factory=list)
     goal: tuple | None = None
+    path_revision: int = -1
+    route_failed: bool = False
     fire_at: float = 0.0
     burst: int = 0
     cover: tuple | None = None
     cover_until: float = 0.0
-    search_index: int = 0
-    path_revision: int = -1
+    cue: tuple | None = None
+    search_points: list = field(default_factory=list)
+    scan_until: float = 0.0
+    scan_angle: float = 0.0
+    look_until: float = 0.0
+    checked_sound_at: float = -1000.0
     far_at: float = 0.0
     far_updated: float = 0.0
 
@@ -39,18 +45,105 @@ class Intent:
     step_dt: float = 1 / 60
 
 
-class PatrolAI:
+class EnemyAI:
     def __init__(self, world, actors, patrols):
         self.world = world
         self.cover_finder = CoverFinder(world)
-        self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.07)
+        self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.01)
                        for index, (actor, patrol) in enumerate(zip(actors, patrols))}
 
     def receive(self, actors, events):
+        noises = [event for event in events if event.kind == "noise"]
         for actor in actors:
-            if actor.hp > 0:
-                for event in events:
-                    hear(actor, self.brains[actor.id].memory, event)
+            if actor.hp <= 0:
+                continue
+            brain = self.brains[actor.id]
+            for event in noises:
+                old_sound_at = brain.memory.sound_at
+                hear(actor, brain.memory, event)
+                if brain.memory.sound_at != old_sound_at:
+                    brain.look_until = event.time + 0.65
+                    brain.sense_at = min(brain.sense_at, event.time)
+
+    @staticmethod
+    def _face(actor, point):
+        dx, dy = point[0] - actor.position.x, point[1] - actor.position.y
+        if math.hypot(dx, dy) > 0.05:
+            actor.facing = math.atan2(dy, dx)
+
+    def _search(self, actor, brain, cue, time):
+        if cue != brain.cue:
+            brain.cue = cue
+            heading = brain.memory.seen_heading if cue[0] == "search" else None
+            angle = actor.facing if heading is None else heading
+            x, y = cue[1]
+            offsets = ((0, 0), (4, 0), (3, 3), (3, -3), (-2, 4), (-2, -4))
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            brain.search_points = [(x + dx * cos_a - dy * sin_a, y + dx * sin_a + dy * cos_a)
+                                   for dx, dy in offsets]
+            brain.scan_until = 0
+        if time < brain.scan_until:
+            actor.facing = brain.scan_angle + math.sin((brain.scan_until - time) * 5) * 0.95
+            return None
+        while brain.search_points:
+            point = brain.search_points[0]
+            if brain.goal == point and not brain.path and brain.route_failed:
+                brain.search_points.pop(0)
+                continue
+            if math.dist(actor.xy, point) < 0.35 or (brain.goal == point and not brain.path):
+                brain.search_points.pop(0)
+                brain.scan_until, brain.scan_angle = time + 0.85, actor.facing
+                return None
+            return point
+        return None
+
+    def _move(self, actor, brain, intent, goal, time, budget, *, face=True, approximate=False):
+        if goal is None:
+            brain.path.clear()
+            brain.goal = None
+            return budget
+        nav = self.world.navigation
+        changed = brain.goal is None or math.dist(brain.goal, goal) > (0.9 if actor.state == "combat" else 0.15)
+        invalid = brain.path_revision != self.world.revision
+        if budget and (changed or invalid) and time >= brain.plan_at:
+            options = nav.nearby_goals(goal, True) if approximate else [goal]
+            brain.path = []
+            for point in options:
+                brain.path = nav.route(actor.xy, point, allow_doors=True)
+                if brain.path:
+                    break
+            brain.goal, brain.path_revision, brain.plan_at = goal, self.world.revision, time + 0.2
+            brain.route_failed = not brain.path
+            if brain.route_failed and not approximate:
+                brain.path_revision = -1
+            budget -= 1
+        if changed and brain.goal != goal and actor.state != "combat":
+            return budget
+        if invalid and brain.path_revision != self.world.revision:
+            return budget
+        while brain.path and math.dist(actor.xy, brain.path[0]) < 0.045:
+            brain.path.pop(0)
+        if not brain.path:
+            return budget
+        point = brain.path[0]
+        if face:
+            self._face(actor, point)
+        intent.direction = point[0] - actor.position.x, point[1] - actor.position.y
+        intent.step_dt = min(intent.step_dt, math.hypot(*intent.direction) / actor.speed)
+        intent.open_door = True
+        return budget
+
+    def _patrol(self, actor, brain):
+        if actor.boarding_goal is not None:
+            return "boarding", actor.boarding_goal
+        goal = brain.patrol[brain.waypoint] if brain.patrol else actor.xy
+        if not brain.patrol or len(brain.patrol) == 1 and math.dist(actor.xy, goal) < 0.25:
+            return "idle", None
+        if math.dist(actor.xy, goal) < 0.25:
+            brain.waypoint = (brain.waypoint + 1) % len(brain.patrol)
+            return "patrol", None
+        state = "return" if actor.state in {"combat", "search", "alert", "return", "retreat"} else "patrol"
+        return state, goal
 
     def update(self, actors, player, time):
         intents, budget = {}, 1
@@ -60,112 +153,72 @@ class PatrolAI:
                 continue
             brain, intent = self.brains[actor.id], Intent()
             memory = brain.memory
-            investigating = memory.last_sound is not None and time - memory.sound_at < 14
-            if math.dist(actor.xy, player.xy) > 60 and not investigating:
+            investigating = (memory.last_sound is not None and memory.sound_at > brain.checked_sound_at
+                             and time - memory.sound_at < 14
+                             and (memory.suspicion >= 0.3 or actor.state == "alert"))
+            tracking = memory.last_seen is not None and time - memory.seen_at < 16
+            if math.dist(actor.xy, player.xy) > 60 and not (investigating or tracking):
                 if time < brain.far_at:
                     continue
-                elapsed = min(0.5, max(0, time - brain.far_updated))
+                intent.step_dt = min(0.5, time - brain.far_updated)
                 brain.far_at, brain.far_updated = time + 0.5, time
-                brain.memory.visible = False
-                goal = actor.boarding_goal or brain.patrol[brain.waypoint]
-                if actor.boarding_goal is None and math.dist(actor.xy, goal) < 0.35:
-                    brain.waypoint = (brain.waypoint + 1) % len(brain.patrol)
-                    goal = brain.patrol[brain.waypoint]
-                if budget and (brain.goal != goal or not brain.path or brain.path_revision != self.world.revision):
-                    brain.path = self.world.navigation.route(actor.xy, goal, allow_doors=True)
-                    brain.goal, brain.path_revision = goal, self.world.revision
-                    budget -= 1
-                while brain.path and math.dist(actor.xy, brain.path[0]) < 0.16:
-                    brain.path.pop(0)
-                actor.state = "boarding" if actor.boarding_goal is not None else "patrol"
-                if brain.path:
-                    dx, dy = brain.path[0][0] - actor.position.x, brain.path[0][1] - actor.position.y
-                    actor.facing = math.atan2(dy, dx)
-                    intents[actor.id] = Intent((dx, dy), open_door=True,
-                                               step_dt=min(elapsed, math.hypot(dx, dy) / actor.speed))
-                continue
-            self.near_count += 1
-            if time >= brain.sense_at:
-                observe(actor, player, self.world.geometry, memory, time)
-                brain.sense_at = time + 0.15
-                memory.suspicion = max(0, memory.suspicion - 0.01)
-            tracking = memory.last_seen is not None and time - memory.seen_at < 10
-            if (actor.boarding_goal is not None and not memory.visible and not investigating
-                    and not tracking and time >= actor.hurt_until):
-                goal, actor.state = actor.boarding_goal, "boarding"
-                if budget and (brain.goal != goal or not brain.path or brain.path_revision != self.world.revision):
-                    brain.path = self.world.navigation.route(actor.xy, goal, allow_doors=True)
-                    brain.goal, brain.path_revision, brain.plan_at = goal, self.world.revision, time + 0.6
-                    budget -= 1
-                while brain.path and math.dist(actor.xy, brain.path[0]) < 0.16:
-                    brain.path.pop(0)
-                if brain.path:
-                    dx, dy = brain.path[0][0] - actor.position.x, brain.path[0][1] - actor.position.y
-                    actor.facing = math.atan2(dy, dx)
-                    intent.direction, intent.open_door = (dx, dy), True
+                memory.visible = False
+                actor.state, goal = self._patrol(actor, brain)
+                budget = self._move(actor, brain, intent, goal, time, budget)
                 intents[actor.id] = intent
                 continue
+            brain.far_updated = time
+            self.near_count += 1
+            if not (tracking or investigating) and time < brain.look_until:
+                self._face(actor, memory.last_sound)
+            if time >= brain.sense_at:
+                observe(actor, player, self.world.geometry, memory, time)
+                brain.sense_at = time + (0.10 if actor.state in {"combat", "search"} else 0.18)
+                memory.suspicion = max(0, memory.suspicion - 0.01)
             old_state = actor.state
             if memory.visible:
                 actor.state = "combat"
-                goal = memory.last_seen
+                brain.cue = None
+                goal = memory.last_seen if math.dist(actor.xy, memory.last_seen) >= 9 else None
+                self._face(actor, memory.last_seen)
                 if old_state != "combat":
                     brain.fire_at, brain.burst = time + 0.7, 0
                 if time >= brain.fire_at and actor.weapon and not actor.weapon.reloading:
                     intent.fire = True
-                    brain.burst += 1
-                    brain.fire_at = time + (0.25 if brain.burst < 3 else 1.2)
-                    if brain.burst == 3:
-                        brain.burst = 0
-            elif tracking:
-                actor.state = "search"
-                offsets = ((0, 0), (2, 0), (0, 2), (-2, 0), (0, -2))
-                dx, dy = offsets[brain.search_index % len(offsets)]
-                goal = memory.last_seen[0] + dx, memory.last_seen[1] + dy
-                if math.dist(actor.xy, goal) < 0.5:
-                    brain.search_index += 1
-            elif investigating:
-                actor.state, goal = "alert", memory.last_sound
+                    brain.burst = (brain.burst + 1) % 3
+                    brain.fire_at = time + (0.25 if brain.burst else 1.2)
+            elif tracking or investigating:
+                actor.state = "search" if tracking else "alert"
+                point = memory.last_seen if tracking else memory.last_sound
+                if investigating and (not tracking or memory.sound_at > memory.seen_at + 0.5):
+                    point = memory.last_sound
+                goal = self._search(actor, brain, (actor.state, point), time)
+                if not brain.search_points and time >= brain.scan_until:
+                    brain.checked_sound_at = memory.sound_at
+                    memory.last_seen = None
+                    actor.state, goal = self._patrol(actor, brain)
+            elif time < brain.look_until:
+                actor.state, goal = "idle", None
             else:
-                goal = brain.patrol[brain.waypoint]
-                actor.state = "return" if old_state in {"combat", "search", "alert", "return", "retreat"} else "patrol"
-                if math.dist(actor.xy, goal) < 0.35:
-                    brain.waypoint = (brain.waypoint + 1) % len(brain.patrol)
-                    actor.state, goal = "patrol", brain.patrol[brain.waypoint]
+                brain.cue = None
+                actor.state, goal = self._patrol(actor, brain)
             weapon = actor.weapon
             if weapon and not weapon.chambered and not weapon.reloading:
                 intent.reload = True
                 if weapon.reserve <= 0 and weapon.stage == 0:
                     actor.state, intent.fire, intent.reload = "retreat", False, False
-                    reference = memory.last_seen or actor.xy
-                    goal = max(brain.patrol, key=lambda point: math.dist(point, reference))
-            if (actor.hurt_until > time or actor.hp < 20) and memory.last_seen is not None and time >= brain.cover_until:
+                    reference = memory.last_seen or memory.last_sound or actor.xy
+                    goal = max(brain.patrol, key=lambda point: math.dist(point, reference), default=None)
+            threat = memory.last_seen if tracking or memory.visible else memory.last_sound if investigating else None
+            if threat is not None and (actor.hurt_until > time or actor.hp < 20) and time >= brain.cover_until:
                 occupied = [self.brains[other.id].cover for other in actors if other.id != actor.id and other.hp > 0
                             and self.brains[other.id].cover is not None and self.brains[other.id].cover_until > time]
-                brain.cover = self.cover_finder.choose(actor, memory.last_seen, occupied)
+                brain.cover = self.cover_finder.choose(actor, threat, occupied)
                 brain.cover_until = time + 2.5
             if brain.cover is not None and time < brain.cover_until:
                 actor.state, goal = "retreat", brain.cover
                 intent.fire = False
-            elif actor.hp < 20 and memory.last_seen is not None:
-                actor.state, intent.fire = "retreat", False
-                goal = max(brain.patrol, key=lambda point: math.dist(point, memory.last_seen))
-            if memory.last_seen is not None and actor.state in {"combat", "search", "retreat"}:
-                actor.facing = math.atan2(memory.last_seen[1] - actor.position.y, memory.last_seen[0] - actor.position.x)
-            needs_plan = brain.goal != goal or not brain.path or brain.path_revision != self.world.revision
-            if needs_plan and time >= brain.plan_at and budget:
-                # 자신이 사용할 수 있는 문은 열고 지나가도록 경로 후보에 포함한다.
-                brain.path = self.world.navigation.route(actor.xy, goal, allow_doors=True)
-                brain.goal, brain.plan_at = goal, time + 0.6
-                brain.path_revision = self.world.revision
-                budget -= 1
-            while brain.path and math.dist(actor.xy, brain.path[0]) < 0.16:
-                brain.path.pop(0)
-            if brain.path and not (actor.state == "combat" and math.dist(actor.xy, goal) < 9):
-                dx, dy = brain.path[0][0] - actor.position.x, brain.path[0][1] - actor.position.y
-                intent.direction = dx, dy
-                if actor.state not in {"combat", "search", "retreat"}:
-                    actor.facing = math.atan2(dy, dx)
-                intent.open_door = True
+            budget = self._move(actor, brain, intent, goal, time, budget, face=actor.state != "combat",
+                                approximate=actor.state in {"alert", "search"})
             intents[actor.id] = intent
         return intents
