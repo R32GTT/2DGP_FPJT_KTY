@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import math
 import random
 
+from campaign.viewmodel import segment_distance
+
 from .geometry import Collider, Rect, SpatialIndex
 from .weapons import weapon_pose
 
@@ -25,6 +27,30 @@ class Combat:
         self.actors = {}
         self.shots = self.hits = 0
         self.random = random.Random(42)
+
+    def _pressure(self, shooter, world, start, end, time, damaged):
+        reach = 1.25
+        area = Rect(min(start[0], end[0]), min(start[1], end[1]),
+                    abs(end[0] - start[0]), abs(end[1] - start[1])).expanded(reach)
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        length_squared = dx * dx + dy * dy
+        for collider in self.actor_index.query(area, "bullet"):
+            actor = self.actors[collider.id]
+            if actor.team == shooter.team or actor.hp <= 0:
+                continue
+            distance = segment_distance(*actor.xy, *start, *end)
+            if actor.id in damaged:
+                strength = 0.7
+            elif distance < reach and length_squared:
+                progress = ((actor.xy[0] - start[0]) * dx + (actor.xy[1] - start[1]) * dy) / length_squared
+                progress = max(0, min(1, progress))
+                closest = (start[0] + progress * dx, start[1] + progress * dy)
+                if world.geometry.raycast(actor.xy, closest, category="bullet") is not None:
+                    continue
+                strength = 0.4 * (1 - distance / reach)
+            else:
+                continue
+            self.events.emit("pressure", time, actor, strength=strength, caliber=shooter.weapon.spec.damage)
 
     def prepare(self, actors, dt):
         remaining = deque(maxlen=128)
@@ -63,6 +89,7 @@ class Combat:
             return True
         end = (muzzle[0] + math.cos(angle) * spec.range_m, muzzle[1] + math.sin(angle) * spec.range_m)
         ignored_actors, ignored_walls, endpoint = {actor.id}, set(), end
+        damaged = set()
         for count in range(spec.penetration + 1):
             wall = world.geometry.raycast(muzzle, end, category="bullet", ignore_ids=ignored_walls)
             target = self.actor_index.raycast(muzzle, end, category="bullet", ignore_ids=ignored_actors)
@@ -77,6 +104,7 @@ class Combat:
                     victim.armor -= absorbed
                     victim.hp = max(0, victim.hp - (spec.damage - absorbed))
                     victim.hurt_until = time + 2
+                    damaged.add(key)
                     self.hits += 1
                     self.events.emit("damaged", time, victim, damage=spec.damage - absorbed)
                     if victim.hp == 0:
@@ -92,4 +120,6 @@ class Combat:
                 endpoint = end
                 break
         self.traces.append(Tracer(muzzle, endpoint, actor.team))
+        if actor.team == "player":
+            self._pressure(actor, world, muzzle, endpoint, time, damaged)
         return True

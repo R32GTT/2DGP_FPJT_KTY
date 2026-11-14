@@ -26,7 +26,8 @@ class CampaignRoster:
             members = [actor for actor in self.actors if actor.source_unit == unit_id and actor.hp > 0]
             if len(members) != state.units[unit_id].soldiers:
                 return False
-            if any(math.dist(actor.xy, (point.x, point.y)) > 3.5 or actor.state in {"combat", "retreat"} for actor in members):
+            if any(math.dist(actor.xy, (point.x, point.y)) > 3.5
+                   or actor.state in {"alert", "combat", "search", "retreat"} for actor in members):
                 return False
         return True
 

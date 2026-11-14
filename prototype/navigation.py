@@ -45,7 +45,7 @@ class Navigation:
 
     def nearby_goals(self, goal, allow_doors):
         if self.walkable(goal, allow_doors):
-            return [goal]
+            yield goal
         x, y = goal
         for radius in (0.75, 1.5, 3):
             candidates = [(x + dx * radius, y + dy * radius) for dx, dy in
@@ -53,8 +53,8 @@ class Navigation:
                            (0.707, -0.707), (-0.707, 0.707), (-0.707, -0.707))]
             available = [point for point in candidates if self.walkable(point, allow_doors)]
             if available:
-                return available
-        return []
+                yield from available
+                return
 
     def _local_detour(self, start, goal, allow_doors):
         # 짧은 장애물 우회에는 수십 미터 떨어진 도로 노드까지 갈 필요가 없다.

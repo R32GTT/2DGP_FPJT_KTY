@@ -39,7 +39,8 @@ class PlaySimulation:
         self.campaign = CampaignBridge(self.world.data["campaign_facility"], world=self.world)
         self.roster = CampaignRoster(self.campaign, self.guard_records, self.world)
         self.guards = self.roster.sync()
-        self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in self.world.data["guards"]])
+        self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in self.world.data["guards"]],
+                          can_radio=self.campaign.can_radio)
         self.events, self.feedback = EventBus(), Feedback()
         self.combat = Combat(self.events)
         self.time, self.footstep_at = 0.0, 0.0
@@ -115,6 +116,7 @@ class PlaySimulation:
                 self.player.hp, self.player.armor = 100, 0
                 self.roster.materialized = True
                 self.guards = self.roster.sync(restore=True)
+                self.ai.reset()
                 for actor in self.guard_records:
                     if actor.hp > 0 and actor.weapon is not None:
                         actor.weapon.tick(21600)
@@ -163,7 +165,7 @@ class PlaySimulation:
         for actor in self.guards:
             if (actor.hp > 0 and self.player.hp > 0 and intents.get(actor.id) is not None
                     and intents[actor.id].fire):
-                self.combat.fire(actor, self.world, self.time)
+                self.combat.fire(actor, self.world, self.time, moving=any(intents[actor.id].direction))
         self._dispatch()
         self.feedback.update(FIXED_DT, self.danger if self.player.hp > 0 else 0)
         self.campaign.advance_to(self.time)

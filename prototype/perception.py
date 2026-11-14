@@ -14,6 +14,8 @@ class Knowledge:
     sound_at: float = -1000.0
     sound_priority: float = 0.0
     suspicion: float = 0.0
+    reported: tuple | None = None
+    reported_at: float = -1000.0
 
 
 def observe(actor, target, geometry, memory, time):

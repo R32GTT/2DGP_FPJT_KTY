@@ -46,6 +46,15 @@ class CampaignBridge:
     def inventory(self, facility_id):
         return self.simulation.state.facilities[facility_id].inventory
 
+    def can_radio(self, sender, receiver):
+        state = self.simulation.state
+        sender_home = state.facilities.get(sender.last_node or sender.home_node)
+        receiver_home = state.facilities.get(receiver.last_node or receiver.home_node)
+        if sender_home is None or receiver_home is None or sender_home.region_id != receiver_home.region_id:
+            return False
+        return any("communication" in state.facilities[key].capabilities and state.facilities[key].damage < 100
+                   for key in state.regions[sender_home.region_id].facility_ids)
+
     def advance_to(self, seconds):
         target = int(seconds + 1e-8)
         if target > self.simulation.state.world_time:
