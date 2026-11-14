@@ -5,7 +5,7 @@ import math
 
 from .cover import CoverFinder
 from .geometry import Rect
-from .perception import Knowledge, hear, observe
+from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
 
 
 @dataclass
@@ -91,9 +91,7 @@ class EnemyAI:
                 continue
             brain = self.brains[actor.id]
             for event in noises:
-                old_sound_at = brain.memory.sound_at
-                hear(actor, brain.memory, event)
-                if brain.memory.sound_at != old_sound_at:
+                if hear(actor, brain.memory, event):
                     brain.look_until = event.time + 0.65
                     brain.sense_at = min(brain.sense_at, event.time)
 
@@ -362,7 +360,7 @@ class EnemyAI:
             brain.suppression = max(0, brain.suppression - 0.2 * (time - brain.pressure_at))
             brain.pressure_at = time
             investigating = (memory.last_sound is not None and memory.sound_at > brain.checked_sound_at
-                             and time - memory.sound_at < 14
+                             and time - memory.sound_heard_at < SOUND_MEMORY_SECONDS
                              and (memory.suspicion >= 0.3 or actor.state == "alert"))
             tracking = memory.last_seen is not None and time - memory.seen_at < 16
             reported = memory.reported is not None and time - memory.reported_at < 18
@@ -378,11 +376,14 @@ class EnemyAI:
                 continue
             brain.far_updated = time
             self.near_count += 1
-            if not (tracking or investigating or reported) and time < brain.look_until:
-                self._face(actor, memory.last_sound)
+            looking_for_sound = not (tracking or investigating or reported) and time < brain.look_until
             if time >= brain.sense_at:
                 was_visible = memory.visible
                 observe(actor, player, self.world.geometry, memory, time)
+                # 순찰 방향에서 먼저 확인하고, 발견하지 못했을 때 소리 쪽도 살핀다.
+                if not memory.visible and looking_for_sound:
+                    self._face(actor, memory.last_sound)
+                    observe(actor, player, self.world.geometry, memory, time)
                 if memory.visible and not was_visible:
                     brain.contact_at = time
                 brain.sense_at = time + (0.10 if actor.state in {"combat", "search"} else 0.18)
@@ -432,7 +433,7 @@ class EnemyAI:
                     self._combat_action(actor, brain, actors, point, time)
                     if brain.action in {"cover", "retreat", "pin"}:
                         actor.state, goal = "retreat", brain.action_goal
-            elif time < brain.look_until:
+            elif looking_for_sound:
                 actor.state, goal = "idle", None
             else:
                 brain.cue = None

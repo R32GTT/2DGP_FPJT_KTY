@@ -4,6 +4,10 @@ from dataclasses import dataclass
 import math
 
 
+SOUND_MEMORY_SECONDS = 14
+GUNSHOT_REPLAN_DISTANCE = 4.0
+
+
 @dataclass
 class Knowledge:
     visible: bool = False
@@ -12,6 +16,8 @@ class Knowledge:
     seen_heading: float | None = None
     last_sound: tuple | None = None
     sound_at: float = -1000.0
+    sound_heard_at: float = -1000.0
+    gunshot_origin: tuple | None = None
     sound_priority: float = 0.0
     suspicion: float = 0.0
     reported: tuple | None = None
@@ -43,13 +49,21 @@ def hear(actor, memory, event):
     radius = event.data["radius"]
     if radius <= 0 or distance > radius:
         return
-    strength = event.data.get("strength", 0.4)
-    memory.suspicion = min(1.0, memory.suspicion + strength * (1 - distance / radius * 0.4))
-    # 가까운 총성도 뒤따른 약한 발소리 하나로 덮어쓰지 않는다.
-    priority = strength * (1 - distance / radius * 0.4)
-    if event.time - memory.sound_at < 2 and priority < memory.sound_priority * 0.75:
+    priority = event.data.get("strength", 0.4) * (1 - distance / radius * 0.4)
+    memory.suspicion = min(1.0, memory.suspicion + priority)
+    gunshot = event.data.get("reason") == "gunshot"
+    if memory.gunshot_origin is not None and event.time - memory.sound_heard_at < SOUND_MEMORY_SECONDS:
+        # 비교 기준은 첫 총성의 위치다. 같은 구역의 총성은 조사 목표를 그대로 둔다.
+        if not gunshot:
+            return
+        if math.dist(event.position, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE:
+            memory.sound_heard_at = event.time
+            return
+    if not gunshot and event.time - memory.sound_at < 2 and priority < memory.sound_priority * 0.75:
         return
     resolution = 0.75 if distance < 5 else 3.0
     memory.last_sound = tuple(round(value / resolution) * resolution for value in event.position)
-    memory.sound_at = event.time
+    memory.sound_at = memory.sound_heard_at = event.time
     memory.sound_priority = priority
+    memory.gunshot_origin = event.position if gunshot else None
+    return True
