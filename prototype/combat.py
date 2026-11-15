@@ -20,8 +20,9 @@ class Tracer:
 
 
 class Combat:
-    def __init__(self, events):
+    def __init__(self, events, transports=None):
         self.events = events
+        self.transports = transports
         self.traces = deque(maxlen=128)
         self.actor_index = SpatialIndex()
         self.actors = {}
@@ -33,6 +34,8 @@ class Combat:
         if world.geometry.raycast(actor.xy, muzzle, category="bullet") is not None:
             return False
         if world.geometry.raycast(muzzle, target.xy, category="bullet") is not None:
+            return False
+        if self.transports is not None and self.transports.raycast(muzzle, target.xy) is not None:
             return False
         hit = self.actor_index.raycast(muzzle, target.xy, category="bullet", ignore_ids={actor.id})
         return hit is not None and hit[1] == target.id
@@ -82,6 +85,19 @@ class Combat:
             self.actor_index.add(Collider(actor.id, Rect(actor.position.x - radius, actor.position.y - radius,
                                                          radius * 2, radius * 2), blocks=("bullet",)))
 
+    def _damage(self, victim, damage, time, **context):
+        if victim.hp <= 0:
+            return False
+        absorbed = min(victim.armor, int(damage * 0.6))
+        victim.armor -= absorbed
+        victim.hp = max(0, victim.hp - (damage - absorbed))
+        victim.hurt_until = time + 2
+        self.hits += 1
+        self.events.emit("damaged", time, victim, damage=damage - absorbed)
+        if victim.hp == 0:
+            self.events.emit("killed", time, victim, **context)
+        return True
+
     def fire(self, actor, world, time, *, aiming=False, moving=False, sprint=False):
         weapon = actor.weapon
         if actor.hp <= 0 or weapon is None or time < actor.equip_until or not weapon.fire(time):
@@ -95,20 +111,30 @@ class Combat:
         angle = actor.facing + math.radians(self.random.uniform(-spread, spread))
         muzzle = weapon_pose(actor)[1]
         barrel_hit = world.geometry.raycast(actor.xy, muzzle, category="bullet")
-        if barrel_hit is not None:
-            fraction = barrel_hit[0]
+        barrel_truck = self.transports.raycast(actor.xy, muzzle) if self.transports is not None else None
+        if barrel_hit is not None or barrel_truck is not None:
+            fraction, surface = min((hit for hit in (barrel_hit, (barrel_truck[0], barrel_truck[1].id)
+                                                     if barrel_truck else None) if hit is not None))
             point = (actor.position.x + (muzzle[0] - actor.position.x) * fraction,
                      actor.position.y + (muzzle[1] - actor.position.y) * fraction)
             self.traces.append(Tracer(actor.xy, point, actor.team))
-            self.events.emit("impact", time, actor, surface=barrel_hit[1])
+            self.events.emit("impact", time, actor, surface=surface)
             return True
         end = (muzzle[0] + math.cos(angle) * spec.range_m, muzzle[1] + math.sin(angle) * spec.range_m)
         ignored_actors, ignored_walls, endpoint = {actor.id}, set(), end
         damaged = set()
         impact = False
+        vehicle_hit = self.transports.raycast(muzzle, end) if self.transports is not None else None
         for count in range(spec.penetration + 1):
             wall = world.geometry.raycast(muzzle, end, category="bullet", ignore_ids=ignored_walls)
             target = self.actor_index.raycast(muzzle, end, category="bullet", ignore_ids=ignored_actors)
+            if vehicle_hit is not None and all(hit is None or vehicle_hit[0] < hit[0] for hit in (wall, target)):
+                hit, truck, victim = vehicle_hit
+                endpoint = (muzzle[0] + (end[0] - muzzle[0]) * hit, muzzle[1] + (end[1] - muzzle[1]) * hit)
+                impact = True
+                if victim is not None and victim.team != actor.team:
+                    self._damage(victim, spec.damage, time, vehicle_id=truck.id, incoming=angle + math.pi)
+                break
             if target is not None and (wall is None or target[0] < wall[0]):
                 impact = False
                 hit, key = target
@@ -116,16 +142,8 @@ class Combat:
                 endpoint = (muzzle[0] + (end[0] - muzzle[0]) * hit, muzzle[1] + (end[1] - muzzle[1]) * hit)
                 if victim.team == actor.team:
                     break
-                if victim.hp > 0:
-                    absorbed = min(victim.armor, int(spec.damage * 0.6))
-                    victim.armor -= absorbed
-                    victim.hp = max(0, victim.hp - (spec.damage - absorbed))
-                    victim.hurt_until = time + 2
+                if self._damage(victim, spec.damage, time):
                     damaged.add(key)
-                    self.hits += 1
-                    self.events.emit("damaged", time, victim, damage=spec.damage - absorbed)
-                    if victim.hp == 0:
-                        self.events.emit("killed", time, victim)
                 ignored_actors.add(key)
             elif wall is not None:
                 impact = True

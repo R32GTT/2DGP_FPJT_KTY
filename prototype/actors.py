@@ -30,6 +30,7 @@ class Actor:
     last_node: str = ""
     present: bool = True
     boarding_goal: tuple | None = None
+    transport_boarding: bool = False
 
     @property
     def xy(self):

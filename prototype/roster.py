@@ -4,6 +4,9 @@ import math
 
 from campaign.models import Position
 
+from .actors import Actor
+from .weapons import WeaponState
+
 
 class CampaignRoster:
     def __init__(self, bridge, actors, world):
@@ -11,6 +14,7 @@ class CampaignRoster:
         self.by_id = {actor.id: actor for actor in actors}
         self.spawns = {actor.id: actor.xy for actor in actors}
         self.local_deaths = set()
+        self.seated_deaths = set()
         self.materialized = True
         self.nodes = {facility["service_node"] for facility in world.facilities if facility["campaign_id"]}
         self.unit_ids = sorted({actor.source_unit for actor in actors if actor.source_unit})
@@ -31,10 +35,35 @@ class CampaignRoster:
                 return False
         return True
 
-    def record_loss(self, actor):
+    def transport_members(self, operation, weapon):
+        state = self.bridge.simulation.state
+        members = []
+        for unit_id in operation.unit_ids:
+            unit = state.units[unit_id]
+            present = [actor for actor in self.actors if actor.source_unit == unit_id]
+            alive = [actor for actor in present if actor.hp > 0]
+            if unit_id not in self.unit_ids:
+                home = state.nodes[operation.home_node].position
+                for index in range(unit.soldiers):
+                    actor = Actor(f"{unit_id}:{index}", Position(home.x, home.y, home.floor),
+                                  armor=15, source_unit=unit_id, member=index,
+                                  home_node=operation.home_node, present=False)
+                    actor.loadout = {weapon.id: WeaponState.ready(weapon)}
+                    actor.active_weapon = weapon.id
+                    self.actors.append(actor)
+                    self.by_id[actor.id] = actor
+                    self.spawns[actor.id] = actor.xy
+                    alive.append(actor)
+                self.unit_ids.append(unit_id)
+            members.extend(alive[:unit.soldiers])
+        return members
+
+    def record_loss(self, actor, *, seated=False, driver_vehicle_id=None, progress_m=None):
         if actor.source_unit and actor.id not in self.local_deaths:
+            self.bridge.lose_soldier(actor.source_unit, driver_vehicle_id=driver_vehicle_id, progress_m=progress_m)
             self.local_deaths.add(actor.id)
-            self.bridge.lose_soldier(actor.source_unit)
+            if seated:
+                self.seated_deaths.add(actor.id)
 
     def sync(self, *, restore=False):
         state = self.bridge.simulation.state
@@ -54,7 +83,7 @@ class CampaignRoster:
             for actor in members:
                 actor.boarding_goal = None
                 if actor.id in self.local_deaths:
-                    actor.present = True
+                    actor.present = actor.id not in self.seated_deaths
                     continue
                 actor.present = self.materialized and actor.hp > 0 and unit.node_id in self.nodes
                 if not actor.present:

@@ -96,7 +96,7 @@ def _replan(state: CampaignState, operation: Operation) -> bool:
 
 def move_one_second(state: CampaignState, operation: Operation) -> bool:
     """현재 이동 구간의 끝에 도달하면 True. 작업·인계는 호출자가 처리한다."""
-    if operation.phase not in {"outbound", "returning"}:
+    if operation.phase not in {"outbound", "returning"} or operation.waiting_reason == "driver_down":
         return False
     vehicles = [state.vehicles[vid] for vid in operation.vehicle_ids
                 if state.vehicles[vid].status != "destroyed"]

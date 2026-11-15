@@ -1,13 +1,14 @@
 """고정 전략 틱·사건·외부 개입을 묶는 독립 실행 코어."""
 
 from copy import deepcopy
+import math
 
 from . import clock
 from .logistics import plan_exports, plan_supplies
 from .models import CampaignState, Event
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
                         finish_return, handover, owner, remove)
-from .routes import move_one_second, position, request_return, set_route
+from .routes import move_one_second, position, request_return, road_between, set_route
 
 
 class Simulation:
@@ -152,6 +153,14 @@ class Simulation:
                    outcome="captured" if kind == "capture" else "destroyed", owner_id=owner_id)
         elif kind in {"destroy_vehicle", "damage_unit"}:
             self._damage_asset(action)
+        elif kind == "resume_transport":
+            operation = state.operations[action["operation_id"]]
+            vehicles = [vid for vid in operation.vehicle_ids if state.vehicles[vid].status != "destroyed"]
+            if (operation.phase not in {"outbound", "returning"}
+                    or operation.waiting_reason != "driver_down" or not vehicles
+                    or sum(state.units[uid].soldiers for uid in operation.unit_ids) < len(vehicles)):
+                raise ValueError("모든 운행 차량에 대체 운전자가 필요함")
+            operation.waiting_reason = ""
         elif kind == "damage_facility":
             damage = action["damage"]
             if type(damage) is not int or damage < 0:
@@ -164,6 +173,8 @@ class Simulation:
                         cancel(state, operation.id)
         elif kind == "return_operation":
             operation = state.operations[action["operation_id"]]
+            if operation.waiting_reason == "driver_down":
+                raise ValueError("운전자 교대 후 귀환할 수 있음")
             if not cancel(state, operation.id):
                 request_return(state, operation)
                 self._moving.add(operation.id)
@@ -183,6 +194,25 @@ class Simulation:
         if not vehicle_loss and (type(losses) is not int or not 0 < losses <= asset.soldiers):
             raise ValueError("잘못된 병력 손실량")
         operation = state.operations.get(asset.operation_id)
+        driver_vehicle = action.get("driver_vehicle_id") if not vehicle_loss else None
+        if driver_vehicle is not None:
+            if (operation is None or operation.phase not in {"outbound", "returning"}
+                    or operation.waiting_reason == "driver_down" or losses != 1
+                    or driver_vehicle not in operation.vehicle_ids
+                    or state.vehicles[driver_vehicle].status == "destroyed"):
+                raise ValueError("운행 중인 차량의 운전자 손실만 처리할 수 있음")
+            progress = action.get("progress_m", operation.progress_m)
+            if (type(progress) not in {int, float} or not math.isfinite(progress)
+                    or progress < 0 or (progress != operation.progress_m and not operation.edge_paid)):
+                raise ValueError("잘못된 정차 위치")
+            if progress != operation.progress_m:
+                start, end = operation.route[operation.edge_index:operation.edge_index + 2]
+                if (progress >= road_between(state, start, end).length_m
+                        or (progress < operation.progress_m) != operation.reversing):
+                    raise ValueError("현재 도로 구간 안에서 정차해야 함")
+                operation.progress_m = progress
+            # 기존 이동 단계와 경로를 유지해야 교대 후 같은 지점에서 이어서 운행할 수 있다.
+            operation.waiting_reason = "driver_down"
         location = deepcopy(position(state, operation) if asset.node_id is None
                             else state.nodes[asset.node_id].position)
         if vehicle_loss:
@@ -215,7 +245,12 @@ class Simulation:
                     if not soldiers:
                         operation.completed_at = state.world_time
                     self._moving.discard(operation.id)
+                elif operation.waiting_reason == "driver_down" and soldiers < len(vehicles):
+                    operation.phase = "stranded"
+                    operation.waiting_reason = "no_driver"
+                    self._moving.discard(operation.id)
                 elif (soldiers < state.rules["escort_soldiers"] * len(vehicles)
+                      and operation.waiting_reason != "driver_down"
                       and operation.phase in {"outbound", "unloading"}):
                     request_return(state, operation)
                     self._moving.add(operation.id)

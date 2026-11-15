@@ -14,6 +14,7 @@ from .feedback import Feedback
 from .movement import move_actor
 from .interactions import nearby_facility, use_facility
 from .roster import CampaignRoster
+from .transport import TransportCrew
 from .weapons import WeaponState, load_weapons
 from .world import DEFAULT_SCENE, World
 
@@ -43,7 +44,8 @@ class PlaySimulation:
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in self.world.data["guards"]],
                           can_radio=self.campaign.can_radio)
         self.events, self.feedback = EventBus(), Feedback()
-        self.combat = Combat(self.events)
+        self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"], self.events)
+        self.combat = Combat(self.events, self.transports)
         self.time, self.footstep_at = 0.0, 0.0
         self.message = "R 재장전 / C 취소 / 1·2 총기 교체 / V 단발·연사 / F 문 / E 상호작용"
         self.respawn_target = None
@@ -85,19 +87,38 @@ class PlaySimulation:
 
     def _dispatch(self):
         events = self.events.drain()
+        stops = []
         for event in events:
             if event.kind == "killed" and event.source in self.roster.by_id:
                 actor = self.roster.by_id[event.source]
-                self.roster.record_loss(actor)
+                truck = self.transports.driver_shot(actor, event.data.get("vehicle_id"))
+                if truck is None:
+                    self.roster.record_loss(actor, seated="vehicle_id" in event.data)
+                else:
+                    self.roster.record_loss(actor, seated=True, driver_vehicle_id=truck.id,
+                                            progress_m=truck.convoy.progress_m)
+                    stops.append((truck, event.data["incoming"]))
+                    self.message = "운전자 전투 불능 · 수송 정차"
                 if actor.loadout:
-                    self.dropped.append((actor.xy, actor.loadout))
+                    if "vehicle_id" not in event.data:
+                        self.dropped.append((actor.xy, actor.loadout))
                     actor.loadout, actor.active_weapon = {}, ""
-        self.guards = self.roster.sync()
+        if stops:
+            self._sync_guards()
+            for truck, incoming in stops:
+                self.transports.react_to_stop(truck, self.time, incoming)
+            events.extend(self.events.drain())
+        else:
+            self.guards = self.roster.sync() + [actor for actor in self.transports.dismounted if actor.hp > 0]
         self.ai.receive(self.guards, events)
         self.feedback.receive(events)
         if any(event.kind == "killed" and event.source == "player" for event in events):
             self._drop_equipment()
             self.message = "전투 불능 — Enter: 6시간 진행 후 무장 없이 복귀"
+
+    def _sync_guards(self, *, restore=False):
+        self.transports.sync(self.time)
+        self.guards = self.roster.sync(restore=restore) + self.transports.dismounted
 
     def _drop_equipment(self):
         self.cancel_reload()
@@ -122,8 +143,8 @@ class PlaySimulation:
                 self.player.position = Position(*self.world.safehouse)
                 self.player.hp, self.player.armor = 100, 0
                 self.roster.materialized = True
-                self.guards = self.roster.sync(restore=True)
                 self.ai.reset()
+                self._sync_guards(restore=True)
                 for actor in self.guard_records:
                     if actor.hp > 0 and actor.weapon is not None:
                         actor.weapon.tick(21600)
@@ -188,9 +209,11 @@ class PlaySimulation:
             elif intent.fire and self.combat.clear_fire_line(actor, self.player, self.world):
                 self.combat.fire(actor, self.world, self.time, moving=any(intent.direction))
         self._dispatch()
+        if self.transports.try_resume(self.time) and self.player.hp > 0:
+            self.message = "생존 호위가 운전석에 복귀 · 수송 재출발"
         self.feedback.update(FIXED_DT, self.danger if self.player.hp > 0 else 0)
         self.campaign.advance_to(self.time)
-        self.guards = self.roster.sync()
+        self._sync_guards()
 
     def use_door(self):
         if self.player.hp <= 0:
@@ -239,6 +262,6 @@ class PlaySimulation:
             self._drop_equipment()
             self.combat.traces.clear()
             self.roster.materialized = False
-            self.guards = self.roster.sync()
+            self._sync_guards()
             self.respawn_target = self.campaign.simulation.state.world_time + 21600
             self.message = "안전가옥으로 복귀 중 — 실제 군수 세계 시간 6시간 진행"

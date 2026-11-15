@@ -176,11 +176,21 @@ class Renderer:
             for x, y, _ in simulation.campaign.parked(simulation.roster.nodes):
                 if view.visible(Rect(x - 2.8, y - 1.2, 5.6, 2.4)):
                     self.truck.draw(*view.pico(x, y), 5.6 * view.scale, 2.4 * view.scale)
-            for convoy in simulation.campaign.convoys(simulation.time):
-                bounds = self._rotated_bounds((convoy.x, convoy.y), (5.6, 2.4), convoy.heading)
-                if convoy.vehicles and view.visible(bounds):
-                    x, y = view.pico(convoy.x, convoy.y)
-                    self.truck.rotate_draw(-convoy.heading, x, y, 5.6 * view.scale, 2.4 * view.scale)
+            for truck in simulation.transports.trucks:
+                bounds = self._rotated_bounds((truck.x, truck.y), (5.6, 2.4), truck.heading)
+                if view.visible(bounds):
+                    x, y = view.pico(truck.x, truck.y)
+                    self.truck.rotate_draw(-truck.heading, x, y, 5.6 * view.scale, 2.4 * view.scale)
+                    if truck.stopped:
+                        for side in (-0.7, 0.7):
+                            px, py = truck.world_point(2.45, side)
+                            self._rect(view, Rect(px - 0.13, py - 0.13, 0.26, 0.26), (255, 148, 52))
+                    elif debug:
+                        for seat, side in enumerate((-0.25, 0.25)):
+                            if seat < len(truck.crew) and truck.crew[seat].hp > 0:
+                                px, py = truck.world_point(1.95, side)
+                                self._rect(view, Rect(px - 0.09, py - 0.09, 0.18, 0.18),
+                                           (255, 168, 92) if seat == 0 else (137, 201, 210))
         if debug:
             self._draw_navigation(world.navigation, view)
         for actor in [*simulation.guards, simulation.player]:

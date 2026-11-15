@@ -19,6 +19,7 @@ class ConvoyView:
     crew: int
     cargo: int
     phase: str
+    progress_m: float
 
 
 class CampaignBridge:
@@ -38,6 +39,7 @@ class CampaignBridge:
         self.facility_id = facility_id
         self._convoy_time = -1
         self._convoy_ids = []
+        self._resumed_at = {}
 
     @property
     def supplies(self):
@@ -72,8 +74,15 @@ class CampaignBridge:
         self.simulation.apply_action({"type": "damage_facility", "facility_id": facility_id, "damage": damage})
         return self.simulation.state.facilities[facility_id].damage
 
-    def lose_soldier(self, unit_id):
-        self.simulation.apply_action({"type": "damage_unit", "unit_id": unit_id, "soldiers": 1})
+    def lose_soldier(self, unit_id, *, driver_vehicle_id=None, progress_m=None):
+        action = {"type": "damage_unit", "unit_id": unit_id, "soldiers": 1}
+        if driver_vehicle_id is not None:
+            action.update(driver_vehicle_id=driver_vehicle_id, progress_m=progress_m)
+        self.simulation.apply_action(action)
+
+    def resume_transport(self, operation_id, seconds):
+        self.simulation.apply_action({"type": "resume_transport", "operation_id": operation_id})
+        self._resumed_at[operation_id] = seconds
 
     def parked(self, nodes):
         state = self.simulation.state
@@ -92,12 +101,14 @@ class CampaignBridge:
             self._convoy_time = state.world_time
             self._convoy_ids = [op.id for op in state.operations.values()
                                 if op.phase in {"outbound", "returning", "unloading", "turnaround", "stranded"}]
-        fraction = max(0, min(1, seconds - state.world_time))
         result = []
         for key in self._convoy_ids:
             op = state.operations[key]
+            if op.phase not in {"outbound", "returning", "unloading", "turnaround", "stranded"}:
+                continue
             point = position(state, op)
             heading = 0.0
+            progress = op.progress_m
             if len(op.route) > 1 and op.edge_index == len(op.route) - 1:
                 a, b = state.nodes[op.route[-2]].position, state.nodes[op.route[-1]].position
                 heading = math.atan2(b.y - a.y, b.x - a.x)
@@ -109,13 +120,17 @@ class CampaignBridge:
                     heading += math.pi
                 road = road_between(state, start, end)
                 vehicles = [state.vehicles[vid] for vid in op.vehicle_ids if state.vehicles[vid].status != "destroyed"]
-                if vehicles and not op.waiting_reason and (not road.blocked or op.reversing):
+                if (vehicles and op.edge_paid and not op.waiting_reason
+                        and op.phase in {"outbound", "returning"} and (not road.blocked or op.reversing)):
+                    since = max(state.world_time, self._resumed_at.get(key, 0.0))
+                    fraction = max(0, min(1, seconds - since))
                     speed = min(vehicle.speed_mps for vehicle in vehicles)
-                    progress = max(0, op.progress_m - speed * fraction) if op.reversing else min(road.length_m, op.progress_m + speed * fraction)
+                    progress = (max(0, op.progress_m - speed * fraction) if op.reversing
+                                else min(math.nextafter(road.length_m, 0), op.progress_m + speed * fraction))
                     point = Position(a.x + (b.x - a.x) * progress / road.length_m,
                                      a.y + (b.y - a.y) * progress / road.length_m)
             result.append(ConvoyView(key, point.x, point.y, heading,
                                      sum(state.vehicles[vid].status != "destroyed" for vid in op.vehicle_ids),
                                      sum(state.units[uid].soldiers for uid in op.unit_ids),
-                                     sum(op.cargo.values()), op.phase))
+                                     sum(op.cargo.values()), op.phase, progress))
         return result

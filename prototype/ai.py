@@ -559,6 +559,11 @@ class EnemyAI:
                 brain.sense_at = time + (0.10 if confirmed or memory.visible else 0.18)
                 memory.suspicion = max(0, memory.suspicion - 0.01)
             old_state = actor.state
+            if actor.transport_boarding and not memory.visible:
+                actor.state = "boarding"
+                budget = self._move(actor, brain, intent, actor.boarding_goal, time, budget, approximate=True)
+                intents[actor.id] = intent
+                continue
             threat = None
             if memory.visible:
                 brain.combat_alert_until = time + COMBAT_ALERT_SECONDS

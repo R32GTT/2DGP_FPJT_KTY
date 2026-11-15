@@ -39,7 +39,7 @@ def allowed_commands(state, selection) -> set[str]:
     operation = state.operations[key]
     if operation.phase in TERMINAL_PHASES:
         return result
-    if operation.phase != "stranded":
+    if operation.phase != "stranded" and operation.waiting_reason != "driver_down":
         result.add("return_operation")
     if any(state.vehicles[vid].status != "destroyed" for vid in operation.vehicle_ids):
         result.add("destroy_vehicle")
