@@ -28,6 +28,7 @@ def hours_to_seconds(value: str) -> int:
 def summary(state) -> dict:
     return {
         "world_time": state.world_time, "support": state.source.mode, "seed": state.seed,
+        "regions": {key: region.control_state for key, region in sorted(state.regions.items())},
         "operations": dict(sorted(Counter(op.phase for op in state.operations.values()).items())),
         "external_reserve": state.source.inventory if state.source.mode == "finite" else "infinite",
         "delivered": state.demand.delivered, "outstanding": state.demand.outstanding,

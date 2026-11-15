@@ -5,12 +5,13 @@ import math
 
 from . import clock
 from .logistics import plan_exports, plan_supplies
-from .models import CampaignState, Event
+from .models import FOOT_OPERATIONS, CampaignState, Event
 from .qrf import dispatch_response
 from .repair import WORK_SECONDS, finish_repair, plan_repairs, queue_repairs
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
-                        finish_response, finish_return, handover, owner, remove)
+                        finish_relocation, finish_return, handover, owner, remove)
 from .routes import move_one_second, position, request_return, road_between, set_route
+from .territory import evaluate_regions
 
 
 class Simulation:
@@ -42,14 +43,19 @@ class Simulation:
             if move_one_second(state, operation):
                 if operation.phase == "returning":
                     origin = owner(state, operation.origin_id)
-                    if (operation.origin_id != state.source.id and
-                            (origin.damage == 100 or state.regions[origin.region_id].owner != "enemy")):
+                    origin_region = state.regions[origin.region_id] if operation.origin_id != state.source.id else None
+                    if (origin_region is not None and (origin_region.owner != "enemy" or
+                            (origin.damage == 100 and origin_region.withdrawal_started_at is None
+                             and operation.kind != "withdrawal"))):
                         operation.waiting_reason = "origin_unavailable"
                     else:
                         finish_return(state, operation_id)
-                elif operation.kind == "qrf":
-                    if state.regions[state.facilities[operation.destination_id].region_id].owner == "enemy":
-                        finish_response(state, operation)
+                elif operation.kind in FOOT_OPERATIONS:
+                    target = state.facilities[operation.destination_id]
+                    region = state.regions[target.region_id]
+                    if (region.owner == "enemy" and (operation.kind != "withdrawal"
+                            or (region.control_state == "occupied" and target.damage < 100))):
+                        finish_relocation(state, operation)
                     else:
                         request_return(state, operation)
                 elif operation.kind == "repair":
@@ -64,6 +70,7 @@ class Simulation:
                                    "unload", priority=clock.TRANSFER, operation_id=operation_id)
             if operation.phase not in {"outbound", "returning"}:
                 self._moving.discard(operation_id)
+        evaluate_regions(state)
 
     def _handle_event(self, event: Event) -> None:
         state = self.state
@@ -93,8 +100,15 @@ class Simulation:
                     destination = state.facilities[operation.destination_id]
                     invalid = (state.regions[destination.region_id].owner != "enemy"
                                or (operation.kind == "supply" and destination.damage == 100))
+                    if operation.kind == "withdrawal":
+                        invalid |= state.regions[destination.region_id].control_state != "occupied" or destination.damage == 100
                 if operation.origin_id != state.source.id:
-                    invalid |= origin.damage == 100 or state.regions[origin.region_id].owner != "enemy"
+                    origin_region = state.regions[origin.region_id]
+                    invalid |= origin_region.owner != "enemy"
+                    if operation.kind == "withdrawal":
+                        invalid |= origin_region.withdrawal_started_at is None
+                    else:
+                        invalid |= origin.damage == 100
                 if invalid:
                     cancel(state, operation.id)
                 elif self.departure_ready is not None and not self.departure_ready(operation):
@@ -141,7 +155,7 @@ class Simulation:
                 state.record("shortage", facility_id=facility.id,
                              missing=soldiers * rate - consumed["supplies"])
         for operation in state.operations.values():
-            if operation.kind == "qrf" or operation.phase in TERMINAL_PHASES or operation.phase == "loading":
+            if operation.kind in FOOT_OPERATIONS or operation.phase in TERMINAL_PHASES or operation.phase == "loading":
                 continue
             soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
             consumed = consume(state, operation.provisions, {"supplies": soldiers * rate},
@@ -210,7 +224,7 @@ class Simulation:
             facility.damage = min(100, facility.damage + damage)
             if facility.damage == 100:
                 for operation in list(state.operations.values()):
-                    if (operation.origin_id == facility.id
+                    if ((operation.origin_id == facility.id and operation.kind != "withdrawal")
                             or (operation.destination_id == facility.id and operation.kind == "supply")):
                         cancel(state, operation.id)
         elif kind == "report_facility_damage":
@@ -287,7 +301,7 @@ class Simulation:
                 vehicles = [state.vehicles[vid] for vid in operation.vehicle_ids
                             if state.vehicles[vid].status != "destroyed"]
                 soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
-                if operation.kind == "qrf":
+                if operation.kind in FOOT_OPERATIONS:
                     if not soldiers:
                         operation.phase = "destroyed"
                         operation.completed_at = state.world_time
@@ -314,7 +328,7 @@ class Simulation:
         if asset.node_id is not None:
             # 주둔 손실 이후 미출발 동원이 최소 주둔량을 침해하지 않게 한다.
             for candidate in reversed(list(state.operations.values())):
-                if candidate.phase != "loading" or candidate.origin_id == state.source.id:
+                if candidate.phase != "loading" or candidate.origin_id == state.source.id or candidate.kind == "withdrawal":
                     continue
                 origin = state.facilities[candidate.origin_id]
                 region = state.regions[origin.region_id]

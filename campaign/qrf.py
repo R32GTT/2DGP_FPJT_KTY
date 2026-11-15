@@ -41,6 +41,7 @@ def dispatch_response(state, facility_id, *, report_xy=None, sighting=False):
     for origin in state.facilities.values():
         source_region = state.regions[origin.region_id]
         if (source_region is region or source_region.owner != "enemy" or origin.damage == 100
+                or source_region.withdrawal_started_at is not None
                 or not _working(state, source_region, "qrf") or not _working(state, source_region, "communication")):
             continue
         route = find_route(state, origin.node_id, target.node_id)

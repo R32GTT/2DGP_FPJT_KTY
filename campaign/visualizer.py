@@ -347,7 +347,10 @@ class Visualizer(tk.Tk):
         kind, key = self.selection
         if kind == "facility":
             facility = state.facilities[key]
-            lines = [key, f"지역 {facility.region_id.upper()} / 소유 {state.regions[facility.region_id].owner}",
+            region = state.regions[facility.region_id]
+            status = {"occupied": "적 점유", "unstable": "유지 불가 판정 중", "withdrawing": "철수 중",
+                      "liberated": "해방"}[region.control_state]
+            lines = [key, f"지역 {facility.region_id.upper()} / {status}",
                      f"시설 피해 {facility.damage}%", "", "실제 재고 / 예약 / 목표"]
             for name, label in RESOURCES.items():
                 reserved = facility.inventory[name] - available(state, key, name)

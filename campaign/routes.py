@@ -2,10 +2,10 @@
 
 import heapq
 
-from .models import CampaignState, Operation, Position, Road
+from .models import FOOT_OPERATIONS, CampaignState, Operation, Position, Road
 from .resources import consume
 
-QRF_WALK_SPEED = 3.0
+FOOT_SPEED_MPS = 3.0
 
 
 def road_between(state: CampaignState, start: str, end: str) -> Road:
@@ -102,12 +102,13 @@ def move_one_second(state: CampaignState, operation: Operation) -> bool:
         return False
     vehicles = [state.vehicles[vid] for vid in operation.vehicle_ids
                 if state.vehicles[vid].status != "destroyed"]
-    if not vehicles and operation.kind != "qrf":
+    on_foot = operation.kind in FOOT_OPERATIONS
+    if not vehicles and not on_foot:
         operation.waiting_reason = "no_vehicle"
         return False
     if not operation.route:
         set_route(state, operation, returning=operation.phase == "returning")
-    budget = QRF_WALK_SPEED if operation.kind == "qrf" else min(vehicle.speed_mps for vehicle in vehicles)
+    budget = FOOT_SPEED_MPS if on_foot else min(vehicle.speed_mps for vehicle in vehicles)
     while budget > 0:
         target = operation.home_node if operation.phase == "returning" else operation.destination_node
         if operation.edge_index == len(operation.route) - 1:

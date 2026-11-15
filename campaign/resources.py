@@ -2,7 +2,7 @@
 
 import math
 
-from .models import CampaignState, Operation, Reservation, RESOURCE_TYPES, stock, validate_state
+from .models import FOOT_OPERATIONS, CampaignState, Operation, Reservation, RESOURCE_TYPES, stock, validate_state
 
 
 TERMINAL_PHASES = {"completed", "cancelled", "destroyed"}
@@ -43,7 +43,7 @@ def reserve(state: CampaignState, operation: Operation, cargo: dict[str, int],
     origin = owner(state, operation.origin_id)
     if operation.id in state.operations or operation.phase != "loading":
         raise ValueError("이미 존재하거나 예약할 수 없는 작전")
-    on_foot = operation.kind == "qrf"
+    on_foot = operation.kind in FOOT_OPERATIONS
     if (origin.node_id != operation.home_node
             or (on_foot and (operation.vehicle_ids or not operation.unit_ids))
             or (not on_foot and not sum(cargo.values()))):
@@ -67,11 +67,12 @@ def reserve(state: CampaignState, operation: Operation, cargo: dict[str, int],
         region = state.regions[origin.region_id]
         nodes = {state.facilities[fid].node_id for fid in region.facility_ids}
         required = region.minimum_garrison
-        if origin.damage == 100 or region.owner != "enemy":
+        if (region.owner != "enemy" or (origin.damage == 100 and operation.kind != "withdrawal")
+                or (region.withdrawal_started_at is not None and operation.kind not in {"withdrawal", "repair"})):
             raise ValueError("출발 시설 사용 불가")
     remaining = sum(u.soldiers for u in state.units.values()
                     if u.node_id in nodes and u.status == "available") - soldiers
-    if remaining < required:
+    if operation.kind != "withdrawal" and remaining < required:
         raise ValueError("최소 주둔 병력 침해")
     if not on_foot:
         for name in RESOURCE_TYPES:
@@ -101,7 +102,7 @@ def reconcile_reservations(state: CampaignState, owner_id: str) -> None:
     # 소비·약탈로 부족해지면 가장 늦은 미출발 예약부터 해제한다.
     for operation_id in reversed(list(state.reservations)):
         reservation = state.reservations[operation_id]
-        if reservation.owner_id != owner_id or state.operations[operation_id].kind == "qrf":
+        if reservation.owner_id != owner_id or state.operations[operation_id].kind in FOOT_OPERATIONS:
             continue
         if any(available(state, owner_id, name) < minimum(state, owner_id, name)
                for name in RESOURCE_TYPES):
@@ -122,8 +123,9 @@ def depart(state: CampaignState, operation_id: str) -> bool:
     escorts = sum(state.units[uid].soldiers for uid in operation.unit_ids)
     remaining = sum(u.soldiers for u in state.units.values()
                     if u.node_id in nodes and u.status == "available")
-    if (remaining < required or escorts < state.rules["escort_soldiers"] * len(operation.vehicle_ids)
-            or (operation.kind == "qrf" and not escorts)
+    if ((operation.kind != "withdrawal" and remaining < required)
+            or escorts < state.rules["escort_soldiers"] * len(operation.vehicle_ids)
+            or (operation.kind in FOOT_OPERATIONS and not escorts)
             or any(a.status != "reserved" or a.operation_id != operation.id
                    for a in _assets(state, operation))):
         cancel(state, operation_id)
@@ -231,8 +233,8 @@ def finish_return(state: CampaignState, operation_id: str) -> bool:
     return True
 
 
-def finish_response(state: CampaignState, operation: Operation) -> None:
-    """도착한 QRF를 공격받은 지역의 실제 주둔 병력으로 편입한다."""
+def finish_relocation(state: CampaignState, operation: Operation) -> None:
+    """도착한 부대를 목적지의 실제 주둔 병력으로 편입한다."""
     soldiers = 0
     for unit in _assets(state, operation):
         if unit.status != "destroyed":
@@ -240,7 +242,7 @@ def finish_response(state: CampaignState, operation: Operation) -> None:
             unit.node_id, unit.operation_id, unit.status = operation.destination_node, None, "available"
     operation.phase = "completed"
     operation.completed_at = state.world_time
-    state.record("qrf_arrived", operation_id=operation.id, facility_id=operation.destination_id,
+    state.record(f"{operation.kind}_arrived", operation_id=operation.id, facility_id=operation.destination_id,
                  soldiers=soldiers)
 
 
@@ -268,7 +270,7 @@ def assert_invariants(state: CampaignState) -> None:
     if sorted(state.vehicles) != state.initial_vehicle_ids:
         raise ValueError("차량 ID 보존 위반")
     for reservation in state.reservations.values():
-        if state.operations[reservation.operation_id].kind == "qrf":
+        if state.operations[reservation.operation_id].kind in FOOT_OPERATIONS:
             continue
         if any(available(state, reservation.owner_id, name) < minimum(state, reservation.owner_id, name)
                for name in RESOURCE_TYPES):

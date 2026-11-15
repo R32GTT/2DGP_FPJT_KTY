@@ -8,6 +8,7 @@ import random
 
 
 RESOURCE_TYPES = ("supplies", "ammunition", "repair_parts")
+FOOT_OPERATIONS = frozenset({"qrf", "withdrawal"})
 RULES_VERSION = 1
 RULE_KEYS = {"planning_period_s", "consumption_period_s", "supplies_per_soldier",
              "loading_s", "unloading_s", "turnaround_s", "external_departure_interval_s",
@@ -48,6 +49,16 @@ class Region:
     minimum_garrison: int
     owner: str = "enemy"
     importance: int = 1
+    weak_since: int | None = None
+    withdrawal_started_at: int | None = None
+
+    @property
+    def control_state(self):
+        if self.owner == "player":
+            return "liberated"
+        if self.withdrawal_started_at is not None:
+            return "withdrawing"
+        return "unstable" if self.weak_since is not None else "occupied"
 
 
 @dataclass
@@ -252,6 +263,11 @@ def validate_state(state: CampaignState) -> None:
         require(type(region.minimum_garrison) is int and region.minimum_garrison >= 0,
                 "잘못된 최소 주둔량")
         require(region.owner in {"enemy", "player"}, "잘못된 지역 소유 진영")
+        for time in (region.weak_since, region.withdrawal_started_at):
+            require(time is None or (type(time) is int and 0 <= time <= state.world_time), "잘못된 지역 판정 시각")
+        if region.withdrawal_started_at is not None:
+            require(region.owner == "enemy" and region.weak_since is not None
+                    and region.weak_since <= region.withdrawal_started_at, "잘못된 철수 상태")
         require(len(set(region.facility_ids)) == len(region.facility_ids), "시설 중복 참조")
         require(all(fid in state.facilities and state.facilities[fid].region_id == region.id
                     for fid in region.facility_ids), "지역 시설 참조 오류")
@@ -282,9 +298,9 @@ def validate_state(state: CampaignState) -> None:
         require(asset.node_id is not None or asset.operation_id is not None
                 or asset.position is not None, "자산 위치 누락")
     for operation in state.operations.values():
-        require(operation.kind in {"supply", "export", "qrf", "repair"}, "잘못된 작전 유형")
-        require(operation.kind != "qrf" or (not operation.vehicle_ids and bool(operation.unit_ids)),
-                "QRF 편성 오류")
+        require(operation.kind in {"supply", "export", "repair"} | FOOT_OPERATIONS, "잘못된 작전 유형")
+        require(operation.kind not in FOOT_OPERATIONS or (not operation.vehicle_ids and bool(operation.unit_ids)),
+                "도보 작전 편성 오류")
         if operation.report_xy is not None:
             require(operation.kind == "qrf" and len(operation.report_xy) == 2
                     and all(type(axis) in {int, float} and math.isfinite(axis) for axis in operation.report_xy),
