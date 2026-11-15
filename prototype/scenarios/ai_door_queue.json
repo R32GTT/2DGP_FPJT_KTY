@@ -1,0 +1,30 @@
+{
+  "format": "revenant.image_scene.v1",
+  "name": "AI 검증 / 문 통과 순서",
+  "training_facility": true,
+  "bounds": [-2, -2, 19, 16],
+  "campaign_facility": "depot_a",
+  "player_spawn": [15.2, 6],
+  "safehouse_spawn": [15.2, 6],
+  "supply_point": [15.2, 8],
+  "layers": [
+    {"id": "yard", "rect": [-2, -2, 19, 16], "image": "", "color": [53, 63, 55]},
+    {"id": "left_room", "rect": [0, 0, 7, 12], "image": "", "color": [130, 139, 125]},
+    {"id": "right_room", "rect": [7, 0, 7, 12], "image": "", "color": [145, 145, 128]}
+  ],
+  "colliders": [
+    {"id": "north", "rect": [0, 0, 14, 0.3]},
+    {"id": "south", "rect": [0, 11.7, 14, 0.3]},
+    {"id": "west", "rect": [0, 0, 0.3, 12]},
+    {"id": "east", "rect": [13.7, 0, 0.3, 12]},
+    {"id": "divider_north", "rect": [7, 0, 0.3, 5]},
+    {"id": "shared_door", "rect": [7, 5, 0.3, 2], "kind": "door", "rotation": 90, "material": "wood"},
+    {"id": "divider_south", "rect": [7, 7, 0.3, 5]}
+  ],
+  "navigation": {"left": [6, 6], "right": [8.3, 6]},
+  "navigation_edges": [["left", "right"]],
+  "guards": [
+    {"id": "front_guard", "position": [6.05, 5.55], "patrol": [[10.5, 5.55]]},
+    {"id": "following_guard", "position": [5.95, 6.45], "patrol": [[10, 6.45]]}
+  ]
+}
