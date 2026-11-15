@@ -43,7 +43,10 @@ def reserve(state: CampaignState, operation: Operation, cargo: dict[str, int],
     origin = owner(state, operation.origin_id)
     if operation.id in state.operations or operation.phase != "loading":
         raise ValueError("이미 존재하거나 예약할 수 없는 작전")
-    if origin.node_id != operation.home_node or not sum(cargo.values()):
+    on_foot = operation.kind == "qrf"
+    if (origin.node_id != operation.home_node
+            or (on_foot and (operation.vehicle_ids or not operation.unit_ids))
+            or (not on_foot and not sum(cargo.values()))):
         raise ValueError("출발 위치 또는 화물 오류")
     if (len(set(operation.vehicle_ids)) != len(operation.vehicle_ids)
             or len(set(operation.unit_ids)) != len(operation.unit_ids)):
@@ -70,9 +73,10 @@ def reserve(state: CampaignState, operation: Operation, cargo: dict[str, int],
                     if u.node_id in nodes and u.status == "available") - soldiers
     if remaining < required:
         raise ValueError("최소 주둔 병력 침해")
-    for name in RESOURCE_TYPES:
-        if available(state, origin.id, name) - cargo[name] - provisions[name] < minimum(state, origin.id, name):
-            raise ValueError("가용 재고 또는 최소 비축량 부족")
+    if not on_foot:
+        for name in RESOURCE_TYPES:
+            if available(state, origin.id, name) - cargo[name] - provisions[name] < minimum(state, origin.id, name):
+                raise ValueError("가용 재고 또는 최소 비축량 부족")
     state.operations[operation.id] = operation
     state.reservations[operation.id] = Reservation(operation.id, origin.id, cargo, provisions)
     for asset in assets:
@@ -97,7 +101,7 @@ def reconcile_reservations(state: CampaignState, owner_id: str) -> None:
     # 소비·약탈로 부족해지면 가장 늦은 미출발 예약부터 해제한다.
     for operation_id in reversed(list(state.reservations)):
         reservation = state.reservations[operation_id]
-        if reservation.owner_id != owner_id:
+        if reservation.owner_id != owner_id or state.operations[operation_id].kind == "qrf":
             continue
         if any(available(state, owner_id, name) < minimum(state, owner_id, name)
                for name in RESOURCE_TYPES):
@@ -119,6 +123,7 @@ def depart(state: CampaignState, operation_id: str) -> bool:
     remaining = sum(u.soldiers for u in state.units.values()
                     if u.node_id in nodes and u.status == "available")
     if (remaining < required or escorts < state.rules["escort_soldiers"] * len(operation.vehicle_ids)
+            or (operation.kind == "qrf" and not escorts)
             or any(a.status != "reserved" or a.operation_id != operation.id
                    for a in _assets(state, operation))):
         cancel(state, operation_id)
@@ -226,6 +231,19 @@ def finish_return(state: CampaignState, operation_id: str) -> bool:
     return True
 
 
+def finish_response(state: CampaignState, operation: Operation) -> None:
+    """도착한 QRF를 공격받은 지역의 실제 주둔 병력으로 편입한다."""
+    soldiers = 0
+    for unit in _assets(state, operation):
+        if unit.status != "destroyed":
+            soldiers += unit.soldiers
+            unit.node_id, unit.operation_id, unit.status = operation.destination_node, None, "available"
+    operation.phase = "completed"
+    operation.completed_at = state.world_time
+    state.record("qrf_arrived", operation_id=operation.id, facility_id=operation.destination_id,
+                 soldiers=soldiers)
+
+
 def material_totals(state: CampaignState) -> dict[str, int]:
     inventories = [f.inventory for f in state.facilities.values()] + [state.player_stock]
     if state.source.mode == "finite":
@@ -250,6 +268,8 @@ def assert_invariants(state: CampaignState) -> None:
     if sorted(state.vehicles) != state.initial_vehicle_ids:
         raise ValueError("차량 ID 보존 위반")
     for reservation in state.reservations.values():
+        if state.operations[reservation.operation_id].kind == "qrf":
+            continue
         if any(available(state, reservation.owner_id, name) < minimum(state, reservation.owner_id, name)
                for name in RESOURCE_TYPES):
             raise ValueError("예약 재고 초과")

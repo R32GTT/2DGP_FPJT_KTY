@@ -280,7 +280,9 @@ def validate_state(state: CampaignState) -> None:
         require(asset.node_id is not None or asset.operation_id is not None
                 or asset.position is not None, "자산 위치 누락")
     for operation in state.operations.values():
-        require(operation.kind in {"supply", "export"}, "잘못된 작전 유형")
+        require(operation.kind in {"supply", "export", "qrf"}, "잘못된 작전 유형")
+        require(operation.kind != "qrf" or (not operation.vehicle_ids and bool(operation.unit_ids)),
+                "QRF 편성 오류")
         require(operation.phase in {"loading", "outbound", "unloading", "turnaround", "returning",
                                     "completed", "cancelled", "stranded", "destroyed"}, "잘못된 작전 상태")
         require(operation.origin_id in state.facilities or operation.origin_id == state.source.id,

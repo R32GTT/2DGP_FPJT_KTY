@@ -6,8 +6,9 @@ import math
 from . import clock
 from .logistics import plan_exports, plan_supplies
 from .models import CampaignState, Event
+from .qrf import dispatch_response
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
-                        finish_return, handover, owner, remove)
+                        finish_response, finish_return, handover, owner, remove)
 from .routes import move_one_second, position, request_return, road_between, set_route
 
 
@@ -44,6 +45,11 @@ class Simulation:
                         operation.waiting_reason = "origin_unavailable"
                     else:
                         finish_return(state, operation_id)
+                elif operation.kind == "qrf":
+                    if state.regions[state.facilities[operation.destination_id].region_id].owner == "enemy":
+                        finish_response(state, operation)
+                    else:
+                        request_return(state, operation)
                 else:
                     operation.phase = "unloading"
                     state.record("arrived", operation_id=operation_id)
@@ -75,7 +81,8 @@ class Simulation:
                 invalid = False
                 if operation.kind != "export":
                     destination = state.facilities[operation.destination_id]
-                    invalid = destination.damage == 100 or state.regions[destination.region_id].owner != "enemy"
+                    invalid = (state.regions[destination.region_id].owner != "enemy"
+                               or (operation.kind != "qrf" and destination.damage == 100))
                 if operation.origin_id != state.source.id:
                     invalid |= origin.damage == 100 or state.regions[origin.region_id].owner != "enemy"
                 if invalid:
@@ -116,7 +123,7 @@ class Simulation:
                 state.record("shortage", facility_id=facility.id,
                              missing=soldiers * rate - consumed["supplies"])
         for operation in state.operations.values():
-            if operation.phase in TERMINAL_PHASES or operation.phase == "loading":
+            if operation.kind == "qrf" or operation.phase in TERMINAL_PHASES or operation.phase == "loading":
                 continue
             soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
             consumed = consume(state, operation.provisions, {"supplies": soldiers * rate},
@@ -161,6 +168,10 @@ class Simulation:
                     or sum(state.units[uid].soldiers for uid in operation.unit_ids) < len(vehicles)):
                 raise ValueError("모든 운행 차량에 대체 운전자가 필요함")
             operation.waiting_reason = ""
+        elif kind == "report_facility_attack":
+            facility_id = action["facility_id"]
+            status, operation_id = dispatch_response(state, facility_id)
+            state.record("qrf_report", facility_id=facility_id, status=status, operation_id=operation_id)
         elif kind == "damage_facility":
             damage = action["damage"]
             if type(damage) is not int or damage < 0:
@@ -169,7 +180,8 @@ class Simulation:
             facility.damage = min(100, facility.damage + damage)
             if facility.damage == 100:
                 for operation in list(state.operations.values()):
-                    if operation.origin_id == facility.id or operation.destination_id == facility.id:
+                    if (operation.origin_id == facility.id
+                            or (operation.destination_id == facility.id and operation.kind != "qrf")):
                         cancel(state, operation.id)
         elif kind == "return_operation":
             operation = state.operations[action["operation_id"]]
@@ -239,7 +251,12 @@ class Simulation:
                 vehicles = [state.vehicles[vid] for vid in operation.vehicle_ids
                             if state.vehicles[vid].status != "destroyed"]
                 soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
-                if not vehicles:
+                if operation.kind == "qrf":
+                    if not soldiers:
+                        operation.phase = "destroyed"
+                        operation.completed_at = state.world_time
+                        self._moving.discard(operation.id)
+                elif not vehicles:
                     operation.phase = "stranded" if soldiers else "destroyed"
                     operation.waiting_reason = "no_vehicle"
                     if not soldiers:
