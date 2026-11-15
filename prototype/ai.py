@@ -485,36 +485,49 @@ class EnemyAI:
                 brain.indoor_scan_at = time + INDOOR_WALK_SCAN_INTERVAL_S
             if brain.goal == target and brain.route_failed and brain.path_revision == self.world.revision:
                 brain.indoor_blocked[target] = self.world.revision
-            elif target not in sweep.checked:
+            elif (not brain.indoor_look_until
+                  and any(sample not in sweep.checked for sample in area.room_points[previous_room])):
                 sweep.claims[actor.id] = target, time + 1
                 if math.dist(actor.xy, target) > 0.25:
                     return target, False
-                if not brain.indoor_look_until:
-                    brain.indoor_speed = 0.0
-                    brain.indoor_focus = None
-                    brain.indoor_look_angle = actor.facing
-                    brain.look_reason = "정지 후 정면 확인"
-                    return None, False
+                self._begin_indoor_look(actor, brain)
+                return None, False
             sweep.claims.pop(actor.id, None)
             brain.indoor_target = None
             brain.indoor_look_until = 0.0
 
-        remaining = [candidate for candidate in area.points if candidate not in sweep.checked
-                     and brain.indoor_blocked.get(candidate) != self.world.revision]
+        revision = self.world.revision
+        available = [candidate for candidate in area.points
+                     if sweep.observed_from.get(candidate) != revision
+                     and brain.indoor_blocked.get(candidate) != revision]
+        unchecked = [candidate for candidate in available if candidate not in sweep.checked]
         claimed_rooms = {area.rooms[target] for owner, (target, until) in sweep.claims.items()
                          if owner != actor.id and time < until}
-        target = min((candidate for candidate in remaining if area.rooms[candidate] not in claimed_rooms),
+        target = min((candidate for candidate in unchecked if area.rooms[candidate] not in claimed_rooms),
                      key=lambda candidate: (area.rooms[candidate] != previous_room,
                                             math.dist(actor.xy, candidate) + 0.3 * math.dist(point, candidate),
                                             candidate), default=None)
         if target is not None:
             room = area.rooms[target]
-            points = [candidate for candidate in remaining if area.rooms[candidate] == room]
+            remaining = tuple(sample for sample in area.room_points[room] if sample not in sweep.checked)
+            if sweep.can_finish_here(actor.xy, remaining, self.world.geometry):
+                brain.indoor_target = target
+                sweep.claims[actor.id] = target, time + 1
+                self._begin_indoor_look(actor, brain)
+                return None, False
             heading = actor.facing if brain.indoor_heading is None else brain.indoor_heading
-            target = sweep.observation_point(actor.xy, heading, points, self.world.navigation)
+            candidates = [candidate for candidate in available if area.rooms[candidate] == room]
+            target = sweep.observation_point(actor.xy, heading, candidates, remaining, self.world.navigation)
             brain.indoor_target = target
             sweep.claims[actor.id] = target, time + 1
-        return target, not remaining
+        return target, not unchecked
+
+    @staticmethod
+    def _begin_indoor_look(actor, brain):
+        brain.indoor_speed = 0.0
+        brain.indoor_focus = None
+        brain.indoor_look_angle = actor.facing
+        brain.look_reason = "정지 후 정면 확인"
 
     def _advance_indoor_look(self, actor, brain, time):
         sweep, target = brain.indoor, brain.indoor_target
@@ -535,6 +548,8 @@ class EnemyAI:
                 brain.indoor_look_angle = actor.facing + brain.indoor_focus.offset
                 brain.indoor_look_until = 0.0
             else:
+                if math.dist(actor.xy, target) <= 0.25:
+                    sweep.observed_from[target] = self.world.revision
                 brain.indoor_look_angle = None
                 brain.indoor_look_until = time
                 brain.look_reason = "스캔 완료"

@@ -1,7 +1,11 @@
+import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
+from campaign.models import Position
+from prototype.actors import Actor
+from prototype.ai import EnemyAI
 from prototype.geometry import Collider, Rect, SpatialIndex
 from prototype.indoor_search import IndoorSweep, build_search_areas
 from prototype.navigation import Navigation
@@ -12,10 +16,10 @@ FACILITY_SCENE = Path(__file__).resolve().parents[1] / "prototype/scenarios/ai_f
 
 
 class IndoorSearchTests(unittest.TestCase):
-    def test_walk_scan_respects_occlusion_and_near_only_samples(self):
+    def test_scan_checks_visible_corners_without_ignoring_pillar(self):
         geometry = SpatialIndex()
-        geometry.add(Collider("west", Rect(-0.2, 0, 0.2, 1.6)))
-        geometry.add(Collider("north", Rect(0, -0.2, 1.6, 0.2)))
+        geometry.add(Collider("west", Rect(-0.2, 0, 0.2, 7.2)))
+        geometry.add(Collider("south", Rect(0, 7.2, 3.6, 0.2)))
         geometry.add(Collider("pillar", Rect(3.8, 0.25, 1.2, 1.3)))
         world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 9, 3.6], [0, 3.6, 3.6, 3.6]]}},
                                 facilities=[], geometry=geometry,
@@ -27,16 +31,40 @@ class IndoorSearchTests(unittest.TestCase):
         sweep = IndoorSweep(area, origin, 0)
 
         self.assertEqual(area.rooms[hidden], room)
-        self.assertIn(origin, area.details)
         sweep.scan_forward(origin, 0, room, geometry)
         self.assertIn(open_point, sweep.checked)
         self.assertNotIn(hidden, sweep.checked)
-        self.assertNotIn(origin, sweep.checked)
 
-        sweep.scan_forward(origin, 0, room, geometry, stationary=True)
-        self.assertIn(origin, sweep.checked)
+        sweep.scan_forward(origin, math.pi / 2, room, geometry, stationary=True)
+        far_corner = max(point for point in area.room_points[room] if point[0] == origin[0])
+        self.assertIn(far_corner, sweep.checked)
         sweep.scan_forward((5.5, 0.9), 0, room, geometry)
         self.assertIn(hidden, sweep.checked)
+
+    def test_clear_view_completes_wide_room_from_one_position(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 12.6, 5.4]]}},
+                                facilities=[], geometry=geometry, revision=0,
+                                navigation=Navigation({}, [], geometry))
+        area, = build_search_areas(world)
+        world.indoor_search_area = lambda point: area
+        guard = Actor("guard", Position(0.9, 0.9), facing=math.pi)
+        ai = EnemyAI(world, [guard], [[]])
+        ai.start_search_drill([guard], (0.9, 0.9))
+        brain = ai.brains[guard.id]
+        sweep = ai.incidents["indoor_drill"].indoor
+
+        goal, finished = ai._indoor_sweep(guard, brain, (0.9, 0.9), 0, 1)
+        self.assertIsNone(goal)
+        self.assertFalse(finished)
+        for tick in range(1, 301):
+            time = 1 + tick / 60
+            if not brain.indoor_scanning(time):
+                break
+            ai._advance_indoor_look(guard, brain, time)
+
+        self.assertEqual(sweep.checked, set(area.points))
+        self.assertEqual(guard.xy, (0.9, 0.9))
 
     def test_two_doorways_preserve_room_boundaries_when_a_door_opens(self):
         geometry = SpatialIndex()

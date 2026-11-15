@@ -9,7 +9,8 @@ from .geometry import Rect
 
 SAMPLE_M = 1.8
 SCAN_RANGE_M = 8.0
-DETAIL_SCAN_RANGE_M = 1.35
+STATIONARY_SCAN_RANGE_M = 16.0
+OBSERVATION_SAMPLE_LIMIT = 32
 SCAN_HOLD_S = 0.18
 SCAN_HALF_CONE = math.radians(45)
 SCAN_CONE_COS = math.cos(SCAN_HALF_CONE)
@@ -23,7 +24,6 @@ class SearchArea:
     points: tuple[tuple[float, float], ...]
     rooms: dict[tuple[float, float], int]
     room_points: dict[int, tuple[tuple[float, float], ...]]
-    details: frozenset[tuple[float, float]] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -33,12 +33,12 @@ class LookChoice:
     visible_count: int
 
 
-def choose_look(xy, facing, geometry, samples, *, max_offset=MAX_LOOK_OFFSET):
+def choose_look(xy, facing, geometry, samples, *, max_offset=MAX_LOOK_OFFSET, scan_range=SCAN_RANGE_M):
     visible = []
     for point, weight in samples.items():
         dx, dy = point[0] - xy[0], point[1] - xy[1]
         distance = math.hypot(dx, dy)
-        if not 0.15 <= distance <= SCAN_RANGE_M:
+        if not 0.15 <= distance <= scan_range:
             continue
         offset = math.remainder(math.atan2(dy, dx) - facing, math.tau)
         if (abs(offset) <= max_offset + SCAN_HALF_CONE
@@ -78,17 +78,6 @@ def _assign_rooms(world, points):
     return rooms
 
 
-def _detail_points(navigation, points):
-    def blocked(point, dx, dy):
-        return not navigation.clear(point, (point[0] + dx, point[1] + dy), ignore_doors="all")
-
-    # 서로 다른 축으로 막힌 표본은 멀리서 훑어도 확인 처리하지 않는다.
-    reach = SAMPLE_M
-    return frozenset(point for point in points
-                     if (blocked(point, reach, 0) or blocked(point, -reach, 0))
-                     and (blocked(point, 0, reach) or blocked(point, 0, -reach)))
-
-
 def build_search_areas(world):
     areas = dict(world.data.get("search_areas", {}))
     for facility in world.facilities:
@@ -115,8 +104,7 @@ def build_search_areas(world):
             for point in ordered:
                 by_room[rooms[point]].append(point)
             result.append(SearchArea(key, floors, ordered, rooms,
-                                     {room: tuple(samples) for room, samples in by_room.items()},
-                                     _detail_points(world.navigation, ordered)))
+                                     {room: tuple(samples) for room, samples in by_room.items()}))
     return tuple(result)
 
 
@@ -127,6 +115,7 @@ class IndoorSweep:
     evidence_at: float
     checked: set = field(default_factory=set)
     claims: dict = field(default_factory=dict)
+    observed_from: dict = field(default_factory=dict)
     regroup_slots: dict[str, tuple[float, float]] = field(default_factory=dict)
     regroup_swaps: set[tuple[str, str]] = field(default_factory=set)
     regroup_until: float | None = None
@@ -134,24 +123,30 @@ class IndoorSweep:
 
     def scan_forward(self, xy, facing, room, geometry, *, stationary=False):
         forward_x, forward_y = math.cos(facing), math.sin(facing)
+        scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
         for point in self.area.room_points[room]:
             if point in self.checked:
                 continue
             dx, dy = point[0] - xy[0], point[1] - xy[1]
             distance = math.hypot(dx, dy)
-            if point in self.area.details and (not stationary or distance > DETAIL_SCAN_RANGE_M):
-                continue
-            if (distance <= SCAN_RANGE_M and (distance <= (0.15 if stationary else 0.075)
+            if (distance <= scan_range and (distance <= (0.15 if stationary else 0.075)
                     or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS)
                     and geometry.raycast(xy, point, category="sight") is None):
                 self.checked.add(point)
 
     def look(self, xy, facing, room, geometry):
-        samples = {point: 1 for point in self.area.room_points[room] if point not in self.checked
-                   and (point not in self.area.details or math.dist(xy, point) <= DETAIL_SCAN_RANGE_M)}
-        return choose_look(xy, facing, geometry, samples, max_offset=math.pi)
+        samples = {point: 1 for point in self.area.room_points[room] if point not in self.checked}
+        return choose_look(xy, facing, geometry, samples, max_offset=math.pi, scan_range=STATIONARY_SCAN_RANGE_M)
 
-    def observation_point(self, origin, heading, candidates, navigation):
+    @staticmethod
+    def _visible_from(origin, point, geometry):
+        return (math.dist(origin, point) <= STATIONARY_SCAN_RANGE_M
+                and geometry.raycast(origin, point, category="sight") is None)
+
+    def can_finish_here(self, origin, remaining, geometry):
+        return all(self._visible_from(origin, point, geometry) for point in remaining)
+
+    def observation_point(self, origin, heading, candidates, remaining, navigation):
         forward_x, forward_y = math.cos(heading), math.sin(heading)
 
         def travel_cost(point):
@@ -159,18 +154,21 @@ class IndoorSweep:
             # 실제로 확인할 표본이 남아 있다면 진행 방향 뒤쪽도 후보로 둔다.
             return math.hypot(dx, dy) + max(0, -(dx * forward_x + dy * forward_y))
 
-        nearby = sorted(candidates, key=lambda point: (travel_cost(point), point))[:6]
+        nearby = sorted(candidates, key=lambda point: (travel_cost(point), point))
+        # 확인한 표본에도 다시 설 수 있다. 미확인 표본은 가려진 구역의 후보로 남긴다.
+        pending = set(remaining)
+        shortlist = dict.fromkeys(nearby[:4] + [point for point in nearby if point in pending][:4])
+        stride = math.ceil(len(remaining) / OBSERVATION_SAMPLE_LIMIT)
+        samples = remaining[::stride]
 
         def score(point):
             # 어느 지점에 서야 가구나 벽 뒤의 미확인 공간이 더 많이 드러나는지 비교한다.
-            visible = sum(math.dist(point, other) <=
-                          (DETAIL_SCAN_RANGE_M if other in self.area.details else SCAN_RANGE_M)
-                          and navigation.geometry.raycast(point, other, category="sight") is None
-                          for other in candidates)
+            visible = sum(self._visible_from(point, other, navigation.geometry) for other in samples)
+            gain = max(visible * stride, int(point in pending))
             # 우회 경로는 공용 경로 탐색에서 계산한다. 후보 평가에는 직행 여부만 사용한다.
             cost = travel_cost(point)
             if not navigation.clear(origin, point):
                 cost += 2 * SAMPLE_M
-            return visible - cost / SAMPLE_M, -cost, point
+            return gain > 0, gain - cost / (2 * SAMPLE_M), -cost, point
 
-        return max(nearby, key=score)
+        return max(shortlist, key=score)
