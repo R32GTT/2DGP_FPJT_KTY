@@ -564,6 +564,10 @@ class EnemyAI:
             return budget
         while brain.path and math.dist(actor.xy, brain.path[0]) < 0.045:
             brain.path.pop(0)
+        if (brain.blocked_by and len(brain.path) > 1 and math.dist(actor.xy, brain.path[0]) <= 0.75
+                and nav.clear(actor.xy, brain.path[1], ignore_doors=True)):
+            # 아군이 밟고 있는 가까운 경유점은 다음 구간이 열려 있으면 건너뛴다.
+            brain.path.pop(0)
         if not brain.path:
             return budget
         point = brain.path[0]
