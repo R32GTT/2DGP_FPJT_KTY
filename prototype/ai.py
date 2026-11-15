@@ -5,6 +5,7 @@ import math
 
 from .cover import CoverFinder
 from .geometry import Rect
+from .indoor_search import IndoorSweep, SCAN_SECONDS
 from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
 
 
@@ -59,6 +60,9 @@ class Brain:
     scan_angle: float = 0.0
     look_until: float = 0.0
     checked_sound_at: float = -1000.0
+    indoor: IndoorSweep | None = None
+    indoor_target: tuple | None = None
+    indoor_blocked: dict = field(default_factory=dict)
     sound_response: str = ""
     sound_response_at: float = -1000.0
     far_at: float = 0.0
@@ -85,6 +89,7 @@ class Incident:
     updated_at: float
     heading: float
     point: tuple
+    indoor: IndoorSweep | None = None
     checked: list = field(default_factory=list)
     claims: dict = field(default_factory=dict)
 
@@ -339,6 +344,75 @@ class EnemyAI:
         brain.action, brain.action_goal, brain.action_until = "peek", point, time + 1.65
         return True
 
+    def start_search_drill(self, actors, point):
+        key = "indoor_drill"
+        area = self.world.indoor_search_area(point)
+        self.incidents[key] = Incident(0.0, 0.0, point, indoor=IndoorSweep(area, point, 0.0) if area else None)
+        for actor in actors:
+            brain = self.brains[actor.id]
+            brain.incident = key
+            brain.memory.reported = point
+            brain.memory.reported_at = 0.0
+            brain.memory.report_source = key
+            brain.combat_alert_until = COMBAT_ALERT_SECONDS
+
+    def _indoor_sweep(self, actor, brain, point, evidence_at, time):
+        area = self.world.indoor_search_area(point)
+        if area is None:
+            if brain.indoor is not None:
+                brain.indoor.claims.pop(actor.id, None)
+                brain.indoor = brain.indoor_target = None
+                brain.scan_until = 0.0
+            return None
+        if brain.incident not in self.incidents:
+            brain.incident = actor.id
+            self.incidents[actor.id] = Incident(time, actor.facing, point)
+        incident = self.incidents[brain.incident]
+        sweep = incident.indoor
+        if (sweep is None or (evidence_at > sweep.evidence_at
+                and (sweep.area is not area or math.dist(point, sweep.anchor) > 4))):
+            sweep = incident.indoor = IndoorSweep(area, point, evidence_at)
+        sweep.evidence_at = max(sweep.evidence_at, evidence_at)
+        area = sweep.area
+        if brain.indoor is not sweep:
+            if brain.indoor is not None:
+                brain.indoor.claims.pop(actor.id, None)
+            brain.indoor = sweep
+            brain.indoor_target = None
+            brain.indoor_blocked.clear()
+            brain.scan_until = 0.0
+
+        target = brain.indoor_target
+        if target is not None:
+            if brain.scan_until:
+                if time < brain.scan_until:
+                    actor.facing = brain.scan_angle + math.tau * (1 - (brain.scan_until - time) / SCAN_SECONDS)
+                    sweep.claims[actor.id] = target, time + 1
+                    return None, False
+                sweep.scan(actor.xy, self.world.geometry)
+                brain.scan_until = 0.0
+            elif brain.goal == target and brain.route_failed and brain.path_revision == self.world.revision:
+                brain.indoor_blocked[target] = self.world.revision
+            else:
+                sweep.claims[actor.id] = target, time + 1
+                if math.dist(actor.xy, target) <= 0.25:
+                    brain.scan_angle, brain.scan_until = actor.facing, time + SCAN_SECONDS
+                    return None, False
+                return target, False
+            sweep.claims.pop(actor.id, None)
+            brain.indoor_target = None
+
+        remaining = [candidate for candidate in area.points if candidate not in sweep.checked
+                     and brain.indoor_blocked.get(candidate) != self.world.revision]
+        claimed = {target for owner, (target, until) in sweep.claims.items() if owner != actor.id and time < until}
+        target = min((candidate for candidate in remaining if candidate not in claimed),
+                     key=lambda candidate: (math.dist(actor.xy, candidate) + 0.3 * math.dist(point, candidate),
+                                            candidate), default=None)
+        if target is not None:
+            brain.indoor_target = target
+            sweep.claims[actor.id] = target, time + 1
+        return target, not remaining
+
     def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False):
         incident = self.incidents.get(brain.incident)
         if cue != brain.cue:
@@ -569,6 +643,10 @@ class EnemyAI:
                 continue
             threat = None
             if memory.visible:
+                if brain.indoor_target is not None:
+                    brain.indoor.claims.pop(actor.id, None)
+                    brain.indoor_target = None
+                    brain.scan_until = 0.0
                 brain.combat_alert_until = time + COMBAT_ALERT_SECONDS
                 brain.next_sweep_at, brain.sweep_pass = 0.0, 0
                 brain.search_cover = None
@@ -604,6 +682,8 @@ class EnemyAI:
                     point = incoming or brain.incoming
                 threat = point
                 sound_only = investigating and point == memory.last_sound
+                indoor = None
+                search_finished = False
                 holding = confirmed and not investigating and (
                     time < brain.next_sweep_at or (brain.role == "hold" and reported))
                 cover_context = brain.peek_home is not None or (brain.action == "cover" and old_state == "retreat")
@@ -627,9 +707,16 @@ class EnemyAI:
                     if brain.next_sweep_at and (investigating or time >= brain.next_sweep_at):
                         brain.cue = None
                         brain.next_sweep_at = 0.0
-                    goal = self._search(actor, brain, (actor.state, point), time,
-                                        sound_only=sound_only, confirmed=confirmed)
-                if not continuing_cover and not holding and not brain.search_points and time >= brain.scan_until:
+                    if confirmed and not sound_only and math.isfinite(contact_at):
+                        indoor = self._indoor_sweep(actor, brain, point, contact_at, time)
+                    if indoor is None:
+                        goal = self._search(actor, brain, (actor.state, point), time,
+                                            sound_only=sound_only, confirmed=confirmed)
+                        search_finished = not brain.search_points
+                    else:
+                        goal, search_finished = indoor
+                        brain.search_cover = None
+                if not continuing_cover and not holding and search_finished and time >= brain.scan_until:
                     if sound_only:
                         brain.checked_sound_at = memory.sound_at
                         if brain.sound_response != "out_of_range":
@@ -673,6 +760,8 @@ class EnemyAI:
                 goal = None
             approximate = actor.state not in {"combat", "retreat", "combat_guard"} and goal not in self.exits
             if goal == brain.search_cover:
+                approximate = False
+            if goal == brain.indoor_target:
                 approximate = False
             if brain.cue is not None and brain.cue[1] == memory.last_sound:
                 approximate = False

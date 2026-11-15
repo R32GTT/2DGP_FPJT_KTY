@@ -2,6 +2,8 @@
   "format": "revenant.image_scene.v1",
   "name": "AI 검증 / 실내 시설",
   "training_facility": true,
+  "search_areas": {"실내 시설": [[0, 0, 36, 28]]},
+  "search_drill": {"last_seen": [3, 7], "observer_spawn": [37.5, 29]},
   "bounds": [-3, -4, 42, 35],
   "campaign_facility": "depot_a",
   "player_weapons": ["ar_a", "ar_b"],

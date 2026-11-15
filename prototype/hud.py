@@ -102,6 +102,9 @@ class HUD:
             self.label(f"ai_cue/{index}", f"{cue}   의심 {memory.suspicion:.2f} · 제압 {brain.suppression:.2f}", 13)
             self.label(f"ai_route/{index}", route, 13)
             sound = SOUND_RESPONSES.get(brain.sound_response, "") if time - brain.sound_response_at < 5 else ""
+            if brain.indoor is not None and actor.state in {"search", "combat_guard"}:
+                sweep = brain.indoor
+                sound = f"실내 수색 {len(sweep.checked)}/{len(sweep.area.points)} 지점 확인"
             self.label(f"ai_sound/{index}", sound or "최근 총성 반응 없음", 13, (240, 187, 104))
         self.label("ai_hint", simulation.ai_hint, 13)
 
@@ -278,6 +281,23 @@ class HUD:
             pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=True)
             self.text("site/" + facility["id"], a[0], b[1] - 13)
             self.text("site_info/" + facility["id"], camera.width - 350, camera.height - 200 - index * 34)
+        if debug:
+            sweeps = {}
+            for incident in simulation.ai.incidents.values():
+                if incident.indoor is not None:
+                    sweeps[incident.indoor.area.id] = incident.indoor
+            for sweep in sweeps.values():
+                claimed = {target for target, until in sweep.claims.values() if simulation.time < until}
+                for sample in sweep.area.points:
+                    color = ((100, 213, 167) if sample in sweep.checked else (235, 135, 69)
+                             if sample in claimed else (236, 206, 118))
+                    x, y = point(*sample)
+                    pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *color, filled=True)
+            if sweeps:
+                checked = sum(len(sweep.checked) for sweep in sweeps.values())
+                total = sum(len(sweep.area.points) for sweep in sweeps.values())
+                self.label("map_search", f"수색 {checked}/{total} · 황색 확인 전 · 주황 조사 중 · 청록 확인", 13)
+                self.text("map_search", 84, 194)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp <= 0 or (actor.team != "player" and not debug):
                 continue

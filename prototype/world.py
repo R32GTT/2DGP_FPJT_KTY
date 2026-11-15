@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 from .geometry import Collider, Rect, SpatialIndex
+from .indoor_search import build_search_areas
 from .navigation import Navigation
 from .region import build_region
 from .spatial import BoundsIndex
@@ -70,6 +71,20 @@ class World:
         self.facilities = self.data.get("facilities", [])
         self.roads = self.data.get("roads", [])
         self.region_layout = self.data.get("region_layout")
+        self.search_areas = build_search_areas(self)
+
+    def indoor_search_area(self, point):
+        nearby = []
+        for area in self.search_areas:
+            for rect in area.floors:
+                if rect.segment_entry(point, point) is not None:
+                    return area
+                entry = (max(rect.x + 0.3, min(rect.right - 0.3, point[0])),
+                         max(rect.y + 0.3, min(rect.bottom - 0.3, point[1])))
+                distance = math.dist(point, entry)
+                if distance <= 3 and self.navigation.clear(point, entry, clearance=0, ignore_doors=True):
+                    nearby.append((distance, area.id, area))
+        return min(nearby, key=lambda row: row[:2])[2] if nearby else None
 
     def visible_layers(self, rect):
         return sorted(self.layer_index.query(rect), key=lambda layer: layer.order)
