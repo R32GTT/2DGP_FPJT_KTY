@@ -1,0 +1,24 @@
+{
+  "warehouse": {
+    "size":[28,24], "wall_thickness":0.3, "door_width":3.0,
+    "color":[126,135,120], "terminal":[7,2],
+    "props":[{"rect":[-11,-8,4,2]}, {"rect":[-11,-3,4,2]}, {"rect":[6,-8,5,2]}]
+  },
+  "hq": {
+    "size":[32,24], "wall_thickness":0.35, "door_width":2.4,
+    "color":[128,139,129], "terminal":[7,0],
+    "props":[{"rect":[-12,-8,5,1.5],"kind":"desk"}, {"rect":[6,-8,6,1.5],"kind":"desk"},
+             {"rect":[-12,5,4,2]}, {"rect":[8,5,4,2]}]
+  },
+  "comms": {
+    "size":[20,16], "wall_thickness":0.25, "door_width":2.0,
+    "color":[115,131,127], "terminal":[4,0],
+    "props":[{"rect":[-7,-5,3,1.2],"kind":"rack"}, {"rect":[3,-5,4,1.2],"kind":"rack"},
+             {"rect":[-2,-20,4,3],"kind":"antenna","material":"metal"}]
+  },
+  "safehouse": {
+    "size":[12,8], "wall_thickness":0.25, "door_width":1.8,
+    "color":[137,136,115], "terminal":[3,0],
+    "props":[{"rect":[-4,-2.5,2,1],"kind":"bed"}, {"rect":[2,-2.5,2,1],"kind":"desk"}]
+  }
+}

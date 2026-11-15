@@ -1,0 +1,92 @@
+"""관측·추정·기억만 AI 판단에 전달한다. 오디오 파일 재생과 독립적이다."""
+
+from dataclasses import dataclass
+import math
+
+
+SOUND_MEMORY_SECONDS = 14
+GUNSHOT_REPLAN_DISTANCE = 4.0
+
+
+@dataclass
+class Knowledge:
+    visible: bool = False
+    last_seen: tuple | None = None
+    seen_at: float = -1000.0
+    seen_heading: float | None = None
+    seen_motion_at: float = -1000.0
+    last_sound: tuple | None = None
+    sound_at: float = -1000.0
+    sound_heard_at: float = -1000.0
+    gunshot_origin: tuple | None = None
+    sound_priority: float = 0.0
+    suspicion: float = 0.0
+    reported: tuple | None = None
+    reported_at: float = -1000.0
+    report_source: str = ""
+
+
+def observe(actor, target, geometry, memory, time):
+    memory.visible = False
+    if target.hp <= 0:
+        return
+    dx, dy = target.position.x - actor.position.x, target.position.y - actor.position.y
+    distance = math.hypot(dx, dy)
+    in_cone = distance < 1.2 or dx * math.cos(actor.facing) + dy * math.sin(actor.facing) >= distance * 0.5
+    if distance <= 16 and in_cone and geometry.raycast(actor.xy, target.xy) is None:
+        if memory.last_seen is not None and time - memory.seen_at < 0.5:
+            vx, vy = target.xy[0] - memory.last_seen[0], target.xy[1] - memory.last_seen[1]
+            if math.hypot(vx, vy) > 0.06:
+                memory.seen_heading = math.atan2(vy, vx)
+                memory.seen_motion_at = time
+        if time - memory.seen_motion_at > 1.5:
+            memory.seen_heading = None
+        memory.visible, memory.last_seen, memory.seen_at = True, target.xy, time
+        memory.suspicion = 1.0
+
+
+def _estimate_sound(position, distance, navigation):
+    # 추정 오차가 벽을 건너면 오차를 줄이고, 가능한 가장 가까운 지점을 고른다.
+    resolution = 0.5 if distance < 6 else 1.0 if distance < 16 else 1.5
+    rounded = tuple(round(value / resolution) * resolution for value in position)
+    x, y = position
+    candidates = [rounded, (rounded[0], y), (x, rounded[1]), position]
+    for offset in (0.3, 0.6):
+        candidates.extend(((x + offset, y), (x - offset, y), (x, y + offset), (x, y - offset)))
+    for point in candidates:
+        if navigation.walkable(point) and navigation.clear(position, point, clearance=0):
+            return point
+    return None
+
+
+def hear(actor, memory, event, navigation, *, checked_sound_at):
+    if event.kind != "noise" or event.data.get("team") == actor.team:
+        return
+    distance = math.dist(actor.xy, event.position)
+    radius = event.data["radius"]
+    if radius <= 0 or distance > radius:
+        return "out_of_range"
+    priority = event.data.get("strength", 0.4) * (1 - distance / radius * 0.4)
+    memory.suspicion = min(1.0, memory.suspicion + priority)
+    gunshot = event.data.get("reason") == "gunshot"
+    if memory.gunshot_origin is not None and event.time - memory.sound_heard_at < SOUND_MEMORY_SECONDS:
+        # 비교 기준은 첫 총성의 위치다. 같은 구역의 총성은 조사 목표를 그대로 둔다.
+        if not gunshot:
+            return "lower_priority"
+        if (math.dist(event.position, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE
+                and navigation.clear(memory.gunshot_origin, event.position, clearance=0)):
+            memory.sound_heard_at = event.time
+            if memory.sound_at <= checked_sound_at:
+                memory.sound_at = event.time
+                return "renewed"
+            return "same_area"
+    if not gunshot and event.time - memory.sound_at < 2 and priority < memory.sound_priority * 0.75:
+        return "lower_priority"
+    point = _estimate_sound(event.position, distance, navigation)
+    if point is None:
+        return "no_estimate"
+    memory.last_sound = point
+    memory.sound_at = memory.sound_heard_at = event.time
+    memory.sound_priority = priority
+    memory.gunshot_origin = event.position if gunshot else None
+    return "new"

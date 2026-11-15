@@ -1,0 +1,681 @@
+"""관측한 정보와 현재 임무로 적군의 이동과 전투를 결정한다."""
+
+from dataclasses import dataclass, field
+import math
+
+from .cover import CoverFinder
+from .geometry import Rect
+from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
+
+
+COMBAT_ALERT_SECONDS = 330
+RESEARCH_INTERVAL_SECONDS = 24
+
+
+@dataclass
+class Brain:
+    patrol: list
+    memory: Knowledge = field(default_factory=Knowledge)
+    waypoint: int = 0
+    sense_at: float = 0.0
+    plan_at: float = 0.0
+    path: list = field(default_factory=list)
+    goal: tuple | None = None
+    path_revision: int = -1
+    route_failed: bool = False
+    route_origin: tuple | None = None
+    progress_point: tuple | None = None
+    progress_at: float = 0.0
+    pending_goal: tuple | None = None
+    blocked_by: str = ""
+    fire_at: float = 0.0
+    fired_at: float = -1000.0
+    burst: int = 0
+    action: str = ""
+    action_goal: tuple | None = None
+    action_until: float = 0.0
+    cover_threat: tuple | None = None
+    cover_revision: int = -1
+    peek_home: tuple | None = None
+    peek_at: float = 0.0
+    suppression: float = 0.0
+    pressure_at: float = 0.0
+    incoming: tuple | None = None
+    incoming_at: float = -1000.0
+    radio_at: float = 0.0
+    contact_at: float = 0.0
+    combat_alert_until: float = 0.0
+    next_sweep_at: float = 0.0
+    sweep_pass: int = 0
+    search_cover: tuple | None = None
+    cover_step_at: float = 0.0
+    role: str = ""
+    incident: str = ""
+    role_changed: bool = False
+    cue: tuple | None = None
+    search_points: list = field(default_factory=list)
+    search_target: tuple | None = None
+    scan_until: float = 0.0
+    scan_angle: float = 0.0
+    look_until: float = 0.0
+    checked_sound_at: float = -1000.0
+    sound_response: str = ""
+    sound_response_at: float = -1000.0
+    far_at: float = 0.0
+    far_updated: float = 0.0
+
+    @property
+    def visible(self):
+        return self.memory.visible
+
+
+@dataclass
+class Intent:
+    direction: tuple = (0, 0)
+    fire: bool = False
+    retreat_fire: bool = False
+    reload: bool = False
+    open_door: bool = False
+    step_dt: float = 1 / 60
+    move_multiplier: float = 1.0
+
+
+@dataclass
+class Incident:
+    updated_at: float
+    heading: float
+    point: tuple
+    checked: list = field(default_factory=list)
+    claims: dict = field(default_factory=dict)
+
+
+class EnemyAI:
+    def __init__(self, world, actors, patrols, *, can_radio=None):
+        self.world = world
+        self.cover_finder = CoverFinder(world)
+        self.can_radio = can_radio
+        self.exits = {point for key, point in world.navigation.nodes.items() if key.endswith("/outside")}
+        self.incidents = {}
+        self.assign_at = 0.0
+        self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.01)
+                       for index, (actor, patrol) in enumerate(zip(actors, patrols))}
+
+    def receive(self, actors, events):
+        noises = [event for event in events if event.kind == "noise"]
+        for event in events:
+            if event.kind == "weapon_fired" and event.source in self.brains:
+                self.brains[event.source].fired_at = event.time
+            if event.kind == "pressure" and event.source in self.brains:
+                brain = self.brains[event.source]
+                strength = event.data["strength"] * min(1.5, event.data["caliber"] / 18)
+                brain.suppression = min(1.0, brain.suppression + strength)
+                brain.pressure_at = event.time
+                bearing = round(event.data["incoming"] / (math.pi / 8)) * (math.pi / 8)
+                distance = 6 if event.data["close"] else 11
+                origin = event.position
+                brain.incoming = (origin[0] + math.cos(bearing) * distance, origin[1] + math.sin(bearing) * distance)
+                brain.incoming_at = event.time
+                brain.sense_at = min(brain.sense_at, event.time)
+                if event.data["hit"] or event.data["close"]:
+                    brain.combat_alert_until = event.time + COMBAT_ALERT_SECONDS
+        if not noises:
+            return
+        for actor in actors:
+            if actor.hp <= 0:
+                continue
+            brain = self.brains[actor.id]
+            for event in noises:
+                result = hear(actor, brain.memory, event, self.world.navigation,
+                              checked_sound_at=brain.checked_sound_at)
+                if result is not None and event.data.get("reason") == "gunshot":
+                    brain.sound_response = result
+                    brain.sound_response_at = event.time
+                if result in {"new", "renewed"}:
+                    if result == "renewed":
+                        brain.cue = None
+                    brain.look_until = event.time + 0.65
+                    brain.sense_at = min(brain.sense_at, event.time)
+
+    @staticmethod
+    def _face(actor, point):
+        dx, dy = point[0] - actor.position.x, point[1] - actor.position.y
+        if math.hypot(dx, dy) > 0.05:
+            actor.facing = math.atan2(dy, dx)
+
+    def _report_sighting(self, actor, brain, actors, time):
+        brain.radio_at = time + 4
+        point = tuple(round(axis / 4) * 4 for axis in brain.memory.last_seen)
+        receivers = []
+        for other in actors:
+            if other.id == actor.id or other.hp <= 0:
+                continue
+            distance = math.dist(actor.xy, other.xy)
+            local = distance <= 14 and self.world.geometry.raycast(actor.xy, other.xy) is None
+            radio = not local and distance <= 75 and self.can_radio and self.can_radio(actor, other)
+            if local or radio:
+                receivers.append(other)
+        if not receivers:
+            return
+        key = brain.incident if brain.incident in self.incidents else actor.id
+        heading = brain.memory.seen_heading
+        if heading is None:
+            heading = actor.facing
+        incident = self.incidents.get(key)
+        if incident is None:
+            incident = self.incidents[key] = Incident(time, heading, point)
+        elif math.dist(point, incident.point) > 4:
+            incident.point = point
+            incident.checked = [(checked, stamp) for checked, stamp in incident.checked
+                                if math.dist(point, checked) >= 4]
+            incident.claims.clear()
+        incident.updated_at, incident.heading = time, heading
+        for member in (actor, *receivers):
+            ally = self.brains[member.id]
+            ally.combat_alert_until = time + COMBAT_ALERT_SECONDS
+            if ally.incident != key:
+                ally.incident = key
+                self._set_role(ally, "")
+            ally.memory.report_source = actor.id
+            if ally.memory.reported == incident.point:
+                ally.memory.reported_at = time
+                continue
+            ally.memory.reported = incident.point
+            ally.memory.reported_at = time
+            ally.next_sweep_at = 0.0
+            ally.sense_at = min(ally.sense_at, time)
+
+    @staticmethod
+    def _set_role(brain, role):
+        if brain.role != role:
+            brain.role = role
+            brain.role_changed = True
+            brain.cue = None
+            brain.search_target = None
+
+    def _assign_roles(self, actors, time):
+        if time < self.assign_at:
+            return
+        self.assign_at = time + 0.35
+        self.incidents = {key: incident for key, incident in self.incidents.items()
+                          if time - incident.updated_at < COMBAT_ALERT_SECONDS}
+        for incident in self.incidents.values():
+            incident.checked = [(point, stamp) for point, stamp in incident.checked
+                                if time - stamp < RESEARCH_INTERVAL_SECONDS * 3]
+        groups = {}
+        for actor in actors:
+            brain = self.brains[actor.id]
+            if (actor.hp > 0 and brain.incident in self.incidents
+                    and brain.memory.reported is not None and time < brain.combat_alert_until):
+                groups.setdefault(brain.incident, []).append(actor)
+        for members in groups.values():
+            available = []
+            for actor in members:
+                brain = self.brains[actor.id]
+                weapon = actor.weapon
+                can_fight = weapon is not None and (weapon.chambered or weapon.reserve > 0 or weapon.stage >= 2)
+                if (actor.hp >= 20 and can_fight and brain.suppression < 0.55
+                        and actor.state != "retreat"):
+                    available.append(actor)
+                else:
+                    self._set_role(brain, "hold")
+            for role in ("pursue", "intercept", "sweep"):
+                if not available:
+                    break
+                current = next((actor for actor in available if self.brains[actor.id].role == role), None)
+                if current is None:
+                    def priority(actor):
+                        brain = self.brains[actor.id]
+                        return (not brain.memory.visible if role == "pursue" else brain.memory.visible,
+                                math.dist(actor.xy, brain.memory.reported), actor.id)
+
+                    current = min(available, key=priority)
+                available.remove(current)
+                self._set_role(self.brains[current.id], role)
+            for actor in available:
+                self._set_role(self.brains[actor.id], "hold")
+
+    def _has_support(self, actor, brain, actors, time):
+        return any(other.id != actor.id and other.hp > 0
+                   and (ally := self.brains[other.id]).incident == brain.incident
+                   and ally.action in {"advance", "fire"} and ally.visible
+                   and time - ally.fired_at < 1.5
+                   and other.weapon is not None and other.weapon.chambered and not other.weapon.reloading
+                   and ally.suppression < 0.55 and math.dist(other.xy, actor.xy) <= 18
+                   and math.dist(other.xy, brain.memory.last_seen) <= other.weapon.spec.range_m
+                   for other in actors)
+
+    def _combat_action(self, actor, brain, actors, threat, time):
+        weapon = actor.weapon
+        empty = weapon is None or (not weapon.chambered and weapon.stage < 2 and weapon.reserve <= 0)
+        urgent = empty or actor.hp < 20 or actor.hurt_until - time > 1.75 or brain.suppression >= 0.55
+        route_failed = brain.action_goal is not None and brain.action_goal == brain.goal and brain.route_failed
+        safe_action = brain.action in {"cover", "retreat", "pin"}
+        needs_reload = weapon is not None and (weapon.reloading or not weapon.chambered)
+        if brain.action == "cover" and brain.action_goal is not None and not route_failed:
+            if ((brain.cover_threat != threat or brain.cover_revision != self.world.revision)
+                    and self.world.geometry.raycast(threat, brain.action_goal, category="bullet") is None):
+                route_failed = True
+            else:
+                brain.cover_threat = threat
+                brain.cover_revision = self.world.revision
+                if math.dist(actor.xy, brain.action_goal) > 0.3 or (needs_reload and not empty) or urgent:
+                    return
+
+        elif (time < brain.action_until and not route_failed and not brain.role_changed
+                and (brain.action != "flank" or (math.dist(actor.xy, brain.action_goal) > 0.35
+                                                and self._has_support(actor, brain, actors, time)))
+                and (not urgent or safe_action) and (not needs_reload or safe_action or brain.action == "reload")):
+            return
+        brain.role_changed = False
+        rejected = brain.action_goal if route_failed else None
+        brain.action_goal = None
+        if urgent or needs_reload:
+            occupied = [ally.action_goal for other in actors if other.id != actor.id and other.hp > 0
+                        and (ally := self.brains[other.id]).action == "cover"
+                        and ally.action_goal is not None and other.state == "retreat"]
+            if rejected is not None:
+                occupied.append(rejected)
+            cover = self.cover_finder.choose(actor, threat, occupied)
+            if cover is not None:
+                brain.action, brain.action_goal = "cover", cover
+                brain.cover_threat = threat
+                brain.cover_revision = self.world.revision
+            elif empty or actor.hp < 20:
+                brain.action = "retreat"
+                brain.action_goal = max(brain.patrol, key=lambda point: math.dist(point, threat), default=None)
+            elif not urgent:
+                brain.action = "reload"
+            else:
+                brain.action = "pin"
+            brain.action_until = time + 1.65
+            return
+
+        distance = math.dist(actor.xy, threat)
+        brain.action, brain.action_until = "fire", time + 1.3
+        if distance > 13:
+            brain.action, brain.action_goal = "advance", threat
+            return
+        if not 3 < distance <= 13 or brain.role not in {"intercept", "sweep"}:
+            return
+        if not self._has_support(actor, brain, actors, time):
+            return
+        dx, dy = threat[0] - actor.position.x, threat[1] - actor.position.y
+        nav = self.world.navigation
+        for side in ((1, -1) if brain.role == "intercept" else (-1, 1)):
+            for lateral in (4, 6):
+                point = (actor.position.x + (dx - side * dy * lateral) / distance,
+                         actor.position.y + (dy + side * dx * lateral) / distance)
+                if (point != rejected and nav.walkable(point)
+                        and nav.clear(actor.xy, point, ignore_doors=True)
+                        and self.world.geometry.raycast(point, threat, category="bullet") is None):
+                    brain.action, brain.action_goal, brain.action_until = "flank", point, time + 3.2
+                    return
+
+    def _peek(self, actor, brain, threat, time):
+        if brain.peek_home is not None:
+            if brain.action == "peek" and (time >= brain.action_until or brain.suppression >= 0.55
+                                          or actor.weapon is None or not actor.weapon.chambered
+                                          or (brain.goal == brain.action_goal and brain.route_failed)):
+                brain.action, brain.action_goal = "peek_return", brain.peek_home
+            if brain.action == "peek_return" and (
+                    math.dist(actor.xy, brain.peek_home) <= 0.3
+                    or (brain.goal == brain.peek_home and brain.route_failed)):
+                brain.action, brain.action_goal = "cover", brain.peek_home
+                brain.peek_home = None
+                brain.peek_at = time + 1.35
+                return False
+            return True
+        weapon = actor.weapon
+        if (threat is None or brain.action != "cover" or brain.action_goal is None
+                or math.dist(actor.xy, brain.action_goal) > 0.3 or time < brain.peek_at
+                or brain.suppression >= 0.4 or actor.hp < 20
+                or weapon is None or not weapon.chambered or weapon.reloading):
+            return False
+        brain.peek_at = time + 1.35
+        point = self.cover_finder.peek(actor, threat)
+        if point is None:
+            return False
+        brain.peek_home = brain.action_goal
+        brain.action, brain.action_goal, brain.action_until = "peek", point, time + 1.65
+        return True
+
+    def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False):
+        incident = self.incidents.get(brain.incident)
+        if cue != brain.cue:
+            brain.cue = cue
+            brain.search_target = None
+            brain.search_cover = None
+            heading = brain.memory.seen_heading if cue[0] == "search" else None
+            angle = heading if heading is not None else incident.heading if incident else actor.facing
+            x, y = cue[1]
+            if brain.role == "intercept":
+                offsets = ((8, 0), (7, 3), (7, -3))
+            elif brain.role == "sweep":
+                offsets = ((5, -3), (8, -4), (4, 4))
+            else:
+                offsets = ((5, 0), (9, 0), (5, 3), (5, -3), (0, 0)) if confirmed else (
+                    (0, 0), (4, 0), (3, 3), (3, -3))
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            brain.search_points = [(x + dx * cos_a - dy * sin_a, y + dx * sin_a + dy * cos_a)
+                                   for dx, dy in offsets]
+            nav = self.world.navigation
+            if sound_only:
+                brain.search_points = [point for point in brain.search_points
+                                       if nav.walkable(point) and nav.clear(cue[1], point)]
+                if cue[1] not in brain.search_points:
+                    brain.search_points.append(cue[1])
+            elif confirmed:
+                radius = min(36, 18 + brain.sweep_pass * 4)
+                keys = nav.point_index.query(Rect(x - radius, y - radius, radius * 2, radius * 2))
+                suffixes = ("/outside",) if brain.role == "intercept" else ("/hall", "/inside", "/terminal", "/outside")
+                landmarks = [nav.nodes[key] for key in keys if key.endswith(suffixes)
+                             and math.dist(nav.nodes[key], cue[1]) <= radius]
+                if brain.sweep_pass:
+                    landmarks = [nav.nodes[key] for key in keys
+                                 if math.dist(nav.nodes[key], cue[1]) <= radius
+                                 and (brain.role != "intercept" or key.endswith("/outside"))]
+                predicted = brain.search_points[0]
+                landmarks.sort(key=lambda point: (math.dist(point, predicted), math.dist(actor.xy, point), point))
+                if brain.sweep_pass and len(landmarks) > 5:
+                    start = (brain.sweep_pass - 1) * 5 % len(landmarks)
+                    landmarks = landmarks[start:] + landmarks[:start]
+                index = 1
+                brain.search_points[index:index] = landmarks[:5]
+            brain.scan_until = 0
+        if time < brain.scan_until:
+            actor.facing = brain.scan_angle + math.sin((brain.scan_until - time) * 5) * 0.95
+            if incident and brain.search_target is not None:
+                incident.claims[actor.id] = brain.search_target, time + 0.65
+            return None
+        if brain.search_target is not None:
+            if incident:
+                incident.checked.append((brain.search_target, time))
+                del incident.checked[:-32]
+                incident.claims.pop(actor.id, None)
+            brain.search_target = None
+        while brain.search_points:
+            point = brain.search_points[0]
+            if incident and (any(math.dist(point, checked) < 2 for checked, _ in incident.checked)
+                             or any(owner != actor.id and time < expires and math.dist(point, reserved) < 2
+                                    for owner, (reserved, expires) in incident.claims.items())):
+                brain.search_points.pop(0)
+                continue
+            if (brain.goal == point and not brain.path and brain.route_failed
+                    and brain.path_revision == self.world.revision):
+                brain.search_points.pop(0)
+                continue
+            if (math.dist(actor.xy, point) < 0.35
+                    or (brain.goal == point and not brain.path and not brain.route_failed
+                        and brain.path_revision == self.world.revision)):
+                brain.search_points.pop(0)
+                brain.search_target = point if math.dist(actor.xy, point) < 1 else None
+                self._face(actor, cue[1])
+                duration = 2.0 if brain.role == "intercept" else 0.5 if confirmed else 0.85
+                brain.scan_until, brain.scan_angle = time + duration, actor.facing
+                return None
+            if incident:
+                incident.claims[actor.id] = point, time + 0.65
+            if not confirmed:
+                return point
+            if brain.search_cover is not None:
+                cover = brain.search_cover
+                if (math.dist(actor.xy, cover) > 0.35
+                        and not (brain.goal == cover and brain.route_failed)):
+                    return cover
+                brain.search_cover = None
+                brain.cover_step_at = time + 0.75
+            if time >= brain.cover_step_at:
+                brain.cover_step_at = time + 1.0
+                reserved = [ally.search_cover for key, ally in self.brains.items()
+                            if key != actor.id and ally.search_cover is not None]
+                brain.search_cover = self.cover_finder.advance(actor, cue[1], point, reserved)
+                if brain.search_cover is not None:
+                    return brain.search_cover
+            return point
+        return None
+
+    def _move(self, actor, brain, intent, goal, time, budget, *, face=True, approximate=False):
+        brain.pending_goal = None
+        if goal is None:
+            brain.path.clear()
+            brain.goal = None
+            brain.progress_point = None
+            return budget
+        nav = self.world.navigation
+        changed = brain.goal is None or math.dist(brain.goal, goal) > (0.9 if actor.state == "combat" else 0.15)
+        invalid = brain.path_revision != self.world.revision
+        relocated = brain.route_origin is not None and math.dist(actor.xy, brain.route_origin) > 2
+        if relocated:
+            brain.path.clear()
+            brain.path_revision = -1
+            invalid = True
+        brain.route_origin = actor.xy
+        if invalid and not relocated and brain.path:
+            points = [actor.xy, *brain.path]
+            if all(nav.clear(start, end, ignore_doors=True) for start, end in zip(points, points[1:])):
+                brain.path_revision = self.world.revision
+                invalid = False
+        if brain.path and brain.progress_point is not None and not changed:
+            if math.dist(actor.xy, brain.progress_point) >= 0.18:
+                brain.progress_at, brain.progress_point = time, actor.xy
+            elif time - brain.progress_at >= 0.9:
+                brain.path.clear()
+                brain.path_revision = -1
+                invalid = True
+        if budget and (changed or invalid) and time >= brain.plan_at:
+            options = nav.nearby_goals(goal, True) if approximate else [goal]
+            brain.path = []
+            for point in options:
+                brain.path = nav.route(actor.xy, point, allow_doors=True)
+                if brain.path:
+                    break
+            brain.goal, brain.path_revision, brain.plan_at = goal, self.world.revision, time + 0.2
+            brain.route_failed = not brain.path
+            brain.progress_at, brain.progress_point = time, actor.xy
+            budget -= 1
+        elif changed or invalid:
+            brain.pending_goal = goal
+        if changed and brain.goal != goal and actor.state != "combat":
+            return budget
+        if invalid and brain.path_revision != self.world.revision:
+            return budget
+        while brain.path and math.dist(actor.xy, brain.path[0]) < 0.045:
+            brain.path.pop(0)
+        if not brain.path:
+            return budget
+        point = brain.path[0]
+        if face:
+            self._face(actor, point)
+        intent.direction = point[0] - actor.position.x, point[1] - actor.position.y
+        intent.step_dt = min(intent.step_dt, math.hypot(*intent.direction) / (actor.speed * intent.move_multiplier))
+        intent.open_door = True
+        return budget
+
+    def _patrol(self, actor, brain):
+        if actor.boarding_goal is not None:
+            return "boarding", actor.boarding_goal
+        goal = brain.patrol[brain.waypoint] if brain.patrol else actor.xy
+        if not brain.patrol or len(brain.patrol) == 1 and math.dist(actor.xy, goal) < 0.25:
+            return "idle", None
+        if (math.dist(actor.xy, goal) < 0.25
+                or (brain.goal == goal and not brain.path and brain.path_revision == self.world.revision)):
+            brain.waypoint = (brain.waypoint + 1) % len(brain.patrol)
+            return "patrol", None
+        state = "return" if actor.state in {"combat", "combat_guard", "search", "alert", "return", "retreat"} else "patrol"
+        return state, goal
+
+    def reset(self):
+        self.brains = {key: Brain(brain.patrol) for key, brain in self.brains.items()}
+        self.incidents.clear()
+        self.assign_at = 0.0
+
+    def update(self, actors, player, time):
+        intents, budget = {}, 1
+        self._assign_roles(actors, time)
+        self.near_count = 0
+        for actor in sorted(actors, key=lambda actor: math.dist(actor.xy, player.xy)):
+            if actor.hp <= 0:
+                continue
+            brain, intent = self.brains[actor.id], Intent()
+            memory = brain.memory
+            brain.suppression = max(0, brain.suppression - 0.2 * (time - brain.pressure_at))
+            brain.pressure_at = time
+            investigating = (memory.last_sound is not None and memory.sound_at > brain.checked_sound_at
+                             and time - memory.sound_heard_at < SOUND_MEMORY_SECONDS
+                             and (memory.suspicion >= 0.3 or actor.state == "alert"))
+            confirmed = time < brain.combat_alert_until
+            incoming = brain.incoming if time - brain.incoming_at < (12 if confirmed else 4) else None
+            tracking = confirmed and memory.last_seen is not None
+            reported = confirmed and memory.reported is not None
+            if math.dist(actor.xy, player.xy) > 60 and not (investigating or confirmed or incoming is not None):
+                if time < brain.far_at:
+                    continue
+                intent.step_dt = min(0.5, time - brain.far_updated)
+                brain.far_at, brain.far_updated = time + 0.5, time
+                memory.visible = False
+                memory.last_seen = memory.reported = None
+                brain.search_cover = None
+                brain.cue = None
+                self._set_role(brain, "")
+                actor.state, goal = self._patrol(actor, brain)
+                budget = self._move(actor, brain, intent, goal, time, budget, approximate=True)
+                intents[actor.id] = intent
+                continue
+            brain.far_updated = time
+            self.near_count += 1
+            fresh_sound = time < brain.look_until
+            looking_for_sound = not (tracking or investigating or reported) and fresh_sound
+            if time >= brain.sense_at:
+                was_visible = memory.visible
+                observe(actor, player, self.world.geometry, memory, time)
+                # 순찰 방향에서 먼저 확인하고, 발견하지 못했을 때 소리 쪽도 살핀다.
+                fresh_incoming = incoming is not None and time - brain.incoming_at < 1
+                if not memory.visible and (fresh_incoming or fresh_sound):
+                    look = incoming if fresh_incoming else memory.last_sound
+                    self._face(actor, look)
+                    observe(actor, player, self.world.geometry, memory, time)
+                if memory.visible and not was_visible:
+                    brain.contact_at = time
+                brain.sense_at = time + (0.10 if confirmed or memory.visible else 0.18)
+                memory.suspicion = max(0, memory.suspicion - 0.01)
+            old_state = actor.state
+            threat = None
+            if memory.visible:
+                brain.combat_alert_until = time + COMBAT_ALERT_SECONDS
+                brain.next_sweep_at, brain.sweep_pass = 0.0, 0
+                brain.search_cover = None
+                actor.state = "combat"
+                brain.cue = None
+                brain.search_target = None
+                self._face(actor, memory.last_seen)
+                if time >= brain.radio_at and time - brain.contact_at >= 0.55:
+                    self._report_sighting(actor, brain, actors, time)
+                if old_state not in {"combat", "retreat"}:
+                    brain.fire_at, brain.burst = time + 0.28, 0
+                    brain.action_until = time
+                if not self._peek(actor, brain, memory.last_seen, time):
+                    self._combat_action(actor, brain, actors, memory.last_seen, time)
+                goal = brain.action_goal
+                if brain.action in {"cover", "retreat", "pin", "reload", "peek_return"}:
+                    actor.state = "retreat"
+                elif (time >= brain.fire_at and actor.weapon and not actor.weapon.reloading
+                      and actor.weapon.chambered and brain.action in {"fire", "advance", "peek"}):
+                    intent.fire = True
+                    burst_size = 2 if brain.suppression >= 0.3 or brain.action == "peek" else 4
+                    brain.burst = (brain.burst + 1) % burst_size
+                    brain.fire_at = time + (0.20 if brain.burst else 0.58) * (1 + brain.suppression * 2)
+            elif tracking or investigating or reported or incoming is not None or (confirmed and brain.incoming is not None):
+                actor.state = "search" if confirmed else "alert"
+                point = memory.last_seen if tracking else None
+                contact_at = memory.seen_at if tracking else -math.inf
+                if reported and (point is None or (memory.report_source != actor.id and memory.reported_at > contact_at)):
+                    point, contact_at = memory.reported, memory.reported_at
+                if investigating and (point is None or memory.sound_at > contact_at + 0.5):
+                    point = memory.last_sound
+                if point is None:
+                    point = incoming or brain.incoming
+                threat = point
+                sound_only = investigating and point == memory.last_sound
+                holding = confirmed and not investigating and (
+                    time < brain.next_sweep_at or (brain.role == "hold" and reported))
+                cover_context = brain.peek_home is not None or (brain.action == "cover" and old_state == "retreat")
+                continuing_cover = cover_context and self._peek(actor, brain, point, time)
+                if not continuing_cover and cover_context:
+                    self._combat_action(actor, brain, actors, point, time)
+                    continuing_cover = brain.action in {"cover", "retreat", "pin", "reload"}
+                if continuing_cover:
+                    actor.state, goal = "retreat", brain.action_goal
+                elif holding:
+                    actor.state = "combat_guard"
+                    goal = brain.search_cover
+                    if goal is None or math.dist(actor.xy, goal) <= 0.35 or (brain.goal == goal and brain.route_failed):
+                        goal = brain.search_cover = None
+                    self._face(actor, point)
+                    if goal is None:
+                        actor.facing += math.sin(time * 1.8 + brain.waypoint) * 0.6
+                else:
+                    if confirmed:
+                        intent.move_multiplier = 1.3
+                    if brain.next_sweep_at and (investigating or time >= brain.next_sweep_at):
+                        brain.cue = None
+                        brain.next_sweep_at = 0.0
+                    goal = self._search(actor, brain, (actor.state, point), time,
+                                        sound_only=sound_only, confirmed=confirmed)
+                if not continuing_cover and not holding and not brain.search_points and time >= brain.scan_until:
+                    if sound_only:
+                        brain.checked_sound_at = memory.sound_at
+                        if brain.sound_response != "out_of_range":
+                            brain.sound_response = "checked"
+                            brain.sound_response_at = time
+                    if confirmed:
+                        brain.next_sweep_at = time + RESEARCH_INTERVAL_SECONDS
+                        brain.sweep_pass += 1
+                        actor.state = "combat_guard"
+                        brain.search_cover = self.cover_finder.choose(actor, point)
+                        goal = brain.search_cover
+                        self._face(actor, point)
+                    else:
+                        actor.state, goal = self._patrol(actor, brain)
+                elif not continuing_cover and (brain.suppression >= 0.55 or actor.hurt_until > time or actor.hp < 20
+                      or (brain.action in {"cover", "pin", "retreat"} and time < brain.action_until)):
+                    self._combat_action(actor, brain, actors, point, time)
+                    if brain.action in {"cover", "retreat", "pin"}:
+                        actor.state, goal = "retreat", brain.action_goal
+            elif looking_for_sound:
+                actor.state, goal = "idle", None
+            else:
+                brain.cue = None
+                brain.search_target = None
+                brain.search_cover = None
+                brain.peek_home = None
+                brain.incoming = None
+                memory.last_seen = memory.reported = None
+                self._set_role(brain, "")
+                actor.state, goal = self._patrol(actor, brain)
+            if actor.state == "retreat" and not memory.visible:
+                watch_point = incoming if incoming is not None else memory.last_sound if fresh_sound and not tracking else threat
+                if watch_point is not None:
+                    self._face(actor, watch_point)
+            weapon = actor.weapon
+            if weapon and not weapon.chambered and not weapon.reloading:
+                moving_to_cover = (actor.state == "retreat" and brain.action == "cover" and goal is not None
+                                   and math.dist(actor.xy, goal) > 0.3)
+                intent.reload = not moving_to_cover and (weapon.reserve > 0 or weapon.stage >= 2)
+            if actor.state == "retreat" and brain.action == "cover" and goal is not None and math.dist(actor.xy, goal) <= 0.3:
+                goal = None
+            approximate = actor.state not in {"combat", "retreat", "combat_guard"} and goal not in self.exits
+            if goal == brain.search_cover:
+                approximate = False
+            if brain.cue is not None and brain.cue[1] == memory.last_sound:
+                approximate = False
+            budget = self._move(actor, brain, intent, goal, time, budget,
+                                face=not memory.visible and actor.state not in {"retreat", "combat_guard"}
+                                and brain.action != "peek",
+                                approximate=approximate)
+            if (actor.state == "retreat" and memory.visible and any(intent.direction)
+                    and brain.action in {"cover", "retreat"} and brain.suppression < 0.85
+                    and weapon is not None and weapon.chambered and not weapon.reloading
+                    and time >= brain.fire_at):
+                intent.retreat_fire = True
+            intents[actor.id] = intent
+        return intents
