@@ -6,12 +6,14 @@ import math
 from .cover import CoverFinder
 from .door_traffic import DoorTraffic
 from .geometry import Rect
-from .indoor_search import IndoorSweep, SCAN_INTERVAL, SCAN_SECONDS
+from .indoor_search import IndoorSweep, MAX_LOOK_OFFSET, SCAN_INTERVAL, SCAN_SECONDS
 from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
 
 
 COMBAT_ALERT_SECONDS = 330
 RESEARCH_INTERVAL_SECONDS = 24
+SEARCH_LOOK_UPDATE_S = 0.45
+SEARCH_TURN_RADIANS_PER_S = math.radians(200)
 
 
 @dataclass
@@ -69,6 +71,8 @@ class Brain:
     indoor_look_offset: float = 0.0
     indoor_look_until: float = 0.0
     indoor_scan_at: float = 0.0
+    indoor_travel_look: float = 0.0
+    indoor_travel_look_at: float = 0.0
     sound_response: str = ""
     sound_response_at: float = -1000.0
     far_at: float = 0.0
@@ -389,6 +393,7 @@ class EnemyAI:
             brain.indoor_blocked.clear()
             brain.indoor_look_until = 0.0
             brain.indoor_scan_at = time
+            brain.indoor_travel_look_at = time
 
         target = brain.indoor_target
         previous_room = area.rooms.get(target)
@@ -414,9 +419,6 @@ class EnemyAI:
                     brain.indoor_look_from, brain.indoor_look_until = actor.facing, time + SCAN_SECONDS
                     brain.indoor_scan_at = time + SCAN_INTERVAL
                     return None, False
-                if time >= brain.indoor_scan_at:
-                    sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
-                    brain.indoor_scan_at = time + SCAN_INTERVAL
                 return target, False
             sweep.claims.pop(actor.id, None)
             brain.indoor_target = None
@@ -431,8 +433,25 @@ class EnemyAI:
                                             candidate), default=None)
         if target is not None:
             brain.indoor_target = target
+            brain.indoor_travel_look_at = time
             sweep.claims[actor.id] = target, time + 1
         return target, not remaining
+
+    def _look_while_searching(self, actor, brain, intent, time):
+        sweep = brain.indoor
+        heading = math.atan2(intent.direction[1], intent.direction[0])
+        if (time >= brain.indoor_travel_look_at
+                or abs(math.remainder(brain.indoor_travel_look - heading, math.tau)) > MAX_LOOK_OFFSET):
+            room = sweep.area.rooms[brain.indoor_target]
+            brain.indoor_travel_look = heading + sweep.look_offset(actor.xy, heading, room, self.world.geometry)
+            brain.indoor_travel_look_at = time + SEARCH_LOOK_UPDATE_S
+        # 경로가 정한 이동 방향과 별개로 시선을 짧게 유지하며 부드럽게 돌린다.
+        difference = math.remainder(brain.indoor_travel_look - actor.facing, math.tau)
+        step = SEARCH_TURN_RADIANS_PER_S * intent.step_dt
+        actor.facing += max(-step, min(step, difference))
+        if time >= brain.indoor_scan_at:
+            sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
+            brain.indoor_scan_at = time + SCAN_INTERVAL
 
     def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False):
         incident = self.incidents.get(brain.incident)
@@ -791,10 +810,13 @@ class EnemyAI:
                 approximate = False
             if brain.cue is not None and brain.cue[1] == memory.last_sound:
                 approximate = False
+            moving_sweep = actor.state == "search" and goal is not None and goal == brain.indoor_target
             budget = self._move(actor, brain, intent, goal, time, budget,
-                                face=not memory.visible and actor.state not in {"retreat", "combat_guard"}
+                                face=not moving_sweep and not memory.visible and actor.state not in {"retreat", "combat_guard"}
                                 and brain.action != "peek",
                                 approximate=approximate)
+            if moving_sweep and any(intent.direction):
+                self._look_while_searching(actor, brain, intent, time)
             if (actor.state == "retreat" and memory.visible and any(intent.direction)
                     and brain.action in {"cover", "retreat"} and brain.suppression < 0.85
                     and weapon is not None and weapon.chambered and not weapon.reloading
