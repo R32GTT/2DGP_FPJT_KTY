@@ -6,9 +6,10 @@ import math
 from .geometry import Rect
 
 
-SAMPLE_M = 2.4
+SAMPLE_M = 1.8
 SCAN_RANGE_M = 8.0
-SCAN_SECONDS = 0.85
+DETAIL_SCAN_RANGE_M = 1.35
+SCAN_HOLD_S = 0.18
 SCAN_INTERVAL = 0.2
 SCAN_HALF_CONE = math.radians(45)
 SCAN_CONE_COS = math.cos(SCAN_HALF_CONE)
@@ -21,6 +22,7 @@ class SearchArea:
     floors: tuple[Rect, ...]
     points: tuple[tuple[float, float], ...]
     rooms: dict[tuple[float, float], int]
+    details: frozenset[tuple[float, float]] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,17 @@ def _assign_rooms(world, points):
     return rooms
 
 
+def _detail_points(navigation, points):
+    def blocked(point, dx, dy):
+        return not navigation.clear(point, (point[0] + dx, point[1] + dy), ignore_doors="all")
+
+    # 서로 다른 축으로 막힌 표본은 멀리서 훑어도 확인 처리하지 않는다.
+    reach = SAMPLE_M
+    return frozenset(point for point in points
+                     if (blocked(point, reach, 0) or blocked(point, -reach, 0))
+                     and (blocked(point, 0, reach) or blocked(point, 0, -reach)))
+
+
 def build_search_areas(world):
     areas = dict(world.data.get("search_areas", {}))
     for facility in world.facilities:
@@ -95,7 +108,8 @@ def build_search_areas(world):
                     if world.navigation.walkable(point):
                         points.add(point)
         if points:
-            result.append(SearchArea(key, floors, tuple(sorted(points)), _assign_rooms(world, points)))
+            result.append(SearchArea(key, floors, tuple(sorted(points)), _assign_rooms(world, points),
+                                     _detail_points(world.navigation, points)))
     return tuple(result)
 
 
@@ -111,30 +125,33 @@ class IndoorSweep:
     regroup_until: float | None = None
     regroup_done: bool = False
 
-    def scan_forward(self, xy, facing, geometry):
+    def scan_forward(self, xy, facing, geometry, *, stationary=False):
         forward_x, forward_y = math.cos(facing), math.sin(facing)
         for point in self.area.points:
             if point in self.checked:
                 continue
             dx, dy = point[0] - xy[0], point[1] - xy[1]
             distance = math.hypot(dx, dy)
-            if (distance <= SCAN_RANGE_M and (distance <= 0.075
+            if point in self.area.details and (not stationary or distance > DETAIL_SCAN_RANGE_M):
+                continue
+            if (distance <= SCAN_RANGE_M and (distance <= (0.15 if stationary else 0.075)
                     or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS)
                     and geometry.raycast(xy, point, category="sight") is None):
                 self.checked.add(point)
 
     def look(self, xy, facing, room, geometry):
         samples = {point: 2 if self.area.rooms[point] == room else 1
-                   for point in self.area.points if point not in self.checked}
-        return choose_look(xy, facing, geometry, samples)
+                   for point in self.area.points if point not in self.checked
+                   and (point not in self.area.details or math.dist(xy, point) <= DETAIL_SCAN_RANGE_M)}
+        return choose_look(xy, facing, geometry, samples, max_offset=math.pi)
 
-    @staticmethod
-    def observation_point(origin, candidates, geometry):
+    def observation_point(self, origin, candidates, geometry):
         nearby = sorted(candidates, key=lambda point: (math.dist(origin, point), point))[:8]
 
         def score(point):
             # 어느 지점에 서야 가구나 벽 뒤의 미확인 공간이 더 많이 드러나는지 비교한다.
-            visible = sum(math.dist(point, other) <= SCAN_RANGE_M
+            visible = sum(math.dist(point, other) <=
+                          (DETAIL_SCAN_RANGE_M if other in self.area.details else SCAN_RANGE_M)
                           and geometry.raycast(point, other, category="sight") is None for other in candidates)
             distance = math.dist(origin, point)
             return visible - distance / SAMPLE_M, -distance, point
