@@ -158,6 +158,12 @@ class EnemyAI:
         if math.hypot(dx, dy) > 0.05:
             actor.facing = math.atan2(dy, dx)
 
+    @staticmethod
+    def _turn_toward(current, desired, dt):
+        difference = math.remainder(desired - current, math.tau)
+        step = SEARCH_TURN_RADIANS_PER_S * dt
+        return current + max(-step, min(step, difference))
+
     def _report_sighting(self, actor, brain, actors, time):
         brain.radio_at = time + 4
         point = tuple(round(axis / 4) * 4 for axis in brain.memory.last_seen)
@@ -446,9 +452,7 @@ class EnemyAI:
             brain.indoor_travel_look = heading + sweep.look_offset(actor.xy, heading, room, self.world.geometry)
             brain.indoor_travel_look_at = time + SEARCH_LOOK_UPDATE_S
         # 경로가 정한 이동 방향과 별개로 시선을 짧게 유지하며 부드럽게 돌린다.
-        difference = math.remainder(brain.indoor_travel_look - actor.facing, math.tau)
-        step = SEARCH_TURN_RADIANS_PER_S * intent.step_dt
-        actor.facing += max(-step, min(step, difference))
+        actor.facing = self._turn_toward(actor.facing, brain.indoor_travel_look, intent.step_dt)
         if time >= brain.indoor_scan_at:
             sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
             brain.indoor_scan_at = time + SCAN_INTERVAL
@@ -635,6 +639,7 @@ class EnemyAI:
         intents, budget = {}, 1
         self._assign_roles(actors, time)
         self.near_count = 0
+        previous_facing = {actor.id: actor.facing for actor in actors}
         for actor in sorted(actors, key=lambda actor: math.dist(actor.xy, player.xy)):
             if actor.hp <= 0:
                 continue
@@ -675,6 +680,7 @@ class EnemyAI:
                 if not memory.visible and (fresh_incoming or fresh_sound):
                     look = incoming if fresh_incoming else memory.last_sound
                     self._face(actor, look)
+                    actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60)
                     observe(actor, player, self.world.geometry, memory, time)
                 if memory.visible and not was_visible:
                     brain.contact_at = time
@@ -783,6 +789,7 @@ class EnemyAI:
                         actor.state, goal = "retreat", brain.action_goal
             elif looking_for_sound:
                 actor.state, goal = "idle", None
+                self._face(actor, memory.last_sound)
             else:
                 brain.cue = None
                 brain.search_target = None
@@ -823,5 +830,9 @@ class EnemyAI:
                     and time >= brain.fire_at):
                 intent.retreat_fire = True
             intents[actor.id] = intent
+        for actor in actors:
+            if actor.id in intents and not self.brains[actor.id].memory.visible:
+                # 순찰·수색·경계 전환 때도 새 목표 방향으로 즉시 순간 회전하지 않는다.
+                actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60)
         self.door_traffic.update(self.world, actors, self.brains, intents, time)
         return intents
