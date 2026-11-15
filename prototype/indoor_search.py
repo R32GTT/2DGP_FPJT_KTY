@@ -1,5 +1,6 @@
 """실내 수색은 맵의 걸을 수 있는 표본점과 실제 시야로 진행한다."""
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 import math
 
@@ -21,6 +22,7 @@ class SearchArea:
     floors: tuple[Rect, ...]
     points: tuple[tuple[float, float], ...]
     rooms: dict[tuple[float, float], int]
+    room_points: dict[int, tuple[tuple[float, float], ...]]
     details: frozenset[tuple[float, float]] = frozenset()
 
 
@@ -107,8 +109,14 @@ def build_search_areas(world):
                     if world.navigation.walkable(point):
                         points.add(point)
         if points:
-            result.append(SearchArea(key, floors, tuple(sorted(points)), _assign_rooms(world, points),
-                                     _detail_points(world.navigation, points)))
+            ordered = tuple(sorted(points))
+            rooms = _assign_rooms(world, points)
+            by_room = defaultdict(list)
+            for point in ordered:
+                by_room[rooms[point]].append(point)
+            result.append(SearchArea(key, floors, ordered, rooms,
+                                     {room: tuple(samples) for room, samples in by_room.items()},
+                                     _detail_points(world.navigation, ordered)))
     return tuple(result)
 
 
@@ -124,9 +132,9 @@ class IndoorSweep:
     regroup_until: float | None = None
     regroup_done: bool = False
 
-    def scan_forward(self, xy, facing, geometry, *, stationary=False):
+    def scan_forward(self, xy, facing, room, geometry, *, stationary=False):
         forward_x, forward_y = math.cos(facing), math.sin(facing)
-        for point in self.area.points:
+        for point in self.area.room_points[room]:
             if point in self.checked:
                 continue
             dx, dy = point[0] - xy[0], point[1] - xy[1]
@@ -139,20 +147,30 @@ class IndoorSweep:
                 self.checked.add(point)
 
     def look(self, xy, facing, room, geometry):
-        samples = {point: 2 if self.area.rooms[point] == room else 1
-                   for point in self.area.points if point not in self.checked
+        samples = {point: 1 for point in self.area.room_points[room] if point not in self.checked
                    and (point not in self.area.details or math.dist(xy, point) <= DETAIL_SCAN_RANGE_M)}
         return choose_look(xy, facing, geometry, samples, max_offset=math.pi)
 
-    def observation_point(self, origin, candidates, geometry):
-        nearby = sorted(candidates, key=lambda point: (math.dist(origin, point), point))[:8]
+    def observation_point(self, origin, heading, candidates, navigation):
+        forward_x, forward_y = math.cos(heading), math.sin(heading)
+
+        def travel_cost(point):
+            dx, dy = point[0] - origin[0], point[1] - origin[1]
+            # 실제로 확인할 표본이 남아 있다면 진행 방향 뒤쪽도 후보로 둔다.
+            return math.hypot(dx, dy) + max(0, -(dx * forward_x + dy * forward_y))
+
+        nearby = sorted(candidates, key=lambda point: (travel_cost(point), point))[:6]
 
         def score(point):
             # 어느 지점에 서야 가구나 벽 뒤의 미확인 공간이 더 많이 드러나는지 비교한다.
             visible = sum(math.dist(point, other) <=
                           (DETAIL_SCAN_RANGE_M if other in self.area.details else SCAN_RANGE_M)
-                          and geometry.raycast(point, other, category="sight") is None for other in candidates)
-            distance = math.dist(origin, point)
-            return visible - distance / SAMPLE_M, -distance, point
+                          and navigation.geometry.raycast(point, other, category="sight") is None
+                          for other in candidates)
+            # 우회 경로는 공용 경로 탐색에서 계산한다. 후보 평가에는 직행 여부만 사용한다.
+            cost = travel_cost(point)
+            if not navigation.clear(origin, point):
+                cost += 2 * SAMPLE_M
+            return visible - cost / SAMPLE_M, -cost, point
 
         return max(nearby, key=score)
