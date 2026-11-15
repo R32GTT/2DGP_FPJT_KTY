@@ -1,4 +1,6 @@
-"""확인된 시설 공격 보고를 받아 인접 주둔지의 실병력을 출동시킨다."""
+"""확인된 위협 보고를 받아 인접 주둔지의 실병력을 출동시킨다."""
+
+import math
 
 from .clock import TRANSFER, schedule
 from .models import Operation, stock
@@ -11,17 +13,29 @@ def _working(state, region, capability):
                for key in region.facility_ids)
 
 
-def dispatch_response(state, facility_id):
+def dispatch_response(state, facility_id, *, report_xy=None, sighting=False):
     target = state.facilities[facility_id]
     region = state.regions[target.region_id]
-    if region.owner != "enemy" or not _working(state, region, "command"):
-        return "no_command", None
-    if not _working(state, region, "communication"):
-        return "no_signal", None
+    command = region.owner == "enemy" and _working(state, region, "command")
+    signal = _working(state, region, "communication")
     pending = next((op for op in state.operations.values() if op.kind == "qrf"
-                    and op.destination_id == facility_id and op.phase not in TERMINAL_PHASES), None)
+                    and state.facilities[op.destination_id].region_id == region.id
+                    and op.phase not in TERMINAL_PHASES), None)
     if pending is not None:
+        if sighting and command and signal and pending.phase in {"loading", "outbound"}:
+            pending.report_xy = report_xy
         return "already_dispatched", pending.id
+    if not command:
+        return "no_command", None
+    if not signal:
+        return "no_signal", None
+    if sighting:
+        # 목격 위치에서 가까운 아군 시설을 도로 이동의 집결점으로 정한다.
+        def rally_distance(key):
+            point = state.nodes[state.facilities[key].node_id].position
+            return math.dist(report_xy, (point.x, point.y)), key
+
+        target = state.facilities[min(region.facility_ids, key=rally_distance)]
 
     candidates = []
     for origin in state.facilities.values():
@@ -44,8 +58,9 @@ def dispatch_response(state, facility_id):
     if not candidates:
         return "no_squad", None
     _, _, origin_id, unit_id, route = min(candidates)
-    operation = Operation(state.new_id(), "확인된 시설 공격 보고", "qrf", origin_id, facility_id,
-                          route[0], route[-1], [], [unit_id], state.world_time, route=route)
+    reason = "순찰병의 확인된 접촉 보고" if sighting else "확인된 시설 공격 보고"
+    operation = Operation(state.new_id(), reason, "qrf", origin_id, target.id, route[0], route[-1],
+                          [], [unit_id], state.world_time, route=route, report_xy=report_xy)
     reserve(state, operation, stock())
     schedule(state, state.world_time + 5, "depart", priority=TRANSFER, operation_id=operation.id)
     return "ordered", operation.id

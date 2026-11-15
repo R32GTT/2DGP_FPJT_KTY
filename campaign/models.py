@@ -138,6 +138,7 @@ class Operation:
     departed_at: int | None = None
     delivered_at: int | None = None
     completed_at: int | None = None
+    report_xy: list[float] | None = None
 
 
 @dataclass(order=True)
@@ -283,6 +284,10 @@ def validate_state(state: CampaignState) -> None:
         require(operation.kind in {"supply", "export", "qrf"}, "잘못된 작전 유형")
         require(operation.kind != "qrf" or (not operation.vehicle_ids and bool(operation.unit_ids)),
                 "QRF 편성 오류")
+        if operation.report_xy is not None:
+            require(operation.kind == "qrf" and len(operation.report_xy) == 2
+                    and all(type(axis) in {int, float} and math.isfinite(axis) for axis in operation.report_xy),
+                    "잘못된 위협 보고 위치")
         require(operation.phase in {"loading", "outbound", "unloading", "turnaround", "returning",
                                     "completed", "cancelled", "stranded", "destroyed"}, "잘못된 작전 상태")
         require(operation.origin_id in state.facilities or operation.origin_id == state.source.id,

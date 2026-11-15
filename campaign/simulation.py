@@ -168,10 +168,22 @@ class Simulation:
                     or sum(state.units[uid].soldiers for uid in operation.unit_ids) < len(vehicles)):
                 raise ValueError("모든 운행 차량에 대체 운전자가 필요함")
             operation.waiting_reason = ""
-        elif kind == "report_facility_attack":
+        elif kind in {"report_facility_attack", "report_contact"}:
             facility_id = action["facility_id"]
-            status, operation_id = dispatch_response(state, facility_id)
-            state.record("qrf_report", facility_id=facility_id, status=status, operation_id=operation_id)
+            point = action.get("position")
+            sighting = kind == "report_contact"
+            if (sighting or point is not None) and (not isinstance(point, (list, tuple)) or len(point) != 2
+                    or any(type(axis) not in {int, float} or not math.isfinite(axis) for axis in point)):
+                raise ValueError("위협 보고에는 유효한 확인 좌표가 필요함")
+            if sighting:
+                unit = state.units[action["unit_id"]]
+                if (unit.faction != "enemy" or not unit.soldiers
+                        or unit.node_id != state.facilities[facility_id].node_id):
+                    raise ValueError("보고 병력이 해당 시설에 배치되어 있지 않음")
+            position_report = list(point) if point is not None else None
+            status, operation_id = dispatch_response(state, facility_id, report_xy=position_report, sighting=sighting)
+            state.record("qrf_report", facility_id=facility_id, status=status,
+                         operation_id=operation_id, position=position_report)
         elif kind == "damage_facility":
             damage = action["damage"]
             if type(damage) is not int or damage < 0:
