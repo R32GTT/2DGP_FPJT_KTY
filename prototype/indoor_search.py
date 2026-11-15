@@ -107,6 +107,7 @@ class IndoorSweep:
     checked: set = field(default_factory=set)
     claims: dict = field(default_factory=dict)
     regroup_slots: dict[str, tuple[float, float]] = field(default_factory=dict)
+    regroup_swaps: set[tuple[str, str]] = field(default_factory=set)
     regroup_until: float | None = None
     regroup_done: bool = False
 
@@ -126,3 +127,16 @@ class IndoorSweep:
         samples = {point: 2 if self.area.rooms[point] == room else 1
                    for point in self.area.points if point not in self.checked}
         return choose_look(xy, facing, geometry, samples)
+
+    @staticmethod
+    def observation_point(origin, candidates, geometry):
+        nearby = sorted(candidates, key=lambda point: (math.dist(origin, point), point))[:8]
+
+        def score(point):
+            # 어느 지점에 서야 가구나 벽 뒤의 미확인 공간이 더 많이 드러나는지 비교한다.
+            visible = sum(math.dist(point, other) <= SCAN_RANGE_M
+                          and geometry.raycast(point, other, category="sight") is None for other in candidates)
+            distance = math.dist(origin, point)
+            return visible - distance / SAMPLE_M, -distance, point
+
+        return max(nearby, key=score)

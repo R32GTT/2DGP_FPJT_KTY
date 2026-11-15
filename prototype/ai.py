@@ -456,6 +456,9 @@ class EnemyAI:
                                             math.dist(actor.xy, candidate) + 0.3 * math.dist(point, candidate),
                                             candidate), default=None)
         if target is not None:
+            room = area.rooms[target]
+            points = [candidate for candidate in remaining if area.rooms[candidate] == room]
+            target = sweep.observation_point(actor.xy, points, self.world.geometry)
             brain.indoor_target = target
             brain.indoor_travel_look_at = time
             sweep.claims[actor.id] = target, time + 1
@@ -537,6 +540,7 @@ class EnemyAI:
                             sweep.regroup_slots[actor.id] = slot
                             slots.remove(slot)
                             break
+            self._unblock_regroup(sweep, members)
             arrived = all(actor.id not in sweep.regroup_slots
                           or math.dist(actor.xy, sweep.regroup_slots[actor.id]) <= REGROUP_ARRIVAL_M for actor in members)
             if not arrived:
@@ -555,6 +559,20 @@ class EnemyAI:
                     brain.indoor = brain.indoor_target = None
                     brain.indoor_look_until = 0.0
                     self._set_role(brain, "")
+
+    def _unblock_regroup(self, sweep, members):
+        present = {actor.id: actor for actor in members}
+        for actor in members:
+            blocker = present.get(self.brains[actor.id].blocked_by)
+            if blocker is None or actor.id not in sweep.regroup_slots or blocker.id not in sweep.regroup_slots:
+                continue
+            pair = tuple(sorted((actor.id, blocker.id)))
+            goal, occupied = sweep.regroup_slots[actor.id], sweep.regroup_slots[blocker.id]
+            if (pair not in sweep.regroup_swaps and math.dist(blocker.xy, occupied) <= REGROUP_ARRIVAL_M
+                    and math.dist(actor.xy, occupied) + 0.25 < math.dist(actor.xy, goal)):
+                # 먼저 도착한 NPC가 통로를 막으면 빈 쪽으로 움직이도록 자리를 맞바꾼다.
+                sweep.regroup_slots[actor.id], sweep.regroup_slots[blocker.id] = occupied, goal
+                sweep.regroup_swaps.add(pair)
 
     @staticmethod
     def _rally_slots(nav, center):
