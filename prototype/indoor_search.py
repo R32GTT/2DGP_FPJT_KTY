@@ -16,6 +16,29 @@ class SearchArea:
     id: str
     floors: tuple[Rect, ...]
     points: tuple[tuple[float, float], ...]
+    rooms: dict[tuple[float, float], int]
+
+
+def _assign_rooms(world, points):
+    # 문을 열어도 이미 나눈 수색 구역의 경계는 유지한다.
+    doors = [item.rect for item in world.geometry.objects.values() if item.kind == "door"]
+    remaining = set(points)
+    rooms = {}
+    room = 0
+    while remaining:
+        start = min(remaining)
+        remaining.remove(start)
+        pending = [start]
+        while pending:
+            point = pending.pop()
+            rooms[point] = room
+            connected = [other for other in remaining if math.dist(point, other) <= SAMPLE_M * 1.5
+                         and world.navigation.clear(point, other, ignore_doors=True)
+                         and not any(door.segment_entry(point, other) is not None for door in doors)]
+            remaining.difference_update(connected)
+            pending.extend(connected)
+        room += 1
+    return rooms
 
 
 def build_search_areas(world):
@@ -38,7 +61,7 @@ def build_search_areas(world):
                     if world.navigation.walkable(point):
                         points.add(point)
         if points:
-            result.append(SearchArea(key, floors, tuple(sorted(points))))
+            result.append(SearchArea(key, floors, tuple(sorted(points)), _assign_rooms(world, points)))
     return tuple(result)
 
 

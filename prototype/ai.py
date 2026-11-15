@@ -386,6 +386,7 @@ class EnemyAI:
             brain.scan_until = 0.0
 
         target = brain.indoor_target
+        previous_room = area.rooms.get(target)
         if target is not None:
             if brain.scan_until:
                 if time < brain.scan_until:
@@ -407,9 +408,11 @@ class EnemyAI:
 
         remaining = [candidate for candidate in area.points if candidate not in sweep.checked
                      and brain.indoor_blocked.get(candidate) != self.world.revision]
-        claimed = {target for owner, (target, until) in sweep.claims.items() if owner != actor.id and time < until}
-        target = min((candidate for candidate in remaining if candidate not in claimed),
-                     key=lambda candidate: (math.dist(actor.xy, candidate) + 0.3 * math.dist(point, candidate),
+        claimed_rooms = {area.rooms[target] for owner, (target, until) in sweep.claims.items()
+                         if owner != actor.id and time < until}
+        target = min((candidate for candidate in remaining if area.rooms[candidate] not in claimed_rooms),
+                     key=lambda candidate: (area.rooms[candidate] != previous_room,
+                                            math.dist(actor.xy, candidate) + 0.3 * math.dist(point, candidate),
                                             candidate), default=None)
         if target is not None:
             brain.indoor_target = target
