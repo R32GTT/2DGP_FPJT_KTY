@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import math
 
 from .cover import CoverFinder
+from .door_traffic import DoorTraffic
 from .geometry import Rect
 from .indoor_search import IndoorSweep, SCAN_SECONDS
 from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
@@ -29,6 +30,7 @@ class Brain:
     progress_at: float = 0.0
     pending_goal: tuple | None = None
     blocked_by: str = ""
+    door_wait: str = ""
     fire_at: float = 0.0
     fired_at: float = -1000.0
     burst: int = 0
@@ -104,6 +106,7 @@ class EnemyAI:
         self.assign_at = 0.0
         self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.01)
                        for index, (actor, patrol) in enumerate(zip(actors, patrols))}
+        self.door_traffic = DoorTraffic()
 
     def receive(self, actors, events):
         noises = [event for event in events if event.kind == "noise"]
@@ -585,6 +588,7 @@ class EnemyAI:
         self.brains = {key: Brain(brain.patrol) for key, brain in self.brains.items()}
         self.incidents.clear()
         self.assign_at = 0.0
+        self.door_traffic = DoorTraffic()
 
     def update(self, actors, player, time):
         intents, budget = {}, 1
@@ -775,4 +779,5 @@ class EnemyAI:
                     and time >= brain.fire_at):
                 intent.retreat_fire = True
             intents[actor.id] = intent
+        self.door_traffic.update(self.world, actors, self.brains, intents, time)
         return intents

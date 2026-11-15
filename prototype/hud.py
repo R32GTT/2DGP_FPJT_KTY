@@ -84,6 +84,8 @@ class HUD:
             elif brain.pending_goal is not None:
                 x, y = brain.pending_goal
                 route = f"{x:.1f}, {y:.1f} · 경로 계산 대기"
+            elif brain.door_wait:
+                route = f"문 통과 차례 대기 · {brain.door_wait}"
             elif brain.blocked_by:
                 route = f"병력 통과 대기 · {brain.blocked_by}"
             elif brain.goal is not None:
