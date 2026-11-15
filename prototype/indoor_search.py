@@ -10,7 +10,8 @@ SAMPLE_M = 2.4
 SCAN_RANGE_M = 8.0
 SCAN_SECONDS = 0.45
 SCAN_INTERVAL = 0.2
-SCAN_CONE_COS = math.cos(math.radians(45))
+SCAN_HALF_CONE = math.radians(45)
+SCAN_CONE_COS = math.cos(SCAN_HALF_CONE)
 MAX_LOOK_OFFSET = math.radians(85)
 
 
@@ -20,6 +21,36 @@ class SearchArea:
     floors: tuple[Rect, ...]
     points: tuple[tuple[float, float], ...]
     rooms: dict[tuple[float, float], int]
+
+
+@dataclass(frozen=True)
+class LookChoice:
+    point: tuple[float, float]
+    offset: float
+    visible_count: int
+
+
+def choose_look(xy, facing, geometry, samples, *, max_offset=MAX_LOOK_OFFSET):
+    visible = []
+    for point, weight in samples.items():
+        dx, dy = point[0] - xy[0], point[1] - xy[1]
+        distance = math.hypot(dx, dy)
+        if not 0.15 <= distance <= SCAN_RANGE_M:
+            continue
+        offset = math.remainder(math.atan2(dy, dx) - facing, math.tau)
+        if (abs(offset) <= max_offset + SCAN_HALF_CONE
+                and geometry.raycast(xy, point, category="sight") is None):
+            visible.append((point, offset, distance, weight))
+    best = None
+    for point, offset, distance, _ in visible:
+        if abs(offset) > max_offset:
+            continue
+        seen = [row for row in visible if abs(math.remainder(row[1] - offset, math.tau)) <= SCAN_HALF_CONE]
+        # 가까운 표본 하나보다 시야로 확인할 수 있는 공간 전체를 비교한다.
+        score = (sum(row[3] for row in seen), sum(row[2] for row in seen), -abs(offset), distance, point)
+        if best is None or score > best[0]:
+            best = score, LookChoice(point, offset, len(seen))
+    return best[1] if best else None
 
 
 def _assign_rooms(world, points):
@@ -87,19 +118,7 @@ class IndoorSweep:
                     and geometry.raycast(xy, point, category="sight") is None):
                 self.checked.add(point)
 
-    def look_offset(self, xy, facing, room, geometry):
-        candidates = []
-        for point in self.area.points:
-            if point in self.checked or self.area.rooms[point] != room:
-                continue
-            dx, dy = point[0] - xy[0], point[1] - xy[1]
-            distance = math.hypot(dx, dy)
-            if not 0 < distance <= SCAN_RANGE_M:
-                continue
-            offset = math.remainder(math.atan2(dy, dx) - facing, math.tau)
-            if abs(offset) <= MAX_LOOK_OFFSET:
-                candidates.append((distance, abs(offset), point, offset))
-        for _, _, point, offset in sorted(candidates):
-            if geometry.raycast(xy, point, category="sight") is None:
-                return offset
-        return 0.0
+    def look(self, xy, facing, room, geometry):
+        samples = {point: 2 if self.area.rooms[point] == room else 1
+                   for point in self.area.points if point not in self.checked}
+        return choose_look(xy, facing, geometry, samples)

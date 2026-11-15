@@ -6,7 +6,8 @@ import math
 from .cover import CoverFinder
 from .door_traffic import DoorTraffic
 from .geometry import Rect
-from .indoor_search import IndoorSweep, MAX_LOOK_OFFSET, SCAN_INTERVAL, SCAN_SECONDS
+from .indoor_search import (IndoorSweep, LookChoice, MAX_LOOK_OFFSET, SCAN_INTERVAL,
+                            SCAN_RANGE_M, SCAN_SECONDS, choose_look)
 from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
 
 
@@ -73,6 +74,12 @@ class Brain:
     indoor_scan_at: float = 0.0
     indoor_travel_look: float = 0.0
     indoor_travel_look_at: float = 0.0
+    indoor_focus: LookChoice | None = None
+    watch_point: tuple | None = None
+    watch_cue: tuple | None = None
+    watch_at: float = 0.0
+    look_point: tuple | None = None
+    look_reason: str = ""
     sound_response: str = ""
     sound_response_at: float = -1000.0
     far_at: float = 0.0
@@ -405,6 +412,7 @@ class EnemyAI:
         previous_room = area.rooms.get(target)
         if target is not None:
             if brain.indoor_look_until:
+                self._show_search_look(brain)
                 portion = min(1.0, 1 - (brain.indoor_look_until - time) / SCAN_SECONDS)
                 actor.facing = brain.indoor_look_from + brain.indoor_look_offset * portion
                 if time < brain.indoor_look_until:
@@ -421,11 +429,15 @@ class EnemyAI:
                 sweep.claims[actor.id] = target, time + 1
                 if math.dist(actor.xy, target) <= 0.25:
                     sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
-                    brain.indoor_look_offset = sweep.look_offset(actor.xy, actor.facing, previous_room, self.world.geometry)
-                    brain.indoor_look_from, brain.indoor_look_until = actor.facing, time + SCAN_SECONDS
-                    brain.indoor_scan_at = time + SCAN_INTERVAL
-                    return None, False
-                return target, False
+                    brain.indoor_focus = sweep.look(actor.xy, actor.facing, previous_room, self.world.geometry)
+                    if brain.indoor_focus is not None:
+                        self._show_search_look(brain)
+                        brain.indoor_look_offset = brain.indoor_focus.offset
+                        brain.indoor_look_from, brain.indoor_look_until = actor.facing, time + SCAN_SECONDS
+                        brain.indoor_scan_at = time + SCAN_INTERVAL
+                        return None, False
+                else:
+                    return target, False
             sweep.claims.pop(actor.id, None)
             brain.indoor_target = None
 
@@ -446,16 +458,56 @@ class EnemyAI:
     def _look_while_searching(self, actor, brain, intent, time):
         sweep = brain.indoor
         heading = math.atan2(intent.direction[1], intent.direction[0])
+        geometry = self.world.geometry
         if (time >= brain.indoor_travel_look_at
-                or abs(math.remainder(brain.indoor_travel_look - heading, math.tau)) > MAX_LOOK_OFFSET):
+                or abs(math.remainder(brain.indoor_travel_look - heading, math.tau)) > MAX_LOOK_OFFSET
+                or (brain.indoor_focus is not None
+                    and geometry.raycast(actor.xy, brain.indoor_focus.point, category="sight") is not None)):
             room = sweep.area.rooms[brain.indoor_target]
-            brain.indoor_travel_look = heading + sweep.look_offset(actor.xy, heading, room, self.world.geometry)
+            brain.indoor_focus = sweep.look(actor.xy, heading, room, geometry)
+            brain.indoor_travel_look = heading + (brain.indoor_focus.offset if brain.indoor_focus else 0)
             brain.indoor_travel_look_at = time + SEARCH_LOOK_UPDATE_S
+        self._show_search_look(brain)
         # 경로가 정한 이동 방향과 별개로 시선을 짧게 유지하며 부드럽게 돌린다.
         actor.facing = self._turn_toward(actor.facing, brain.indoor_travel_look, intent.step_dt)
         if time >= brain.indoor_scan_at:
-            sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
+            sweep.scan_forward(actor.xy, actor.facing, geometry)
             brain.indoor_scan_at = time + SCAN_INTERVAL
+
+    @staticmethod
+    def _show_search_look(brain):
+        if brain.indoor_focus is not None:
+            brain.look_point = brain.indoor_focus.point
+            brain.look_reason = f"미확인 {brain.indoor_focus.visible_count}곳"
+        else:
+            brain.look_reason = "진행 방향 확인"
+
+    def _watch_visible_space(self, actor, brain, cue, time):
+        geometry = self.world.geometry
+        if (math.dist(actor.xy, cue) > 0.05 and geometry.raycast(actor.xy, cue, category="sight") is None):
+            brain.look_point, brain.look_reason = cue, "보고 위치가 보임"
+            self._face(actor, cue)
+            return
+
+        if (brain.watch_cue != cue or time >= brain.watch_at or (brain.watch_point is not None
+                and geometry.raycast(actor.xy, brain.watch_point, category="sight") is not None)):
+            nav = self.world.navigation
+            x, y = actor.xy
+            radius = SCAN_RANGE_M
+            keys = nav.point_index.query(Rect(x - radius, y - radius, radius * 2, radius * 2))
+            samples = {nav.nodes[key]: 1 for key in keys}
+            area = self.world.indoor_search_area(actor.xy)
+            if area is not None:
+                samples.update({point: 1 for point in area.points})
+            choice = choose_look(actor.xy, actor.facing, geometry, samples, max_offset=math.pi)
+            brain.watch_point = choice.point if choice else None
+            brain.watch_cue, brain.watch_at = cue, time + SEARCH_LOOK_UPDATE_S
+
+        if brain.watch_point is not None:
+            brain.look_point, brain.look_reason = brain.watch_point, "열린 공간 경계"
+            self._face(actor, brain.watch_point)
+        else:
+            brain.look_reason = "보이는 경계 지점 없음"
 
     def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False):
         incident = self.incidents.get(brain.incident)
@@ -644,6 +696,7 @@ class EnemyAI:
             if actor.hp <= 0:
                 continue
             brain, intent = self.brains[actor.id], Intent()
+            brain.look_point, brain.look_reason = None, ""
             memory = brain.memory
             brain.suppression = max(0, brain.suppression - 0.2 * (time - brain.pressure_at))
             brain.pressure_at = time
@@ -749,9 +802,7 @@ class EnemyAI:
                     goal = brain.search_cover
                     if goal is None or math.dist(actor.xy, goal) <= 0.35 or (brain.goal == goal and brain.route_failed):
                         goal = brain.search_cover = None
-                    self._face(actor, point)
-                    if goal is None:
-                        actor.facing += math.sin(time * 1.8 + brain.waypoint) * 0.6
+                    self._watch_visible_space(actor, brain, point, time)
                 else:
                     if confirmed:
                         intent.move_multiplier = 1.3
@@ -779,7 +830,7 @@ class EnemyAI:
                         actor.state = "combat_guard"
                         brain.search_cover = self.cover_finder.choose(actor, point)
                         goal = brain.search_cover
-                        self._face(actor, point)
+                        self._watch_visible_space(actor, brain, point, time)
                     else:
                         actor.state, goal = self._patrol(actor, brain)
                 elif not continuing_cover and (brain.suppression >= 0.55 or actor.hurt_until > time or actor.hp < 20

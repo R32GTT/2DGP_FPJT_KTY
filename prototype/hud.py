@@ -107,6 +107,10 @@ class HUD:
             if brain.indoor is not None and actor.state in {"search", "combat_guard"}:
                 sweep = brain.indoor
                 sound = f"실내 수색 {len(sweep.checked)}/{len(sweep.area.points)} 지점 확인"
+            if brain.look_reason:
+                focus = brain.look_point
+                location = f"{focus[0]:.1f}, {focus[1]:.1f} · " if focus is not None else ""
+                sound = f"시선 {location}{brain.look_reason}"
             self.label(f"ai_sound/{index}", sound or "최근 총성 반응 없음", 13, (240, 187, 104))
         self.label("ai_hint", simulation.ai_hint, 13)
 
