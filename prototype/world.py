@@ -89,14 +89,20 @@ class World:
         return None
 
     def open_for_ai(self, actor, destination):
-        nearby = Rect(actor.position.x - 2, actor.position.y - 2, 4, 4)
-        for collider in self.collider_index.query(nearby):
-            center = (collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
-            if (collider.kind == "door" and collider.active and collider.ai_access
-                    and math.dist(actor.xy, center) < 1.6
-                    and collider.rect.expanded(actor.radius).segment_entry(actor.xy, destination) is not None):
-                collider.active = False
-                self.revision += 1
-                self.navigation.invalidate()
-                return collider
-        return None
+        # 현재 이동 구간의 첫 장애물만 확인한다. 문 가장자리에 접근해도 열 수 있다.
+        x, y = actor.xy
+        dx, dy = destination[0] - x, destination[1] - y
+        distance = math.hypot(dx, dy)
+        if distance > 1.2:
+            fraction = 1.2 / distance
+            destination = (x + dx * fraction, y + dy * fraction)
+        hit = self.geometry.raycast(actor.xy, destination, padding=actor.radius, category="movement")
+        if hit is None:
+            return None
+        collider = self.geometry.objects[hit[1]]
+        if collider.kind != "door" or not collider.ai_access:
+            return None
+        collider.active = False
+        self.revision += 1
+        self.navigation.invalidate()
+        return collider

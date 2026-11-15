@@ -417,6 +417,9 @@ class EnemyAI:
                 incident.claims[actor.id] = point, time + 0.65
             if not confirmed:
                 return point
+            # 수색 지점까지 확보한 경로는 다음 엄폐 후보를 계산해도 유지한다.
+            if brain.goal == point and brain.path and not brain.route_failed:
+                return point
             if brain.search_cover is not None:
                 cover = brain.search_cover
                 if (math.dist(actor.xy, cover) > 0.35
