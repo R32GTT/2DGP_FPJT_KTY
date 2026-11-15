@@ -75,7 +75,9 @@ class HUD:
             if time < brain.combat_alert_until:
                 state += f" · 경계 {math.ceil(brain.combat_alert_until - time)}초"
             route = "목표 없음"
-            if time < brain.scan_until:
+            if brain.indoor_scanning(time):
+                route = "스캔 마무리" if brain.indoor_look_angle is None else "바라보는 방향 확인"
+            elif time < brain.scan_until:
                 route = "주변 관찰"
             elif (actor.state == "retreat" and brain.action == "cover" and brain.action_goal is not None
                   and math.dist(actor.xy, brain.action_goal) <= 0.3):
