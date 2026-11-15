@@ -12,7 +12,8 @@ EXTERNAL_FRONT = "external_front"
 def incoming(state: CampaignState, destination_id: str) -> dict[str, int]:
     result = stock()
     for operation in state.operations.values():
-        if operation.destination_id != destination_id or operation.phase not in {"loading", "outbound", "unloading"}:
+        if (operation.kind not in {"supply", "export"} or operation.destination_id != destination_id
+                or operation.phase not in {"loading", "outbound", "unloading"}):
             continue
         cargo = (state.reservations[operation.id].cargo if operation.phase == "loading"
                  else operation.cargo)

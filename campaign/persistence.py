@@ -42,6 +42,7 @@ def deserialize_campaign(text: str) -> CampaignState:
                 or payload["save_version"] != SAVE_VERSION):
             raise CampaignSaveError("지원하지 않는 캠페인 저장 형식·버전")
         row = dict(payload["state"])
+        row.setdefault("repair_requests", {})
         for key, cls in (("roads", Road), ("regions", Region), ("facilities", Facility),
                          ("reservations", Reservation)):
             row[key] = {key: _construct(cls, value) for key, value in row[key].items()}

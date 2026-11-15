@@ -71,7 +71,7 @@ def set_route(state: CampaignState, operation: Operation, *, returning: bool = F
 
 
 def request_return(state: CampaignState, operation: Operation) -> None:
-    if operation.phase not in {"outbound", "unloading", "turnaround", "returning"}:
+    if operation.phase not in {"outbound", "unloading", "working", "turnaround", "returning"}:
         raise ValueError("귀환할 수 없는 작전 상태")
     operation.phase = "returning"
     operation.waiting_reason = ""

@@ -188,6 +188,7 @@ class CampaignState:
     initial_soldiers: int = 0
     initial_vehicle_ids: list[str] = field(default_factory=list)
     resource_priority: list[str] = field(default_factory=lambda: list(RESOURCE_TYPES))
+    repair_requests: dict[str, int] = field(default_factory=dict)
 
     def new_id(self) -> str:
         result = f"operation_{self.next_id}"
@@ -281,15 +282,16 @@ def validate_state(state: CampaignState) -> None:
         require(asset.node_id is not None or asset.operation_id is not None
                 or asset.position is not None, "자산 위치 누락")
     for operation in state.operations.values():
-        require(operation.kind in {"supply", "export", "qrf"}, "잘못된 작전 유형")
+        require(operation.kind in {"supply", "export", "qrf", "repair"}, "잘못된 작전 유형")
         require(operation.kind != "qrf" or (not operation.vehicle_ids and bool(operation.unit_ids)),
                 "QRF 편성 오류")
         if operation.report_xy is not None:
             require(operation.kind == "qrf" and len(operation.report_xy) == 2
                     and all(type(axis) in {int, float} and math.isfinite(axis) for axis in operation.report_xy),
                     "잘못된 위협 보고 위치")
-        require(operation.phase in {"loading", "outbound", "unloading", "turnaround", "returning",
+        require(operation.phase in {"loading", "outbound", "unloading", "working", "turnaround", "returning",
                                     "completed", "cancelled", "stranded", "destroyed"}, "잘못된 작전 상태")
+        require(operation.phase != "working" or operation.kind == "repair", "잘못된 복구 작업 상태")
         require(operation.origin_id in state.facilities or operation.origin_id == state.source.id,
                 "작전 출발지 누락")
         origin_node = (state.source.node_id if operation.origin_id == state.source.id
@@ -335,6 +337,8 @@ def validate_state(state: CampaignState) -> None:
         require(state.operations[key].phase == "loading"
                 and state.operations[key].origin_id == reservation.owner_id, "예약 상태 불일치")
         inventories.extend((reservation.cargo, reservation.provisions))
+    for facility_id, damage in state.repair_requests.items():
+        require(facility_id in state.facilities and type(damage) is int and 0 < damage <= 100, "잘못된 복구 요청")
     inventories.extend(vars(state.ledger).values())
     for inventory in inventories:
         require(set(inventory) == set(RESOURCE_TYPES), "잘못된 자원 종류")
@@ -351,7 +355,8 @@ def validate_state(state: CampaignState) -> None:
                 and event.sequence not in sequences, "잘못된 사건 순번")
         sequences.add(event.sequence)
         require(index == 0 or state.events[(index - 1) // 2] <= event, "사건 큐 순서 오류")
-        require(event.kind in {"planning", "consumption", "demand", "depart", "unload", "begin_return"},
+        require(event.kind in {"planning", "consumption", "demand", "depart", "unload", "begin_return",
+                               "repair_retry", "repair_work"},
                 "지원하지 않는 예정 사건")
-        if event.kind in {"depart", "unload", "begin_return"}:
+        if event.kind in {"depart", "unload", "begin_return", "repair_work"}:
             require(event.operation_id in state.operations, "예정 사건 작전 누락")

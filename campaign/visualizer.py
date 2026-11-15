@@ -18,7 +18,7 @@ from .viewmodel import world_clock
 from .viewer_actions import allowed_commands, build_action
 
 
-PHASES = {"loading": "집결·적재", "outbound": "운송 중", "unloading": "하역 중",
+PHASES = {"loading": "집결·적재", "outbound": "운송 중", "unloading": "하역 중", "working": "복구 작업",
           "turnaround": "회차 대기", "returning": "귀환 중", "completed": "종료",
           "cancelled": "취소", "stranded": "고립", "destroyed": "격파"}
 RESOURCES = {"supplies": "보급품", "ammunition": "탄약", "repair_parts": "수리자재"}

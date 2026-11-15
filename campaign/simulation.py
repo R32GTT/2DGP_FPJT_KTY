@@ -7,15 +7,17 @@ from . import clock
 from .logistics import plan_exports, plan_supplies
 from .models import CampaignState, Event
 from .qrf import dispatch_response
+from .repair import WORK_SECONDS, finish_repair, plan_repairs, queue_repairs
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
                         finish_response, finish_return, handover, owner, remove)
 from .routes import move_one_second, position, request_return, road_between, set_route
 
 
 class Simulation:
-    def __init__(self, state: CampaignState, *, departure_ready=None):
+    def __init__(self, state: CampaignState, *, departure_ready=None, repair_ready=None):
         self.state = state
         self.departure_ready = departure_ready
+        self.repair_ready = repair_ready
         self._moving = {op.id for op in state.operations.values()
                         if op.phase in {"outbound", "returning"}}
 
@@ -50,6 +52,11 @@ class Simulation:
                         finish_response(state, operation)
                     else:
                         request_return(state, operation)
+                elif operation.kind == "repair":
+                    operation.phase = "working"
+                    state.record("repair_started", operation_id=operation.id, facility_id=operation.destination_id)
+                    clock.schedule(state, state.world_time + WORK_SECONDS, "repair_work",
+                                   priority=clock.TRANSFER, operation_id=operation.id)
                 else:
                     operation.phase = "unloading"
                     state.record("arrived", operation_id=operation_id)
@@ -65,6 +72,9 @@ class Simulation:
             plan_supplies(state)
             plan_exports(state)
             clock.schedule(state, state.world_time + state.rules["planning_period_s"], "planning")
+        elif event.kind == "repair_retry":
+            plan_repairs(state)
+            queue_repairs(state)
         elif event.kind == "demand":
             for name, amount in state.demand.cargo.items():
                 state.demand.outstanding[name] += amount
@@ -82,7 +92,7 @@ class Simulation:
                 if operation.kind != "export":
                     destination = state.facilities[operation.destination_id]
                     invalid = (state.regions[destination.region_id].owner != "enemy"
-                               or (operation.kind != "qrf" and destination.damage == 100))
+                               or (operation.kind == "supply" and destination.damage == 100))
                 if operation.origin_id != state.source.id:
                     invalid |= origin.damage == 100 or state.regions[origin.region_id].owner != "enemy"
                 if invalid:
@@ -106,6 +116,14 @@ class Simulation:
                     clock.schedule(state, state.world_time + state.rules["turnaround_s"],
                                    "begin_return", priority=clock.TRANSFER, operation_id=operation.id)
                 else:
+                    request_return(state, operation)
+            elif event.kind == "repair_work" and operation.phase == "working":
+                if self.repair_ready is not None and not self.repair_ready(operation):
+                    operation.waiting_reason = "crew_in_combat"
+                    clock.schedule(state, state.world_time + 5, "repair_work",
+                                   priority=clock.TRANSFER, operation_id=operation.id)
+                else:
+                    finish_repair(state, operation)
                     request_return(state, operation)
             elif event.kind == "begin_return" and operation.phase == "turnaround":
                 request_return(state, operation)
@@ -193,8 +211,14 @@ class Simulation:
             if facility.damage == 100:
                 for operation in list(state.operations.values()):
                     if (operation.origin_id == facility.id
-                            or (operation.destination_id == facility.id and operation.kind != "qrf")):
+                            or (operation.destination_id == facility.id and operation.kind == "supply")):
                         cancel(state, operation.id)
+        elif kind == "report_facility_damage":
+            facility = state.facilities[action["facility_id"]]
+            if facility.damage and state.regions[facility.region_id].owner == "enemy":
+                state.repair_requests[facility.id] = facility.damage
+                state.record("repair_report", facility_id=facility.id, damage=facility.damage)
+                queue_repairs(state, delay=5)
         elif kind == "return_operation":
             operation = state.operations[action["operation_id"]]
             if operation.waiting_reason == "driver_down":
@@ -273,6 +297,10 @@ class Simulation:
                     operation.waiting_reason = "no_vehicle"
                     if not soldiers:
                         operation.completed_at = state.world_time
+                    self._moving.discard(operation.id)
+                elif operation.kind == "repair" and not soldiers:
+                    operation.phase = "stranded"
+                    operation.waiting_reason = "no_workers"
                     self._moving.discard(operation.id)
                 elif operation.waiting_reason == "driver_down" and soldiers < len(vehicles):
                     operation.phase = "stranded"
