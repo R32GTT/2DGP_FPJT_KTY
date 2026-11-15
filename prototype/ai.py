@@ -26,6 +26,13 @@ REGROUP_HOLD_S = 1.0
 REGROUP_ARRIVAL_M = 0.2
 
 
+@dataclass(frozen=True)
+class SearchCue:
+    kind: str
+    point: tuple[float, float]
+    at: float
+
+
 @dataclass
 class Brain:
     patrol: list
@@ -68,6 +75,8 @@ class Brain:
     incident: str = ""
     role_changed: bool = False
     cue: tuple | None = None
+    priority_cue: SearchCue | None = None
+    priority_checked: bool = False
     search_points: list = field(default_factory=list)
     search_target: tuple | None = None
     scan_until: float = 0.0
@@ -99,6 +108,10 @@ class Brain:
 
     def indoor_scanning(self, time):
         return self.indoor_look_angle is not None or time < self.indoor_look_until
+
+    @property
+    def investigating_priority(self):
+        return self.priority_cue is not None and not self.priority_checked
 
 
 @dataclass
@@ -386,13 +399,49 @@ class EnemyAI:
         self.incidents[key] = Incident(0.0, 0.0, point, indoor=IndoorSweep(area, point, 0.0) if area else None)
         for actor in actors:
             brain = self.brains[actor.id]
+            brain.priority_cue = None
+            brain.priority_checked = False
             brain.incident = key
             brain.memory.reported = point
             brain.memory.reported_at = 0.0
             brain.memory.report_source = key
             brain.combat_alert_until = COMBAT_ALERT_SECONDS
 
-    def _indoor_sweep(self, actor, brain, point, evidence_at, time):
+    def _interrupt_search(self, actor, brain):
+        if brain.indoor is not None:
+            brain.indoor.claims.pop(actor.id, None)
+        incident = self.incidents.get(brain.incident)
+        if incident is not None:
+            incident.claims.pop(actor.id, None)
+        brain.indoor_target = brain.indoor_yield = brain.indoor_look_angle = None
+        brain.indoor_look_until = brain.scan_until = 0.0
+        brain.indoor_speed, brain.indoor_depart_at = 0.0, None
+        brain.cue = brain.search_target = brain.search_cover = None
+        brain.next_sweep_at = 0.0
+
+    def _update_priority_cue(self, actor, brain, tracking, investigating, incoming):
+        memory = brain.memory
+        previous = brain.priority_cue
+        latest = previous.at if previous is not None else -math.inf
+        cue = None
+        if tracking and memory.seen_at > latest:
+            cue = SearchCue("seen", memory.last_seen, memory.seen_at)
+        recent_gunshot = memory.gunshot_origin is not None and brain.incoming_at <= memory.sound_heard_at + 0.25
+        if incoming is not None and not recent_gunshot and brain.incoming_at > (cue.at if cue else latest):
+            cue = SearchCue("impact", incoming, brain.incoming_at)
+        if investigating and memory.sound_at > latest and (cue is None or memory.sound_at >= cue.at):
+            cue = SearchCue("sound", memory.last_sound, memory.sound_at)
+        if cue is not None:
+            if (brain.investigating_priority and cue.kind == previous.kind and cue.point == previous.point):
+                return
+            self._interrupt_search(actor, brain)
+            brain.priority_cue = cue
+            brain.priority_checked = False
+            incident = self.incidents.get(brain.incident)
+            if incident is not None and incident.indoor is not None and incident.indoor.regroup_slots:
+                incident.indoor = None
+
+    def _indoor_sweep(self, actor, brain, point, evidence_at, time, *, new_contact=False):
         area = self.world.indoor_search_area(point)
         if area is None:
             if brain.indoor is not None:
@@ -407,7 +456,7 @@ class EnemyAI:
         incident = self.incidents[brain.incident]
         sweep = incident.indoor
         if (sweep is None or (evidence_at > sweep.evidence_at
-                and (sweep.area is not area or math.dist(point, sweep.anchor) > 4))):
+                and (new_contact or sweep.area is not area or math.dist(point, sweep.anchor) > 4))):
             sweep = incident.indoor = IndoorSweep(area, point, evidence_at)
         sweep.evidence_at = max(sweep.evidence_at, evidence_at)
         area = sweep.area
@@ -559,7 +608,8 @@ class EnemyAI:
                 continue
             members = [actor for actor in actors if actor.hp > 0 and not actor.transport_boarding
                        and self.brains[actor.id].incident == key]
-            if not members or any(self.brains[actor.id].visible or self.brains[actor.id].indoor_scanning(time)
+            if not members or any(self.brains[actor.id].visible or self.brains[actor.id].investigating_priority
+                                  or self.brains[actor.id].indoor_scanning(time)
                                   for actor in members):
                 continue
             if not sweep.regroup_slots:
@@ -618,11 +668,13 @@ class EnemyAI:
         for actor in living.values():
             brain = self.brains[actor.id]
             blocker = living.get(brain.blocked_by)
-            if actor.state != "search" or brain.indoor_target is None or not brain.path or blocker is None:
+            has_search_target = brain.indoor_target is not None or brain.investigating_priority
+            if actor.state != "search" or not has_search_target or not brain.path or blocker is None:
                 continue
             other = self.brains[blocker.id]
             if (other.incident != brain.incident or other.visible or other.indoor_yield is not None
-                    or brain.indoor_yield is not None or blocker.transport_boarding or other.indoor_scanning(time)):
+                    or brain.indoor_yield is not None or blocker.transport_boarding or other.indoor_scanning(time)
+                    or time < other.scan_until):
                 continue
             if other.path and (other.blocked_by != actor.id or actor.id > blocker.id):
                 continue
@@ -648,8 +700,8 @@ class EnemyAI:
                     slots.append(point)
         return slots
 
-    def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False):
-        incident = self.incidents.get(brain.incident)
+    def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False, direct=False):
+        incident = None if direct else self.incidents.get(brain.incident)
         if cue != brain.cue:
             brain.cue = cue
             brain.search_target = None
@@ -668,7 +720,9 @@ class EnemyAI:
             brain.search_points = [(x + dx * cos_a - dy * sin_a, y + dx * sin_a + dy * cos_a)
                                    for dx, dy in offsets]
             nav = self.world.navigation
-            if sound_only:
+            if direct:
+                brain.search_points = [cue[1]]
+            elif sound_only:
                 brain.search_points = [point for point in brain.search_points
                                        if nav.walkable(point) and nav.clear(cue[1], point)]
                 if cue[1] not in brain.search_points:
@@ -692,7 +746,9 @@ class EnemyAI:
                 brain.search_points[index:index] = landmarks[:5]
             brain.scan_until = 0
         if time < brain.scan_until:
-            actor.facing = brain.scan_angle + math.sin((brain.scan_until - time) * 5) * 0.95
+            actor.facing = brain.scan_angle
+            if not direct:
+                actor.facing += math.sin((brain.scan_until - time) * 5) * 0.95
             if incident and brain.search_target is not None:
                 incident.claims[actor.id] = brain.search_target, time + 0.65
             return None
@@ -724,7 +780,7 @@ class EnemyAI:
                 return None
             if incident:
                 incident.claims[actor.id] = point, time + 0.65
-            if not confirmed:
+            if not confirmed or direct:
                 return point
             # 수색 지점까지 확보한 경로는 다음 엄폐 후보를 계산해도 유지한다.
             if brain.goal == point and brain.path and not brain.route_failed:
@@ -829,7 +885,6 @@ class EnemyAI:
     def update(self, actors, player, time):
         intents, budget = {}, 1
         self._assign_roles(actors, time)
-        self._update_regroups(actors, time)
         self._unblock_search(actors, time)
         self.near_count = 0
         previous_facing = {actor.id: actor.facing for actor in actors}
@@ -843,7 +898,7 @@ class EnemyAI:
             brain.pressure_at = time
             investigating = (memory.last_sound is not None and memory.sound_at > brain.checked_sound_at
                              and time - memory.sound_heard_at < SOUND_MEMORY_SECONDS
-                             and (memory.suspicion >= 0.3 or actor.state == "alert"))
+                             and (memory.suspicion >= 0.3 or actor.state in {"alert", "search", "regroup"}))
             confirmed = time < brain.combat_alert_until
             incoming = brain.incoming if time - brain.incoming_at < (12 if confirmed else 4) else None
             tracking = confirmed and memory.last_seen is not None
@@ -855,6 +910,7 @@ class EnemyAI:
                 brain.far_at, brain.far_updated = time + 0.5, time
                 memory.visible = False
                 memory.last_seen = memory.reported = None
+                brain.priority_cue = None
                 brain.search_cover = None
                 brain.cue = None
                 self._set_role(brain, "")
@@ -881,8 +937,17 @@ class EnemyAI:
                 brain.sense_at = time + (0.10 if confirmed or memory.visible else 0.18)
                 memory.suspicion = max(0, memory.suspicion - 0.01)
             old_state = actor.state
+            urgent = actor.hp < 20 or actor.hurt_until > time or brain.suppression >= 0.55
+            if memory.visible:
+                if old_state not in {"combat", "retreat"} or brain.indoor_target is not None:
+                    self._interrupt_search(actor, brain)
+            elif confirmed:
+                self._update_priority_cue(actor, brain, tracking, investigating, incoming)
+            else:
+                brain.priority_cue = None
+            priority_search = brain.investigating_priority
             if brain.indoor_scanning(time):
-                if memory.visible or actor.transport_boarding or actor.hp < 20 or brain.suppression >= 0.55:
+                if memory.visible or actor.transport_boarding or urgent:
                     brain.indoor_look_angle = None
                     brain.indoor_look_until = 0.0
                 else:
@@ -909,7 +974,7 @@ class EnemyAI:
             if active_sweep is not None and active_sweep.regroup_slots and not active_sweep.regroup_done:
                 if memory.visible:
                     incident.indoor = None
-                elif actor.id in active_sweep.regroup_slots and not actor.transport_boarding:
+                elif actor.id in active_sweep.regroup_slots and not actor.transport_boarding and not priority_search:
                     actor.state = "regroup"
                     goal = active_sweep.regroup_slots[actor.id]
                     intent.move_multiplier = INDOOR_MOVE_MULTIPLIER
@@ -926,11 +991,6 @@ class EnemyAI:
                 continue
             threat = None
             if memory.visible:
-                if brain.indoor_target is not None:
-                    brain.indoor.claims.pop(actor.id, None)
-                    brain.indoor_target = None
-                    brain.indoor_look_angle = None
-                    brain.indoor_look_until = 0.0
                 brain.combat_alert_until = time + COMBAT_ALERT_SECONDS
                 brain.next_sweep_at, brain.sweep_pass = 0.0, 0
                 brain.search_cover = None
@@ -954,13 +1014,32 @@ class EnemyAI:
                     burst_size = 2 if brain.suppression >= 0.3 or brain.action == "peek" else 4
                     brain.burst = (brain.burst + 1) % burst_size
                     brain.fire_at = time + (0.20 if brain.burst else 0.58) * (1 + brain.suppression * 2)
+            elif priority_search:
+                cue = brain.priority_cue
+                actor.state = "search"
+                threat = cue.point
+                if urgent:
+                    brain.cue = None
+                    self._combat_action(actor, brain, actors, cue.point, time)
+                    actor.state, goal = "retreat", brain.action_goal
+                else:
+                    goal = self._search(actor, brain, (cue.kind, cue.point, cue.at), time, confirmed=True, direct=True)
+                    if not brain.search_points and time >= brain.scan_until:
+                        brain.priority_checked = True
+                        if cue.kind == "sound":
+                            brain.checked_sound_at = memory.sound_at if memory.last_sound == cue.point else cue.at
+                            brain.sound_response, brain.sound_response_at = "checked", time
             elif tracking or investigating or reported or incoming is not None or (confirmed and brain.incoming is not None):
                 actor.state = "search" if confirmed else "alert"
                 point = memory.last_seen if tracking else None
                 contact_at = memory.seen_at if tracking else -math.inf
                 if reported and (point is None or (memory.report_source != actor.id and memory.reported_at > contact_at)):
                     point, contact_at = memory.reported, memory.reported_at
-                if investigating and (point is None or memory.sound_at > contact_at + 0.5):
+                cue = brain.priority_cue
+                if (cue is not None and brain.priority_checked and cue.kind != "seen"
+                        and cue.at >= contact_at and time - cue.at < SOUND_MEMORY_SECONDS):
+                    point, contact_at = cue.point, cue.at
+                elif investigating and (point is None or memory.sound_at > contact_at + 0.5):
                     point = memory.last_sound
                 if point is None:
                     point = incoming or brain.incoming
@@ -968,7 +1047,7 @@ class EnemyAI:
                 sound_only = investigating and point == memory.last_sound
                 indoor = None
                 search_finished = False
-                holding = confirmed and not investigating and (
+                holding = confirmed and not investigating and not priority_search and (
                     time < brain.next_sweep_at or (brain.role == "hold" and reported))
                 cover_context = brain.peek_home is not None or (brain.action == "cover" and old_state == "retreat")
                 continuing_cover = cover_context and self._peek(actor, brain, point, time)
@@ -990,7 +1069,8 @@ class EnemyAI:
                         brain.cue = None
                         brain.next_sweep_at = 0.0
                     if confirmed and not sound_only and math.isfinite(contact_at):
-                        indoor = self._indoor_sweep(actor, brain, point, contact_at, time)
+                        new_contact = cue is not None and cue.at == contact_at and brain.priority_checked
+                        indoor = self._indoor_sweep(actor, brain, point, contact_at, time, new_contact=new_contact)
                     if indoor is None:
                         goal = self._search(actor, brain, (actor.state, point), time,
                                             sound_only=sound_only, confirmed=confirmed)
@@ -1047,9 +1127,10 @@ class EnemyAI:
                 approximate = False
             if goal == brain.indoor_target:
                 approximate = False
-            if brain.cue is not None and brain.cue[1] == memory.last_sound:
+            if not priority_search and brain.cue is not None and brain.cue[1] == memory.last_sound:
                 approximate = False
-            moving_sweep = actor.state == "search" and goal is not None and goal == brain.indoor_target
+            moving_sweep = (actor.state == "search" and goal is not None
+                            and (goal == brain.indoor_target or priority_search))
             budget = self._move(actor, brain, intent, goal, time, budget,
                                 face=not moving_sweep and not memory.visible and actor.state not in {"retreat", "combat_guard"}
                                 and brain.action != "peek",
@@ -1064,12 +1145,14 @@ class EnemyAI:
                     and time >= brain.fire_at):
                 intent.retreat_fire = True
             intents[actor.id] = intent
+        self._update_regroups(actors, time)
         for actor in actors:
             if actor.id in intents and not self.brains[actor.id].memory.visible:
                 # 순찰·수색·경계 전환 때도 새 목표 방향으로 즉시 순간 회전하지 않는다.
                 brain = self.brains[actor.id]
                 rate = (INDOOR_TURN_RADIANS_PER_S if actor.state == "regroup" or brain.indoor_yield is not None
-                        or (actor.state == "search" and brain.indoor is not None) else SEARCH_TURN_RADIANS_PER_S)
+                        or (actor.state == "search" and (brain.indoor is not None or brain.investigating_priority))
+                        else SEARCH_TURN_RADIANS_PER_S)
                 actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60, rate=rate)
         self.door_traffic.update(self.world, actors, self.brains, intents, time)
         return intents

@@ -69,18 +69,21 @@ def hear(actor, memory, event, navigation, *, checked_sound_at):
     priority = event.data.get("strength", 0.4) * (1 - distance / radius * 0.4)
     memory.suspicion = min(1.0, memory.suspicion + priority)
     gunshot = event.data.get("reason") == "gunshot"
-    if memory.gunshot_origin is not None and event.time - memory.sound_heard_at < SOUND_MEMORY_SECONDS:
+    recent_gunshot = memory.gunshot_origin is not None and event.time - memory.sound_heard_at < SOUND_MEMORY_SECONDS
+    if recent_gunshot:
         # 비교 기준은 첫 총성의 위치다. 같은 구역의 총성은 조사 목표를 그대로 둔다.
-        if not gunshot:
-            return "lower_priority"
-        if (math.dist(event.position, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE
-                and navigation.clear(memory.gunshot_origin, event.position, clearance=0)):
+        nearby = (math.dist(event.position, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE
+                  and navigation.clear(memory.gunshot_origin, event.position, clearance=0))
+        if nearby:
+            if not gunshot:
+                return "lower_priority"
             memory.sound_heard_at = event.time
             if memory.sound_at <= checked_sound_at:
                 memory.sound_at = event.time
                 return "renewed"
             return "same_area"
-    if not gunshot and event.time - memory.sound_at < 2 and priority < memory.sound_priority * 0.75:
+    if (not gunshot and not recent_gunshot and event.time - memory.sound_at < 2
+            and priority < memory.sound_priority * 0.75):
         return "lower_priority"
     point = _estimate_sound(event.position, distance, navigation)
     if point is None:
