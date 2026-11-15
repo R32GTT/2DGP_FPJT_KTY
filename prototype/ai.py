@@ -15,6 +15,10 @@ COMBAT_ALERT_SECONDS = 330
 RESEARCH_INTERVAL_SECONDS = 24
 SEARCH_LOOK_UPDATE_S = 0.45
 SEARCH_TURN_RADIANS_PER_S = math.radians(200)
+INDOOR_MOVE_MULTIPLIER = 0.72
+INDOOR_TURN_RADIANS_PER_S = math.radians(105)
+REGROUP_HOLD_S = 1.0
+REGROUP_ARRIVAL_M = 0.2
 
 
 @dataclass
@@ -166,9 +170,9 @@ class EnemyAI:
             actor.facing = math.atan2(dy, dx)
 
     @staticmethod
-    def _turn_toward(current, desired, dt):
+    def _turn_toward(current, desired, dt, *, rate=SEARCH_TURN_RADIANS_PER_S):
         difference = math.remainder(desired - current, math.tau)
-        step = SEARCH_TURN_RADIANS_PER_S * dt
+        step = rate * dt
         return current + max(-step, min(step, difference))
 
     def _report_sighting(self, actor, brain, actors, time):
@@ -436,6 +440,8 @@ class EnemyAI:
                         brain.indoor_look_from, brain.indoor_look_until = actor.facing, time + SCAN_SECONDS
                         brain.indoor_scan_at = time + SCAN_INTERVAL
                         return None, False
+                    if target not in sweep.checked:
+                        return target, False
                 else:
                     return target, False
             sweep.claims.pop(actor.id, None)
@@ -469,7 +475,8 @@ class EnemyAI:
             brain.indoor_travel_look_at = time + SEARCH_LOOK_UPDATE_S
         self._show_search_look(brain)
         # 경로가 정한 이동 방향과 별개로 시선을 짧게 유지하며 부드럽게 돌린다.
-        actor.facing = self._turn_toward(actor.facing, brain.indoor_travel_look, intent.step_dt)
+        actor.facing = self._turn_toward(actor.facing, brain.indoor_travel_look, intent.step_dt,
+                                         rate=INDOOR_TURN_RADIANS_PER_S)
         if time >= brain.indoor_scan_at:
             sweep.scan_forward(actor.xy, actor.facing, geometry)
             brain.indoor_scan_at = time + SCAN_INTERVAL
@@ -508,6 +515,57 @@ class EnemyAI:
             self._face(actor, brain.watch_point)
         else:
             brain.look_reason = "보이는 경계 지점 없음"
+
+    def _update_regroups(self, actors, time):
+        nav = self.world.navigation
+        for key, incident in self.incidents.items():
+            sweep = incident.indoor
+            if sweep is None or sweep.regroup_done or len(sweep.checked) != len(sweep.area.points):
+                continue
+            members = [actor for actor in actors if actor.hp > 0 and not actor.transport_boarding
+                       and self.brains[actor.id].incident == key]
+            if not members or any(self.brains[actor.id].memory.visible for actor in members):
+                continue
+            if not sweep.regroup_slots:
+                centers = sorted(sweep.area.points, key=lambda point: (math.dist(point, sweep.anchor), point))[:10]
+                center, slots = max(((point, self._rally_slots(nav, point)) for point in centers),
+                                    key=lambda entry: (len(entry[1]), -math.dist(entry[0], sweep.anchor)))
+                # 같은 집결 좌표를 공유하면 몸체 충돌로 완료 판정에 도달하지 못한다.
+                for actor in sorted(members, key=lambda item: (math.dist(item.xy, center), item.id)):
+                    for slot in sorted(slots, key=lambda point: (math.dist(actor.xy, point), point)):
+                        if nav.route(actor.xy, slot, allow_doors=True):
+                            sweep.regroup_slots[actor.id] = slot
+                            slots.remove(slot)
+                            break
+            arrived = all(actor.id not in sweep.regroup_slots
+                          or math.dist(actor.xy, sweep.regroup_slots[actor.id]) <= REGROUP_ARRIVAL_M for actor in members)
+            if not arrived:
+                sweep.regroup_until = None
+            elif sweep.regroup_until is None:
+                sweep.regroup_until = time + REGROUP_HOLD_S
+            elif time >= sweep.regroup_until:
+                sweep.regroup_done = True
+                for actor in members:
+                    brain = self.brains[actor.id]
+                    brain.incident = ""
+                    brain.combat_alert_until = 0.0
+                    brain.next_sweep_at = 0.0
+                    brain.memory.last_seen = brain.memory.reported = None
+                    brain.incoming = None
+                    brain.indoor = brain.indoor_target = None
+                    brain.indoor_look_until = 0.0
+                    self._set_role(brain, "")
+
+    @staticmethod
+    def _rally_slots(nav, center):
+        slots = [center]
+        for radius in (0.9, 1.8, 2.7):
+            for index in range(8):
+                angle = index * math.tau / 8
+                point = center[0] + radius * math.cos(angle), center[1] + radius * math.sin(angle)
+                if nav.walkable(point) and nav.clear(center, point):
+                    slots.append(point)
+        return slots
 
     def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False):
         incident = self.incidents.get(brain.incident)
@@ -690,6 +748,7 @@ class EnemyAI:
     def update(self, actors, player, time):
         intents, budget = {}, 1
         self._assign_roles(actors, time)
+        self._update_regroups(actors, time)
         self.near_count = 0
         previous_facing = {actor.id: actor.facing for actor in actors}
         for actor in sorted(actors, key=lambda actor: math.dist(actor.xy, player.xy)):
@@ -740,6 +799,20 @@ class EnemyAI:
                 brain.sense_at = time + (0.10 if confirmed or memory.visible else 0.18)
                 memory.suspicion = max(0, memory.suspicion - 0.01)
             old_state = actor.state
+            incident = self.incidents.get(brain.incident)
+            active_sweep = incident.indoor if incident is not None else None
+            if active_sweep is not None and active_sweep.regroup_slots and not active_sweep.regroup_done:
+                if memory.visible:
+                    incident.indoor = None
+                elif actor.id in active_sweep.regroup_slots and not actor.transport_boarding:
+                    actor.state = "regroup"
+                    goal = active_sweep.regroup_slots[actor.id]
+                    intent.move_multiplier = INDOOR_MOVE_MULTIPLIER
+                    if math.dist(actor.xy, goal) <= REGROUP_ARRIVAL_M:
+                        goal = None
+                    budget = self._move(actor, brain, intent, goal, time, budget)
+                    intents[actor.id] = intent
+                    continue
             if actor.transport_boarding and not memory.visible:
                 actor.state = "boarding"
                 budget = self._move(actor, brain, intent, actor.boarding_goal, time, budget, approximate=True)
@@ -816,6 +889,7 @@ class EnemyAI:
                                             sound_only=sound_only, confirmed=confirmed)
                         search_finished = not brain.search_points
                     else:
+                        intent.move_multiplier = INDOOR_MOVE_MULTIPLIER
                         goal, search_finished = indoor
                         brain.search_cover = None
                 if not continuing_cover and not holding and search_finished and time >= brain.scan_until:
@@ -884,6 +958,9 @@ class EnemyAI:
         for actor in actors:
             if actor.id in intents and not self.brains[actor.id].memory.visible:
                 # 순찰·수색·경계 전환 때도 새 목표 방향으로 즉시 순간 회전하지 않는다.
-                actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60)
+                brain = self.brains[actor.id]
+                rate = (INDOOR_TURN_RADIANS_PER_S if actor.state == "regroup"
+                        or (actor.state == "search" and brain.indoor is not None) else SEARCH_TURN_RADIANS_PER_S)
+                actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60, rate=rate)
         self.door_traffic.update(self.world, actors, self.brains, intents, time)
         return intents

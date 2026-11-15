@@ -12,7 +12,7 @@ from .weapons import STAGE_NAMES
 from .interactions import nearby_facility
 
 
-AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결",
+AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
              "alert": "조사", "search": "전투 수색", "combat": "교전",
              "combat_guard": "전투 경계", "retreat": "엄폐·후퇴"}
 AI_ROLES = {"pursue": "추격", "intercept": "차단", "sweep": "수색", "hold": "경계"}

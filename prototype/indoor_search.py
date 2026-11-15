@@ -8,7 +8,7 @@ from .geometry import Rect
 
 SAMPLE_M = 2.4
 SCAN_RANGE_M = 8.0
-SCAN_SECONDS = 0.45
+SCAN_SECONDS = 0.85
 SCAN_INTERVAL = 0.2
 SCAN_HALF_CONE = math.radians(45)
 SCAN_CONE_COS = math.cos(SCAN_HALF_CONE)
@@ -106,6 +106,9 @@ class IndoorSweep:
     evidence_at: float
     checked: set = field(default_factory=set)
     claims: dict = field(default_factory=dict)
+    regroup_slots: dict[str, tuple[float, float]] = field(default_factory=dict)
+    regroup_until: float | None = None
+    regroup_done: bool = False
 
     def scan_forward(self, xy, facing, geometry):
         forward_x, forward_y = math.cos(facing), math.sin(facing)
@@ -114,7 +117,8 @@ class IndoorSweep:
                 continue
             dx, dy = point[0] - xy[0], point[1] - xy[1]
             distance = math.hypot(dx, dy)
-            if (distance <= SCAN_RANGE_M and dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS
+            if (distance <= SCAN_RANGE_M and (distance <= 0.075
+                    or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS)
                     and geometry.raycast(xy, point, category="sight") is None):
                 self.checked.add(point)
 
