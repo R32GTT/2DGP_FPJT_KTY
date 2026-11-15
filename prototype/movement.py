@@ -21,7 +21,7 @@ def _body_blocker(actor, start, point, neighbors):
     return None
 
 
-def move_actor(actor, direction, world, dt, *, speed=None, neighbors=()):
+def move_actor(actor, direction, world, dt, *, speed=None, neighbors=(), allow_slide=True):
     magnitude = math.hypot(*direction)
     if magnitude < 1e-8:
         return None
@@ -53,6 +53,8 @@ def move_actor(actor, direction, world, dt, *, speed=None, neighbors=()):
         moved, other = try_step(dx, dy)
         if moved:
             continue
+        if not allow_slide:
+            return other
         if other is not None:
             blocked_by = other
             # 서로 마주 보면 각자의 오른쪽이 반대쪽이 된다.

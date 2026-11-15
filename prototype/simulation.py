@@ -187,7 +187,7 @@ class PlaySimulation:
                 speed = actor.speed * intent.move_multiplier * (actor.weapon.spec.reload_move_multiplier
                                        if actor.weapon and actor.weapon.reloading else 1)
                 blocker = move_actor(actor, intent.direction, self.world, intent.step_dt, speed=speed,
-                                     neighbors=active_guards)
+                                     neighbors=active_guards, allow_slide=not intent.move_straight)
                 brain.blocked_by = blocker.id if blocker is not None else ""
                 if blocker is not None:
                     brain.progress_at = self.time

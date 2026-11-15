@@ -6,7 +6,7 @@ import math
 from .cover import CoverFinder
 from .door_traffic import DoorTraffic
 from .geometry import Rect
-from .indoor_search import (IndoorSweep, LookChoice, MAX_LOOK_OFFSET, SCAN_INTERVAL,
+from .indoor_search import (IndoorSweep, LookChoice, SCAN_INTERVAL,
                             SCAN_RANGE_M, SCAN_SECONDS, choose_look)
 from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
 
@@ -15,8 +15,11 @@ COMBAT_ALERT_SECONDS = 330
 RESEARCH_INTERVAL_SECONDS = 24
 SEARCH_LOOK_UPDATE_S = 0.45
 SEARCH_TURN_RADIANS_PER_S = math.radians(200)
-INDOOR_MOVE_MULTIPLIER = 0.72
+INDOOR_MOVE_MULTIPLIER = 1.05
 INDOOR_TURN_RADIANS_PER_S = math.radians(105)
+INDOOR_START_DELAY_S = 0.14
+INDOOR_ACCEL_MPS2 = 7.0
+INDOOR_BRAKE_MPS2 = 9.0
 REGROUP_HOLD_S = 1.0
 REGROUP_ARRIVAL_M = 0.2
 
@@ -76,8 +79,8 @@ class Brain:
     indoor_look_offset: float = 0.0
     indoor_look_until: float = 0.0
     indoor_scan_at: float = 0.0
-    indoor_travel_look: float = 0.0
-    indoor_travel_look_at: float = 0.0
+    indoor_speed: float = 0.0
+    indoor_depart_at: float | None = None
     indoor_focus: LookChoice | None = None
     watch_point: tuple | None = None
     watch_cue: tuple | None = None
@@ -103,6 +106,7 @@ class Intent:
     open_door: bool = False
     step_dt: float = 1 / 60
     move_multiplier: float = 1.0
+    move_straight: bool = False
 
 
 @dataclass
@@ -410,7 +414,6 @@ class EnemyAI:
             brain.indoor_blocked.clear()
             brain.indoor_look_until = 0.0
             brain.indoor_scan_at = time
-            brain.indoor_travel_look_at = time
 
         target = brain.indoor_target
         previous_room = area.rooms.get(target)
@@ -460,28 +463,46 @@ class EnemyAI:
             points = [candidate for candidate in remaining if area.rooms[candidate] == room]
             target = sweep.observation_point(actor.xy, points, self.world.geometry)
             brain.indoor_target = target
-            brain.indoor_travel_look_at = time
             sweep.claims[actor.id] = target, time + 1
         return target, not remaining
 
-    def _look_while_searching(self, actor, brain, intent, time):
-        sweep = brain.indoor
-        heading = math.atan2(intent.direction[1], intent.direction[0])
-        geometry = self.world.geometry
-        if (time >= brain.indoor_travel_look_at
-                or abs(math.remainder(brain.indoor_travel_look - heading, math.tau)) > MAX_LOOK_OFFSET
-                or (brain.indoor_focus is not None
-                    and geometry.raycast(actor.xy, brain.indoor_focus.point, category="sight") is not None)):
-            room = sweep.area.rooms[brain.indoor_target]
-            brain.indoor_focus = sweep.look(actor.xy, heading, room, geometry)
-            brain.indoor_travel_look = heading + (brain.indoor_focus.offset if brain.indoor_focus else 0)
-            brain.indoor_travel_look_at = time + SEARCH_LOOK_UPDATE_S
-        self._show_search_look(brain)
-        # 경로가 정한 이동 방향과 별개로 시선을 짧게 유지하며 부드럽게 돌린다.
-        actor.facing = self._turn_toward(actor.facing, brain.indoor_travel_look, intent.step_dt,
-                                         rate=INDOOR_TURN_RADIANS_PER_S)
-        if time >= brain.indoor_scan_at:
-            sweep.scan_forward(actor.xy, actor.facing, geometry)
+    def _pace_indoor_movement(self, actor, brain, intent, time):
+        dx, dy = intent.direction
+        if not (dx or dy):
+            brain.indoor_speed, brain.indoor_depart_at = 0.0, None
+            return
+
+        tick = 1 / 60
+        heading = math.atan2(dy, dx)
+        actor.facing = self._turn_toward(actor.facing, heading, tick, rate=INDOOR_TURN_RADIANS_PER_S)
+        if brain.indoor_depart_at is None:
+            brain.indoor_depart_at = time + INDOOR_START_DELAY_S
+        if time < brain.indoor_depart_at or abs(math.remainder(heading - actor.facing, math.tau)) > 1e-6:
+            brain.indoor_speed = 0.0
+            brain.progress_at, brain.progress_point = time, actor.xy
+            intent.direction, intent.open_door = (0, 0), False
+            brain.look_reason = "진행 방향으로 회전 중"
+            return
+
+        distance = math.hypot(dx, dy)
+        speed_limit = actor.speed * INDOOR_MOVE_MULTIPLIER
+        stop_ahead = len(brain.path) == 1
+        if not stop_ahead:
+            point, following = brain.path[:2]
+            outgoing = math.atan2(following[1] - point[1], following[0] - point[0])
+            stop_ahead = abs(math.remainder(outgoing - heading, math.tau)) > math.radians(25)
+        if stop_ahead:
+            speed_limit = min(speed_limit, math.sqrt(2 * INDOOR_BRAKE_MPS2 * distance))
+        increase = INDOOR_ACCEL_MPS2 * tick
+        decrease = INDOOR_BRAKE_MPS2 * tick
+        brain.indoor_speed = max(brain.indoor_speed - decrease, min(speed_limit, brain.indoor_speed + increase))
+        intent.move_multiplier = brain.indoor_speed / actor.speed
+        intent.step_dt = min(tick, distance / brain.indoor_speed)
+        intent.move_straight = True
+
+        brain.look_point, brain.look_reason = brain.path[0], "진행 방향 확인"
+        if actor.state == "search" and brain.indoor is not None and time >= brain.indoor_scan_at:
+            brain.indoor.scan_forward(actor.xy, actor.facing, self.world.geometry)
             brain.indoor_scan_at = time + SCAN_INTERVAL
 
     @staticmethod
@@ -568,9 +589,11 @@ class EnemyAI:
                 continue
             pair = tuple(sorted((actor.id, blocker.id)))
             goal, occupied = sweep.regroup_slots[actor.id], sweep.regroup_slots[blocker.id]
-            if (pair not in sweep.regroup_swaps and math.dist(blocker.xy, occupied) <= REGROUP_ARRIVAL_M
-                    and math.dist(actor.xy, occupied) + 0.25 < math.dist(actor.xy, goal)):
-                # 먼저 도착한 NPC가 통로를 막으면 빈 쪽으로 움직이도록 자리를 맞바꾼다.
+            mutual = self.brains[blocker.id].blocked_by == actor.id
+            settled = (math.dist(blocker.xy, occupied) <= REGROUP_ARRIVAL_M
+                       and math.dist(actor.xy, occupied) + 0.25 < math.dist(actor.xy, goal))
+            if pair not in sweep.regroup_swaps and (mutual or settled):
+                # 서 있거나 정면에서 마주친 NPC 때문에 막힌 집결 자리를 맞바꾼다.
                 sweep.regroup_slots[actor.id], sweep.regroup_slots[blocker.id] = occupied, goal
                 sweep.regroup_swaps.add(pair)
 
@@ -828,7 +851,8 @@ class EnemyAI:
                     intent.move_multiplier = INDOOR_MOVE_MULTIPLIER
                     if math.dist(actor.xy, goal) <= REGROUP_ARRIVAL_M:
                         goal = None
-                    budget = self._move(actor, brain, intent, goal, time, budget)
+                    budget = self._move(actor, brain, intent, goal, time, budget, face=False)
+                    self._pace_indoor_movement(actor, brain, intent, time)
                     intents[actor.id] = intent
                     continue
             if actor.transport_boarding and not memory.visible:
@@ -965,8 +989,10 @@ class EnemyAI:
                                 face=not moving_sweep and not memory.visible and actor.state not in {"retreat", "combat_guard"}
                                 and brain.action != "peek",
                                 approximate=approximate)
-            if moving_sweep and any(intent.direction):
-                self._look_while_searching(actor, brain, intent, time)
+            if moving_sweep:
+                self._pace_indoor_movement(actor, brain, intent, time)
+            else:
+                brain.indoor_speed, brain.indoor_depart_at = 0.0, None
             if (actor.state == "retreat" and memory.visible and any(intent.direction)
                     and brain.action in {"cover", "retreat"} and brain.suppression < 0.85
                     and weapon is not None and weapon.chambered and not weapon.reloading
