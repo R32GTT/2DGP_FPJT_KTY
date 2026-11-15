@@ -6,7 +6,7 @@ import math
 from .cover import CoverFinder
 from .door_traffic import DoorTraffic
 from .geometry import Rect
-from .indoor_search import IndoorSweep, SCAN_SECONDS
+from .indoor_search import IndoorSweep, SCAN_INTERVAL, SCAN_SECONDS
 from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
 
 
@@ -65,6 +65,10 @@ class Brain:
     indoor: IndoorSweep | None = None
     indoor_target: tuple | None = None
     indoor_blocked: dict = field(default_factory=dict)
+    indoor_look_from: float = 0.0
+    indoor_look_offset: float = 0.0
+    indoor_look_until: float = 0.0
+    indoor_scan_at: float = 0.0
     sound_response: str = ""
     sound_response_at: float = -1000.0
     far_at: float = 0.0
@@ -365,7 +369,7 @@ class EnemyAI:
             if brain.indoor is not None:
                 brain.indoor.claims.pop(actor.id, None)
                 brain.indoor = brain.indoor_target = None
-                brain.scan_until = 0.0
+                brain.indoor_look_until = 0.0
             return None
         if brain.incident not in self.incidents:
             brain.incident = actor.id
@@ -383,25 +387,36 @@ class EnemyAI:
             brain.indoor = sweep
             brain.indoor_target = None
             brain.indoor_blocked.clear()
-            brain.scan_until = 0.0
+            brain.indoor_look_until = 0.0
+            brain.indoor_scan_at = time
 
         target = brain.indoor_target
         previous_room = area.rooms.get(target)
         if target is not None:
-            if brain.scan_until:
-                if time < brain.scan_until:
-                    actor.facing = brain.scan_angle + math.tau * (1 - (brain.scan_until - time) / SCAN_SECONDS)
+            if brain.indoor_look_until:
+                portion = min(1.0, 1 - (brain.indoor_look_until - time) / SCAN_SECONDS)
+                actor.facing = brain.indoor_look_from + brain.indoor_look_offset * portion
+                if time < brain.indoor_look_until:
+                    if time >= brain.indoor_scan_at:
+                        sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
+                        brain.indoor_scan_at = time + SCAN_INTERVAL
                     sweep.claims[actor.id] = target, time + 1
                     return None, False
-                sweep.scan(actor.xy, self.world.geometry)
-                brain.scan_until = 0.0
+                sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
+                brain.indoor_look_until = 0.0
             elif brain.goal == target and brain.route_failed and brain.path_revision == self.world.revision:
                 brain.indoor_blocked[target] = self.world.revision
             else:
                 sweep.claims[actor.id] = target, time + 1
                 if math.dist(actor.xy, target) <= 0.25:
-                    brain.scan_angle, brain.scan_until = actor.facing, time + SCAN_SECONDS
+                    sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
+                    brain.indoor_look_offset = sweep.look_offset(actor.xy, actor.facing, previous_room, self.world.geometry)
+                    brain.indoor_look_from, brain.indoor_look_until = actor.facing, time + SCAN_SECONDS
+                    brain.indoor_scan_at = time + SCAN_INTERVAL
                     return None, False
+                if time >= brain.indoor_scan_at:
+                    sweep.scan_forward(actor.xy, actor.facing, self.world.geometry)
+                    brain.indoor_scan_at = time + SCAN_INTERVAL
                 return target, False
             sweep.claims.pop(actor.id, None)
             brain.indoor_target = None
@@ -657,7 +672,7 @@ class EnemyAI:
                 if brain.indoor_target is not None:
                     brain.indoor.claims.pop(actor.id, None)
                     brain.indoor_target = None
-                    brain.scan_until = 0.0
+                    brain.indoor_look_until = 0.0
                 brain.combat_alert_until = time + COMBAT_ALERT_SECONDS
                 brain.next_sweep_at, brain.sweep_pass = 0.0, 0
                 brain.search_cover = None

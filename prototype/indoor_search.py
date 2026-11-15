@@ -8,7 +8,10 @@ from .geometry import Rect
 
 SAMPLE_M = 2.4
 SCAN_RANGE_M = 8.0
-SCAN_SECONDS = 1.2
+SCAN_SECONDS = 0.45
+SCAN_INTERVAL = 0.2
+SCAN_CONE_COS = math.cos(math.radians(45))
+MAX_LOOK_OFFSET = math.radians(85)
 
 
 @dataclass(frozen=True)
@@ -73,9 +76,30 @@ class IndoorSweep:
     checked: set = field(default_factory=set)
     claims: dict = field(default_factory=dict)
 
-    def scan(self, xy, geometry):
-        # 한 바퀴 관찰을 마친 위치에서 실제로 보이는 지점만 공유한다.
+    def scan_forward(self, xy, facing, geometry):
+        forward_x, forward_y = math.cos(facing), math.sin(facing)
         for point in self.area.points:
-            if (point not in self.checked and math.dist(xy, point) <= SCAN_RANGE_M
+            if point in self.checked:
+                continue
+            dx, dy = point[0] - xy[0], point[1] - xy[1]
+            distance = math.hypot(dx, dy)
+            if (distance <= SCAN_RANGE_M and dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS
                     and geometry.raycast(xy, point, category="sight") is None):
                 self.checked.add(point)
+
+    def look_offset(self, xy, facing, room, geometry):
+        candidates = []
+        for point in self.area.points:
+            if point in self.checked or self.area.rooms[point] != room:
+                continue
+            dx, dy = point[0] - xy[0], point[1] - xy[1]
+            distance = math.hypot(dx, dy)
+            if not 0 < distance <= SCAN_RANGE_M:
+                continue
+            offset = math.remainder(math.atan2(dy, dx) - facing, math.tau)
+            if abs(offset) <= MAX_LOOK_OFFSET:
+                candidates.append((distance, abs(offset), point, offset))
+        for _, _, point, offset in sorted(candidates):
+            if geometry.raycast(xy, point, category="sight") is None:
+                return offset
+        return 0.0
