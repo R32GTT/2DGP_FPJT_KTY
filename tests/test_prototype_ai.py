@@ -52,18 +52,8 @@ class PrototypeAITests(unittest.TestCase):
         self.assertGreaterEqual(front.xy[0], 9)
         self.assertLessEqual(following.xy[0], 5)
 
-    def _door_investigation(self):
-        simulation = PlaySimulation(DOOR_SCENE)
-        simulation.player.hp = 0
-        simulation.player.position = Position(10, 6)
-        front, following = simulation.guards
-        front.position, following.position = Position(6.16, 5.72), Position(5.78, 6.33)
-        simulation.events.emit("noise", simulation.time, simulation.player,
-                               radius=30, strength=0.8, reason="gunshot")
-        return simulation
-
     def test_investigators_stack_along_the_wall_then_pass(self):
-        simulation = self._door_investigation()
+        simulation = PlaySimulation(DOOR_SCENE, stack_drill=True)
         front, following = simulation.guards
         door = simulation.world.geometry.objects["shared_door"]
         while simulation.time < 1 and not simulation.ai.door_traffic.stacks:
@@ -89,15 +79,16 @@ class PrototypeAITests(unittest.TestCase):
         self.assertTrue(all(actor.xy[0] > 8 for actor in simulation.guards))
         self.assertFalse(simulation.ai.door_traffic.stacks)
         self.assertFalse(door.active)
+        self.assertEqual(simulation.player.hp, 100)
 
     def test_new_gunshot_releases_stack(self):
-        simulation = self._door_investigation()
+        simulation = PlaySimulation(DOOR_SCENE, stack_drill=True)
         while simulation.time < 1 and not simulation.ai.door_traffic.stacks:
             simulation.step()
         self.assertIn("shared_door", simulation.ai.door_traffic.stacks)
 
-        simulation.player.position = Position(3, 6)
-        simulation.events.emit("noise", simulation.time, simulation.player,
+        source = Actor("new_sound", Position(3, 6), team="player")
+        simulation.events.emit("noise", simulation.time, source,
                                radius=30, strength=0.8, reason="gunshot")
         simulation.step()
 

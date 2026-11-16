@@ -25,19 +25,23 @@ def run_window(simulation, *, frames=0):
         controls.debug = controls.paused = test_mode
         camera.follow(simulation.player.xy)
         previous, accumulator, count = perf_counter(), 0.0, 0
+        stack_previewed = False
         while controls.running and (not frames or count < frames):
             started = perf_counter()
             elapsed, previous = min(0.1, started - previous), started
             for action in controls.poll(camera):
                 select_drill = action == "next_ai" and "search_drill" in simulation.world.data
+                select_stack = action == "next_ai" and "stack_drill" in simulation.world.data
                 next_scenario = action == "next_ai" and simulation.ai_scenario
-                if (test_mode and action == "restart_ai") or select_drill or next_scenario:
+                if (test_mode and action == "restart_ai") or select_drill or select_stack or next_scenario:
                     scenario = simulation.ai_scenario
                     if next_scenario:
                         cases = tuple(SCENARIOS)
                         scenario = cases[(cases.index(scenario) + 1) % len(cases)]
                     simulation = PlaySimulation(simulation.world.path, ai_scenario=scenario,
-                                                search_drill=select_drill or simulation.search_drill)
+                                                search_drill=select_drill or simulation.search_drill,
+                                                stack_drill=select_stack or simulation.stack_drill)
+                    stack_previewed = False
                     controls.keys.clear()
                     controls.firing = controls.aiming = controls.trigger_pending = controls.map_open = False
                     controls.debug = controls.paused = True
@@ -76,6 +80,12 @@ def run_window(simulation, *, frames=0):
                                     trigger_pressed=pressed and not controls.map_open, walking=controls.walking)
                     accumulator -= FIXED_DT
                     steps += 1
+                    if (simulation.stack_drill and not stack_previewed
+                            and any(stack.ready_at is not None for stack in simulation.ai.door_traffic.stacks.values())):
+                        stack_previewed = controls.paused = True
+                        accumulator = 0.0
+                        simulation.message = "집결 완료 · P를 누르면 문 통과 재개"
+                        break
             camera.follow(simulation.player.xy, controls.mouse)
             update_ms = (perf_counter() - started) * 1000
             renderer.render(simulation, camera, debug=controls.debug, paused=controls.paused,

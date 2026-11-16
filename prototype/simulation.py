@@ -23,17 +23,22 @@ FIXED_DT = 1 / 60
 
 
 class PlaySimulation:
-    def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False):
+    def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False, stack_drill=False):
         self.world = World(scene)
         drill = self.world.data.get("search_drill")
         if search_drill and (drill is None or ai_scenario is not None):
             raise ValueError("이 장면에서는 실내 수색 훈련을 시작할 수 없습니다")
         self.search_drill = search_drill
+        stack_setup = self.world.data.get("stack_drill")
+        if stack_drill and (stack_setup is None or search_drill or ai_scenario is not None):
+            raise ValueError("이 장면에서는 문 옆 집결 훈련을 시작할 수 없습니다")
+        self.stack_drill = stack_drill
         player_spawn = drill["observer_spawn"] if search_drill else self.world.data["player_spawn"]
         self.specs = load_weapons()
         self.player = Actor("player", Position(*player_spawn), speed=3.0,
                             hp=100, armor=40, team="player", state="player")
-        self.guard_records = [Actor(row["id"], Position(*row["position"]), armor=15,
+        guard_positions = stack_setup["guard_positions"] if stack_drill else {}
+        self.guard_records = [Actor(row["id"], Position(*guard_positions.get(row["id"], row["position"])), armor=15,
                                      source_unit=row.get("source_unit", ""), member=row.get("member", -1),
                                      home_node=row.get("home_node", "")) for row in self.world.data["guards"]]
         self.player.loadout = {key: WeaponState.ready(self.specs[key])
@@ -66,10 +71,19 @@ class PlaySimulation:
             self.ai.start_search_drill(self.guards, tuple(drill["last_seen"]))
             self.message = "실내 수색 훈련 · P 시작 · F2 다시 보기"
             self.ai_hint = "관찰 위치에서 M 평면도 · F1 경로 및 판단 표시"
+        elif stack_drill:
+            source = Actor("stack_drill_sound", Position(*stack_setup["sound"]), team="player")
+            self.events.emit("noise", self.time, source, radius=30, strength=0.8, reason="gunshot")
+            self.message = "문 옆 집결 훈련 · P 시작 · F2 다시 보기"
+            self.ai_hint = "M 평면도 · NPC 둘이 같은 소리를 조사 · 집결하면 자동 일시 정지"
         elif self.world.data.get("training_facility"):
             self.message = "실내 AI 검증 · P 시작 · F2 재시작"
-            self.ai_hint = ("F3 실내 수색 훈련 · M 평면도 · F1 적군 판단 표시" if drill else
-                            "F 문 사용 · M 전체 평면도 · F1 적군 판단 표시")
+            action_hint = "F 문 사용"
+            if drill:
+                action_hint = "F3 실내 수색 훈련"
+            elif stack_setup:
+                action_hint = "F3 문 옆 집결 훈련"
+            self.ai_hint = f"{action_hint} · M 평면도 · F1 적군 판단 표시"
 
     def _signals(self, actor, signals):
         for signal in signals:

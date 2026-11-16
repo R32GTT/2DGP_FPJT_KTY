@@ -2,6 +2,10 @@
   "format": "revenant.image_scene.v1",
   "name": "AI 검증 / 문 통과 순서",
   "training_facility": true,
+  "stack_drill": {
+    "sound": [10, 6],
+    "guard_positions": {"front_guard": [6.16, 5.72], "following_guard": [5.78, 6.33]}
+  },
   "bounds": [-2, -2, 19, 16],
   "campaign_facility": "depot_a",
   "player_spawn": [15.2, 6],
