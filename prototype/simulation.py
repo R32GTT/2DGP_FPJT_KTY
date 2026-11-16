@@ -9,6 +9,7 @@ from .ai import EnemyAI
 from .ai_scenarios import configure
 from .bridge import CampaignBridge
 from .combat import Combat
+from .door_layout import DoorLayout
 from .events import EventBus
 from .feedback import Feedback
 from .movement import move_actor
@@ -23,7 +24,8 @@ FIXED_DT = 1 / 60
 
 
 class PlaySimulation:
-    def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False, stack_drill=False):
+    def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False,
+                 stack_drill=False, stack_variant=0):
         self.world = World(scene)
         drill = self.world.data.get("search_drill")
         if search_drill and (drill is None or ai_scenario is not None):
@@ -33,18 +35,33 @@ class PlaySimulation:
         if stack_drill and (stack_setup is None or search_drill or ai_scenario is not None):
             raise ValueError("이 장면에서는 문 옆 집결 훈련을 시작할 수 없습니다")
         self.stack_drill = stack_drill
+        self.stack_variant = stack_variant
+        self.stack_title = ""
         player_spawn = drill["observer_spawn"] if search_drill else self.world.data["player_spawn"]
         self.specs = load_weapons()
         self.player = Actor("player", Position(*player_spawn), speed=3.0,
                             hp=100, armor=40, team="player", state="player")
-        guard_positions = stack_setup["guard_positions"] if stack_drill else {}
-        self.guard_records = [Actor(row["id"], Position(*guard_positions.get(row["id"], row["position"])), armor=15,
+        guard_rows = self.world.data["guards"]
+        if stack_drill:
+            left, right = stack_setup["layouts"][stack_variant]
+            self.stack_title = f"{left + right}인 집결 · {left}+{right}"
+            layout = DoorLayout.from_rect(self.world.geometry.objects[stack_setup["door"]].rect)
+            side = stack_setup["approach_side"]
+            positions = []
+            for flank, count in ((-1, left), (1, right)):
+                for level in range(count):
+                    point = list(layout.waiting_position(side, flank, level, Actor.radius))
+                    point[layout.across] += side * 0.72
+                    positions.append(point)
+            guard_rows = [dict(row, position=point) for row, point in
+                          zip(guard_rows + stack_setup["extra_guards"], positions)]
+        self.guard_records = [Actor(row["id"], Position(*row["position"]), armor=15,
                                      source_unit=row.get("source_unit", ""), member=row.get("member", -1),
-                                     home_node=row.get("home_node", "")) for row in self.world.data["guards"]]
+                                     home_node=row.get("home_node", "")) for row in guard_rows]
         self.player.loadout = {key: WeaponState.ready(self.specs[key])
                                for key in self.world.data.get("player_weapons", ["ar_a", "ar_b"])}
         self.player.active_weapon = next(iter(self.player.loadout), "")
-        for actor, row in zip(self.guard_records, self.world.data["guards"]):
+        for actor, row in zip(self.guard_records, guard_rows):
             key = row.get("weapon", "ar_a")
             actor.loadout = {key: WeaponState.ready(self.specs[key])}
             actor.active_weapon = key
@@ -52,7 +69,7 @@ class PlaySimulation:
         self.roster = CampaignRoster(self.campaign, self.guard_records, self.world)
         self.roster.track_player(self.player.xy)
         self.guards = self.roster.sync()
-        self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in self.world.data["guards"]],
+        self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],
                           can_radio=self.campaign.can_radio)
         self.events, self.feedback = EventBus(), Feedback()
         self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"], self.events)
@@ -74,8 +91,8 @@ class PlaySimulation:
         elif stack_drill:
             source = Actor("stack_drill_sound", Position(*stack_setup["sound"]), team="player")
             self.events.emit("noise", self.time, source, radius=30, strength=0.8, reason="gunshot")
-            self.message = "문 옆 집결 훈련 · P 시작 · F2 다시 보기"
-            self.ai_hint = "M 평면도 · NPC 둘이 같은 소리를 조사 · 집결하면 자동 일시 정지"
+            self.message = f"{self.stack_title} · P 시작"
+            self.ai_hint = "M 평면도 · F2 다시 보기 · F3 다음 배치 · 집결 시 자동 일시 정지"
         elif self.world.data.get("training_facility"):
             self.message = "실내 AI 검증 · P 시작 · F2 재시작"
             action_hint = "F 문 사용"

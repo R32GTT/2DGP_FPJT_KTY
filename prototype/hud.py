@@ -144,8 +144,11 @@ class HUD:
                 road = simulation.campaign.simulation.state.roads[control["road"]]
                 prompt = f"[E] {'수송로 개방' if road.blocked else '수송로 차단'}"
             self.label("prompt", prompt, 16, (241, 211, 135))
-            self.label("map_title", simulation.world.data.get("name", "지역 지도"), 24, (118, 215, 191))
-            self.label("map_help", "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보", 13)
+            map_title = simulation.stack_title or simulation.world.data.get("name", "지역 지도")
+            map_help = ("P 시작·재개 · F2 다시 보기 · F3 다음 배치 · M 닫기" if simulation.stack_drill
+                        else "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보")
+            self.label("map_title", map_title, 24, (118, 215, 191))
+            self.label("map_help", map_help, 13)
             self.label("map_size", f"{simulation.world.bounds.w:g} × {simulation.world.bounds.h:g} m", 13)
             if debug:
                 self._update_ai(simulation)

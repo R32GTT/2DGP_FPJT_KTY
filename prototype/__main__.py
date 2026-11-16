@@ -38,9 +38,13 @@ def run_window(simulation, *, frames=0):
                     if next_scenario:
                         cases = tuple(SCENARIOS)
                         scenario = cases[(cases.index(scenario) + 1) % len(cases)]
+                    stack_variant = simulation.stack_variant
+                    if select_stack and simulation.stack_drill:
+                        stack_variant = (stack_variant + 1) % len(simulation.world.data["stack_drill"]["layouts"])
                     simulation = PlaySimulation(simulation.world.path, ai_scenario=scenario,
                                                 search_drill=select_drill or simulation.search_drill,
-                                                stack_drill=select_stack or simulation.stack_drill)
+                                                stack_drill=select_stack or simulation.stack_drill,
+                                                stack_variant=stack_variant)
                     stack_previewed = False
                     controls.keys.clear()
                     controls.firing = controls.aiming = controls.trigger_pending = controls.map_open = False
@@ -84,7 +88,7 @@ def run_window(simulation, *, frames=0):
                             and any(stack.ready_at is not None for stack in simulation.ai.door_traffic.stacks.values())):
                         stack_previewed = controls.paused = True
                         accumulator = 0.0
-                        simulation.message = "집결 완료 · P를 누르면 문 통과 재개"
+                        simulation.message = f"{simulation.stack_title} 완료 · P 통과 재개"
                         break
             camera.follow(simulation.player.xy, controls.mouse)
             update_ms = (perf_counter() - started) * 1000

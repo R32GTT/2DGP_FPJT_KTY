@@ -90,6 +90,29 @@ class PrototypeAITests(unittest.TestCase):
         self.assertFalse(door.active)
         self.assertEqual(simulation.player.hp, 100)
 
+    def test_each_door_drill_layout_assembles_and_passes(self):
+        layouts = ((1, 1), (2, 0), (3, 0), (2, 1), (1, 2), (4, 0), (3, 1), (2, 2), (1, 3))
+        for index, (left, right) in enumerate(layouts):
+            with self.subTest(left=left, right=right):
+                simulation = PlaySimulation(DOOR_SCENE, stack_drill=True, stack_variant=index)
+                self.assertEqual(len(simulation.guards), left + right)
+                stack = None
+                while simulation.time < 1.5:
+                    simulation.step()
+                    stack = simulation.ai.door_traffic.stacks.get("shared_door")
+                    if stack is not None and stack.ready_at is not None:
+                        break
+
+                self.assertIsNotNone(stack)
+                self.assertIsNotNone(stack.ready_at)
+                self.assertEqual(sum(point[1] < 6 for point in stack.slots.values()), left)
+                self.assertEqual(sum(point[1] > 6 for point in stack.slots.values()), right)
+                self.assertEqual(len(set(stack.slots.values())), left + right)
+                while simulation.time < 7 and not all(actor.xy[0] > 7.5 for actor in simulation.guards):
+                    simulation.step()
+
+                self.assertTrue(all(actor.xy[0] > 7.5 for actor in simulation.guards))
+
     def test_new_gunshot_releases_stack(self):
         simulation = PlaySimulation(DOOR_SCENE, stack_drill=True)
         while simulation.time < 1 and not simulation.ai.door_traffic.stacks:

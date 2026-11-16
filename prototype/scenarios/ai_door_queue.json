@@ -3,8 +3,14 @@
   "name": "AI 검증 / 문 통과 순서",
   "training_facility": true,
   "stack_drill": {
+    "door": "shared_door",
+    "approach_side": -1,
     "sound": [10, 6],
-    "guard_positions": {"front_guard": [6.16, 5.72], "following_guard": [5.78, 6.33]}
+    "layouts": [[1, 1], [2, 0], [3, 0], [2, 1], [1, 2], [4, 0], [3, 1], [2, 2], [1, 3]],
+    "extra_guards": [
+      {"id": "third_guard", "patrol": [[10.5, 7.5]]},
+      {"id": "fourth_guard", "patrol": [[10.5, 4.5]]}
+    ]
   },
   "bounds": [-2, -2, 19, 16],
   "campaign_facility": "depot_a",
