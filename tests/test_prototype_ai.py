@@ -124,6 +124,7 @@ class PrototypeAITests(unittest.TestCase):
                 lead = simulation.guards[0]
                 first_looks = {}
                 passage_order = []
+                opened_at = passed_at = None
                 all_passed = False
                 moving_scan = False
                 sweep = None
@@ -131,6 +132,8 @@ class PrototypeAITests(unittest.TestCase):
                     before = {actor.id: actor.xy for actor in simulation.guards}
                     was_open = not door.active
                     simulation.step()
+                    if not was_open and not door.active:
+                        opened_at = simulation.time
                     for actor in simulation.guards:
                         if actor.xy[0] >= door.rect.right and actor.id not in passage_order:
                             passage_order.append(actor.id)
@@ -141,7 +144,9 @@ class PrototypeAITests(unittest.TestCase):
                             if actor is lead:
                                 self.assertLess(before[lead.id][0], door.rect.right)
                                 self.assertGreater(lead.xy[0], before[lead.id][0])
-                    all_passed |= all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards)
+                    if not all_passed and all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards):
+                        all_passed = True
+                        passed_at = simulation.time
                     moving_scan |= any(actor.xy != before[actor.id]
                                        and simulation.ai.brains[actor.id].look_reason == "이동 중 공간 확인"
                                        for actor in simulation.guards)
@@ -153,6 +158,8 @@ class PrototypeAITests(unittest.TestCase):
                         break
 
                 self.assertTrue(all_passed)
+                self.assertIsNotNone(opened_at)
+                self.assertLess(passed_at - opened_at, 3.3)
                 self.assertIsNotNone(sweep)
                 self.assertEqual(sweep.checked, set(sweep.area.points))
                 self.assertTrue(moving_scan)
