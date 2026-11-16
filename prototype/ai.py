@@ -499,6 +499,7 @@ class EnemyAI:
             brain.indoor_scan_origin = brain.indoor_walk_look = None
             brain.indoor_scan_at, brain.indoor_heading = 0.0, None
 
+        revision = self.world.revision
         target = brain.indoor_target
         previous_room = area.rooms.get(target)
         if target is not None:
@@ -506,9 +507,14 @@ class EnemyAI:
                     and brain.indoor_speed > 0 and not brain.blocked_by and not brain.door_wait):
                 sweep.scan_forward(actor.xy, actor.facing, previous_room, self.world.geometry)
                 brain.indoor_scan_at = time + INDOOR_WALK_SCAN_INTERVAL_S
-            if brain.goal == target and brain.route_failed and brain.path_revision == self.world.revision:
-                brain.indoor_blocked[target] = self.world.revision
-            elif (not brain.indoor_look_until
+            if (brain.goal == target and brain.route_failed and brain.path_revision == revision
+                    and brain.indoor_blocked.get(target) != revision):
+                brain.indoor_blocked[target] = revision
+                brain.indoor_walk_look = None
+                self._begin_indoor_look(actor, brain)
+                brain.look_reason = "이동 불가 · 현재 위치 확인"
+                return None, False
+            if (brain.indoor_blocked.get(target) != revision and not brain.indoor_look_until
                   and any(sample not in sweep.checked for sample in area.room_points[previous_room])):
                 sweep.claims[actor.id] = target, time + 1
                 if math.dist(actor.xy, target) > 0.25:
@@ -519,7 +525,6 @@ class EnemyAI:
             brain.indoor_target = None
             brain.indoor_look_until = 0.0
 
-        revision = self.world.revision
         available = [candidate for candidate in area.points
                      if sweep.observed_from.get(candidate) != revision
                      and brain.indoor_blocked.get(candidate) != revision]

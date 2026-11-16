@@ -170,6 +170,44 @@ class IndoorSearchTests(unittest.TestCase):
         self.assertIsNotNone(goal)
         self.assertFalse(finished)
 
+    def test_unreachable_observation_point_stops_guard_for_a_scan(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 3.6]]}},
+                                facilities=[], geometry=geometry, revision=0,
+                                navigation=Navigation({}, [], geometry))
+        area, = build_search_areas(world)
+        world.indoor_search_area = lambda point: area
+        origin, target = (2.7, 0.9), (4.5, 0.9)
+        guard = Actor("guard", Position(*origin))
+        ai = EnemyAI(world, [guard], [[]])
+        ai.start_search_drill([guard], target)
+        brain = ai.brains[guard.id]
+        brain.indoor = ai.incidents[brain.incident].indoor
+        brain.indoor_target = brain.goal = target
+        brain.path, brain.path_revision = [target], world.revision
+
+        geometry.add(Collider("new_obstacle", Rect(4, 0, 1.1, 3.6)))
+        world.revision += 1
+        intent = Intent()
+        ai._move(guard, brain, intent, target, 1, 1)
+        self.assertTrue(brain.route_failed)
+        self.assertEqual(intent.direction, (0, 0))
+
+        self.assertEqual(ai._indoor_sweep(guard, brain, target, 0, 1 + 1 / 60), (None, False))
+        self.assertTrue(brain.indoor_scanning(1 + 1 / 60))
+        self.assertEqual(brain.indoor_blocked[target], world.revision)
+        for tick in range(1, 181):
+            time = 1 + tick / 60
+            if not brain.indoor_scanning(time):
+                break
+            ai._advance_indoor_look(guard, brain, time)
+
+        self.assertEqual(guard.xy, origin)
+        self.assertNotIn(target, brain.indoor.checked)
+        origin_sample = min(area.points, key=lambda point: math.dist(point, origin))
+        self.assertIn(origin_sample, brain.indoor.checked)
+        self.assertFalse(brain.indoor_scanning(time))
+
     def test_two_doorways_preserve_room_boundaries_when_a_door_opens(self):
         geometry = SpatialIndex()
         panels = ((0, 0.7, "wall"), (0.7, 1.8, "door"), (2.5, 4, "wall"),
