@@ -14,6 +14,8 @@ OBSERVATION_SAMPLE_LIMIT = 32
 SCAN_HOLD_S = 0.18
 SCAN_HALF_CONE = math.radians(45)
 SCAN_CONE_COS = math.cos(SCAN_HALF_CONE)
+CORNER_SHARE_WINDOW_S = 1.5
+SEARCHER_ACTIVE_S = 0.2
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class SearchArea:
     points: tuple[tuple[float, float], ...]
     rooms: dict[tuple[float, float], int]
     room_points: dict[int, tuple[tuple[float, float], ...]]
+    room_corners: dict[int, tuple[tuple[float, float], ...]]
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,15 @@ def _assign_rooms(world, points):
     return rooms
 
 
+def _sample_corners(points):
+    # 방의 수색 표본 격자에서 각 모서리에 가장 가까운 유효 표본을 사용한다.
+    xs, ys = zip(*points)
+    return tuple(dict.fromkeys(
+        min(points, key=lambda point: (math.dist(point, (x, y)), point))
+        for x in (min(xs), max(xs)) for y in (min(ys), max(ys))
+    ))
+
+
 def build_search_areas(world):
     areas = dict(world.data.get("search_areas", {}))
     for facility in world.facilities:
@@ -104,8 +116,9 @@ def build_search_areas(world):
             by_room = defaultdict(list)
             for point in ordered:
                 by_room[rooms[point]].append(point)
-            result.append(SearchArea(key, floors, ordered, rooms,
-                                     {room: tuple(samples) for room, samples in by_room.items()}))
+            room_points = {room: tuple(samples) for room, samples in by_room.items()}
+            room_corners = {room: _sample_corners(samples) for room, samples in room_points.items()}
+            result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners))
     return tuple(result)
 
 
@@ -116,6 +129,9 @@ class IndoorSweep:
     evidence_at: float
     checked: set = field(default_factory=set)
     claims: dict = field(default_factory=dict)
+    corner_claims: dict[str, tuple[tuple[float, float], float]] = field(default_factory=dict)
+    corner_checks: dict[tuple[float, float], tuple[str, float]] = field(default_factory=dict)
+    sound_searchers: dict[str, float] = field(default_factory=dict)
     observed_from: dict = field(default_factory=dict)
     regroup_slots: dict[str, tuple[float, float]] = field(default_factory=dict)
     regroup_swaps: set[tuple[str, str]] = field(default_factory=set)
@@ -135,8 +151,36 @@ class IndoorSweep:
                     and geometry.raycast(xy, point, category="sight") is None):
                 self.checked.add(point)
 
-    def look(self, xy, facing, room, geometry, *, walking=False, continue_scan=False):
-        points = self.area.points if room is None else self.area.room_points[room]
+    def pending_corners(self, room):
+        if room is None:
+            points = (point for corners in self.area.room_corners.values() for point in corners)
+        else:
+            points = self.area.room_corners[room]
+        return tuple(point for point in points if point not in self.checked)
+
+    def available_corners(self, corners, actor_id, time):
+        if not corners:
+            return ()
+        claimed = {point for owner, (point, until) in self.corner_claims.items()
+                   if owner != actor_id and time < until}
+        rooms = {self.area.rooms[point] for point in corners}
+        if any(owner != actor_id and time - at < SEARCHER_ACTIVE_S for owner, at in self.sound_searchers.items()):
+            for room in tuple(rooms):
+                checks = [self.corner_checks[point] for point in self.area.room_corners[room]
+                          if point in self.corner_checks]
+                if (checks and all(owner == actor_id for owner, _ in checks)
+                        and time - min(at for _, at in checks) < CORNER_SHARE_WINDOW_S):
+                    # 먼저 확인한 NPC가 다음 코너까지 맡기 전에 동료에게 기회를 준다.
+                    rooms.remove(room)
+        return tuple(point for point in corners if point not in claimed and self.area.rooms[point] in rooms)
+
+    def confirm_corner(self, point, actor_id, time):
+        self.checked.add(point)
+        self.corner_checks[point] = actor_id, time
+
+    def look(self, xy, facing, room, geometry, *, walking=False, continue_scan=False, points=None):
+        if points is None:
+            points = self.area.points if room is None else self.area.room_points[room]
         samples = {point: 1 for point in points if point not in self.checked}
         scan_range = SCAN_RANGE_M if walking else STATIONARY_SCAN_RANGE_M
         return choose_look(xy, facing, geometry, samples, scan_range=scan_range, continue_scan=continue_scan)

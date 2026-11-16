@@ -165,25 +165,54 @@ class IndoorSearchTests(unittest.TestCase):
         brain.indoor_target = target
 
         for tick in range(18):
-            ai._look_during_indoor_move(guard, brain, tick / 60, brain.indoor)
+            ai._look_at_indoor_samples(guard, brain, tick / 60, brain.indoor)
         self.assertEqual(brain.look_point, sample)
         self.assertNotIn(sample, brain.indoor.checked)
 
         obstacle.active = True
-        ai._look_during_indoor_move(guard, brain, 18 / 60, brain.indoor)
+        ai._look_at_indoor_samples(guard, brain, 18 / 60, brain.indoor)
         self.assertIsNone(brain.indoor_walk_focus_since)
         self.assertIsNone(brain.look_point)
 
         obstacle.active = False
         for tick in range(19, 40):
-            ai._look_during_indoor_move(guard, brain, tick / 60, brain.indoor)
+            ai._look_at_indoor_samples(guard, brain, tick / 60, brain.indoor)
         self.assertEqual(brain.look_point, sample)
         self.assertNotIn(sample, brain.indoor.checked)
 
         for tick in range(40, 53):
-            ai._look_during_indoor_move(guard, brain, tick / 60, brain.indoor)
+            ai._look_at_indoor_samples(guard, brain, tick / 60, brain.indoor)
         self.assertIn(sample, brain.indoor.checked)
         self.assertIsNone(brain.look_point)
+
+    def test_walkers_choose_distinct_corners_and_switch_when_occluded(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 5.4]]}},
+                                facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
+        area, = build_search_areas(world)
+        first = Actor("first", Position(2.7, 2.7))
+        second = Actor("second", Position(2.7, 3.0))
+        ai = EnemyAI(world, [first, second], [[], []])
+        sweep = IndoorSweep(area, first.xy, 0)
+        first_brain, second_brain = ai.brains[first.id], ai.brains[second.id]
+
+        ai._look_at_indoor_samples(first, first_brain, 0, sweep)
+        ai._look_at_indoor_samples(second, second_brain, 0, sweep)
+        original, reserved = first_brain.look_point, second_brain.look_point
+        corners = set(sweep.pending_corners(None))
+        self.assertIn(original, corners)
+        self.assertIn(reserved, corners)
+        self.assertNotEqual(original, reserved)
+        self.assertFalse(sweep.checked)
+
+        x, y = ((a + b) / 2 for a, b in zip(first.xy, original))
+        geometry.add(Collider("occluder", Rect(x - 0.05, y - 0.05, 0.1, 0.1)))
+        world.revision += 1
+        ai._look_at_indoor_samples(first, first_brain, 1 / 60, sweep)
+
+        self.assertIn(first_brain.look_point, corners - {original, reserved})
+        self.assertIsNone(first_brain.indoor_walk_focus_since)
+        self.assertNotIn(original, sweep.checked)
 
     def test_scan_checks_visible_corners_without_ignoring_pillar(self):
         geometry = SpatialIndex()

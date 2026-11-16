@@ -119,9 +119,11 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertEqual(sum(point[1] > 6 for point in stack.slots.values()), right)
                 self.assertEqual(len(set(stack.slots.values())), left + right)
                 door = simulation.world.geometry.objects["shared_door"]
+                area = simulation.world.search_areas[0]
+                corners = set().union(*area.room_corners.values())
                 lead = simulation.guards[0]
-                lead_brain = simulation.ai.brains[lead.id]
-                first_look = None
+                first_looks = {}
+                passage_order = []
                 all_passed = False
                 moving_scan = False
                 sweep = None
@@ -129,25 +131,39 @@ class PrototypeAITests(unittest.TestCase):
                     before = {actor.id: actor.xy for actor in simulation.guards}
                     was_open = not door.active
                     simulation.step()
-                    if was_open and first_look is None and lead_brain.look_point in simulation.world.search_areas[0].points:
-                        first_look = lead_brain.look_point
-                        self.assertLess(before[lead.id][0], door.rect.right)
-                        self.assertGreater(lead.xy[0], before[lead.id][0])
-                        self.assertIsNone(simulation.world.geometry.raycast(before[lead.id], first_look, category="sight"))
+                    for actor in simulation.guards:
+                        if actor.xy[0] >= door.rect.right and actor.id not in passage_order:
+                            passage_order.append(actor.id)
+                        look = simulation.ai.brains[actor.id].look_point
+                        if was_open and actor.id not in first_looks and look in area.points:
+                            first_looks[actor.id] = look
+                            self.assertIsNone(simulation.world.geometry.raycast(before[actor.id], look, category="sight"))
+                            if actor is lead:
+                                self.assertLess(before[lead.id][0], door.rect.right)
+                                self.assertGreater(lead.xy[0], before[lead.id][0])
                     all_passed |= all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards)
                     moving_scan |= any(actor.xy != before[actor.id]
                                        and simulation.ai.brains[actor.id].look_reason == "이동 중 공간 확인"
                                        for actor in simulation.guards)
                     sweep = next((incident.indoor for incident in simulation.ai.incidents.values()
                                   if incident.indoor is not None), None)
+                    if sweep is not None and sweep.checked - corners:
+                        self.assertLessEqual(corners, sweep.checked)
                     if all_passed and sweep is not None and len(sweep.checked) == len(sweep.area.points):
                         break
 
                 self.assertTrue(all_passed)
-                self.assertIsNotNone(first_look)
                 self.assertIsNotNone(sweep)
                 self.assertEqual(sweep.checked, set(sweep.area.points))
                 self.assertTrue(moving_scan)
+                first, second = passage_order[:2]
+                self.assertIn(first, first_looks)
+                self.assertIn(second, first_looks)
+                self.assertIn(first_looks[first], corners)
+                self.assertIn(first_looks[second], corners)
+                self.assertNotEqual(first_looks[first], first_looks[second])
+                for actor_id in (first, second):
+                    self.assertEqual(sweep.corner_checks[first_looks[actor_id]][0], actor_id)
 
     def test_new_gunshot_releases_stack(self):
         simulation = PlaySimulation(DOOR_SCENE, stack_drill=True)
