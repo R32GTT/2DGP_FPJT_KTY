@@ -14,7 +14,7 @@ OBSERVATION_SAMPLE_LIMIT = 32
 SCAN_HOLD_S = 0.18
 SCAN_HALF_CONE = math.radians(45)
 SCAN_CONE_COS = math.cos(SCAN_HALF_CONE)
-MAX_LOOK_OFFSET = math.radians(85)
+WALK_LOOK_HALF_ANGLE = math.radians(15)
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class LookChoice:
     visible_count: int
 
 
-def choose_look(xy, facing, geometry, samples, *, max_offset=MAX_LOOK_OFFSET, scan_range=SCAN_RANGE_M):
+def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range=SCAN_RANGE_M):
     visible = []
     for point, weight in samples.items():
         dx, dy = point[0] - xy[0], point[1] - xy[1]
@@ -45,9 +45,8 @@ def choose_look(xy, facing, geometry, samples, *, max_offset=MAX_LOOK_OFFSET, sc
                 and geometry.raycast(xy, point, category="sight") is None):
             visible.append((point, offset, distance, weight))
     best = None
-    for point, offset, distance, _ in visible:
-        if abs(offset) > max_offset:
-            continue
+    for point, point_angle, distance, _ in visible:
+        offset = max(-max_offset, min(max_offset, point_angle))
         seen = [row for row in visible if abs(math.remainder(row[1] - offset, math.tau)) <= SCAN_HALF_CONE]
         # 가까운 표본 하나보다 시야로 확인할 수 있는 공간 전체를 비교한다.
         score = (sum(row[3] for row in seen), sum(row[2] for row in seen), -abs(offset), distance, point)
@@ -137,16 +136,16 @@ class IndoorSweep:
     def look(self, xy, facing, room, geometry, *, walking=False):
         samples = {point: 1 for point in self.area.room_points[room] if point not in self.checked}
         if walking:
-            return choose_look(xy, facing, geometry, samples)
-        return choose_look(xy, facing, geometry, samples, max_offset=math.pi, scan_range=STATIONARY_SCAN_RANGE_M)
+            return choose_look(xy, facing, geometry, samples, max_offset=WALK_LOOK_HALF_ANGLE)
+        return choose_look(xy, facing, geometry, samples, scan_range=STATIONARY_SCAN_RANGE_M)
 
     @staticmethod
     def _visible_from(origin, point, geometry):
         return (math.dist(origin, point) <= STATIONARY_SCAN_RANGE_M
                 and geometry.raycast(origin, point, category="sight") is None)
 
-    def can_finish_here(self, origin, remaining, geometry):
-        return all(self._visible_from(origin, point, geometry) for point in remaining)
+    def can_scan_here(self, origin, remaining, geometry):
+        return any(self._visible_from(origin, point, geometry) for point in remaining)
 
     def observation_point(self, origin, heading, candidates, remaining, navigation):
         forward_x, forward_y = math.cos(heading), math.sin(heading)

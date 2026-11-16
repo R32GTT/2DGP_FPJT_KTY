@@ -29,12 +29,15 @@ def run_window(simulation, *, frames=0):
             started = perf_counter()
             elapsed, previous = min(0.1, started - previous), started
             for action in controls.poll(camera):
-                if (test_mode and action == "restart_ai") or (simulation.ai_scenario and action == "next_ai"):
+                select_drill = action == "next_ai" and "search_drill" in simulation.world.data
+                next_scenario = action == "next_ai" and simulation.ai_scenario
+                if (test_mode and action == "restart_ai") or select_drill or next_scenario:
                     scenario = simulation.ai_scenario
-                    if action == "next_ai":
+                    if next_scenario:
                         cases = tuple(SCENARIOS)
                         scenario = cases[(cases.index(scenario) + 1) % len(cases)]
-                    simulation = PlaySimulation(simulation.world.path, ai_scenario=scenario)
+                    simulation = PlaySimulation(simulation.world.path, ai_scenario=scenario,
+                                                search_drill=select_drill or simulation.search_drill)
                     controls.keys.clear()
                     controls.firing = controls.aiming = controls.trigger_pending = controls.map_open = False
                     controls.debug = controls.paused = True

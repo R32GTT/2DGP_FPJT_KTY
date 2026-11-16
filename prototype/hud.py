@@ -327,7 +327,7 @@ class HUD:
             if sweeps:
                 checked = sum(len(sweep.checked) for sweep in sweeps.values())
                 total = sum(len(sweep.area.points) for sweep in sweeps.values())
-                self.label("map_search", f"수색 {checked}/{total} · 황색 확인 전 · 주황 조사 중 · 청록 확인", 13)
+                self.label("map_search", f"수색 {checked}/{total} · 황색 확인 전 · 주황 조사 중 · 청록 확인 · 흰 선 시선", 13)
                 self.text("map_search", 84, 194)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp <= 0 or (actor.team != "player" and not debug):
@@ -335,6 +335,8 @@ class HUD:
             x, y = point(*actor.xy)
             color = (112, 230, 205) if actor.team == "player" else (226, 131, 92)
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *color, filled=True)
+            if debug and actor.team != "player":
+                pico.draw_line(x, y, x + 10 * math.cos(actor.facing), y - 10 * math.sin(actor.facing), 246, 246, 236)
         for convoy in simulation.campaign.convoys(simulation.time):
             if not world.bounds.x <= convoy.x <= world.bounds.right or not world.bounds.y <= convoy.y <= world.bounds.bottom:
                 continue

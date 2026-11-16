@@ -23,10 +23,15 @@ FIXED_DT = 1 / 60
 
 
 class PlaySimulation:
-    def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None):
+    def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False):
         self.world = World(scene)
+        drill = self.world.data.get("search_drill")
+        if search_drill and (drill is None or ai_scenario is not None):
+            raise ValueError("이 장면에서는 실내 수색 훈련을 시작할 수 없습니다")
+        self.search_drill = search_drill
+        player_spawn = drill["observer_spawn"] if search_drill else self.world.data["player_spawn"]
         self.specs = load_weapons()
-        self.player = Actor("player", Position(*self.world.data["player_spawn"]), speed=3.0,
+        self.player = Actor("player", Position(*player_spawn), speed=3.0,
                             hp=100, armor=40, team="player", state="player")
         self.guard_records = [Actor(row["id"], Position(*row["position"]), armor=15,
                                      source_unit=row.get("source_unit", ""), member=row.get("member", -1),
@@ -57,9 +62,14 @@ class PlaySimulation:
         self.ai_scenario, self.ai_hint = ai_scenario, ""
         if ai_scenario:
             configure(self, ai_scenario)
+        elif search_drill:
+            self.ai.start_search_drill(self.guards, tuple(drill["last_seen"]))
+            self.message = "실내 수색 훈련 · P 시작 · F2 다시 보기"
+            self.ai_hint = "관찰 위치에서 M 평면도 · F1 경로 및 판단 표시"
         elif self.world.data.get("training_facility"):
             self.message = "실내 AI 검증 · P 시작 · F2 재시작"
-            self.ai_hint = "F 문 사용 · M 전체 평면도 · F1 적군 판단 표시"
+            self.ai_hint = ("F3 실내 수색 훈련 · M 평면도 · F1 적군 판단 표시" if drill else
+                            "F 문 사용 · M 전체 평면도 · F1 적군 판단 표시")
 
     def _signals(self, actor, signals):
         for signal in signals:
