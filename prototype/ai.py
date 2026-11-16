@@ -28,6 +28,7 @@ INDOOR_BRAKE_MPS2 = 15.0
 INDOOR_WALK_LOOK_INTERVAL_S = 0.12
 INDOOR_WALK_CONFIRM_S = 0.35
 INDOOR_WALK_FOCUS_ANGLE = math.radians(12)
+CORNER_GLANCE_S = 0.5
 INDOOR_YIELD_RETRY_S = 0.25
 INDOOR_SMOOTH_BEND = math.radians(55)
 REGROUP_HOLD_S = 1.0
@@ -622,9 +623,12 @@ class EnemyAI:
         geometry = self.world.geometry
         room = sweep.area.rooms[target]
         sweep.claims[actor.id] = target, time + 1
+        if self._glance_after_corner(actor, brain, sweep, time):
+            return
         corners = sweep.pending_corners(room)
         if sweep.can_scan_here(actor.xy, corners, geometry):
-            self._look_at_indoor_samples(actor, brain, time, sweep, room, stationary=True)
+            if self._look_at_indoor_samples(actor, brain, time, sweep, room, stationary=True):
+                return
             brain.indoor_focus = None
             brain.indoor_look_angle, brain.indoor_look_until = actor.facing, 0.0
             if brain.look_point is not None:
@@ -675,7 +679,23 @@ class EnemyAI:
         brain.indoor_walk_look_revision = -1
         brain.indoor_walk_look_started = False
 
+    def _glance_after_corner(self, actor, brain, sweep, time):
+        point = sweep.area.corner_glance
+        if point is None:
+            return False
+        checked_at = next((at for owner, at in sweep.corner_checks.values() if owner == actor.id), -math.inf)
+        if time - checked_at >= CORNER_GLANCE_S:
+            return False
+        brain.indoor_walk_look = brain.indoor_walk_focus_since = None
+        brain.indoor_walk_look_started = True
+        sweep.corner_claims.pop(actor.id, None)
+        brain.look_point, brain.look_reason = point, "코너 확인 직후 실내 주시"
+        self._face(actor, point)
+        return True
+
     def _look_at_indoor_samples(self, actor, brain, time, sweep, room=None, *, stationary=False):
+        if self._glance_after_corner(actor, brain, sweep, time):
+            return True
         point = brain.indoor_walk_look
         geometry = self.world.geometry
         revision = self.world.revision
@@ -710,6 +730,8 @@ class EnemyAI:
         else:
             brain.indoor_walk_focus_since = None
 
+        if self._glance_after_corner(actor, brain, sweep, time):
+            return True
         confirmed = point in sweep.checked
         if confirmed or (not visible and (point is not None or time >= brain.indoor_walk_look_at
                                           or revision != brain.indoor_walk_look_revision)):
@@ -734,6 +756,7 @@ class EnemyAI:
             brain.indoor_walk_look_started = True
             desired = math.atan2(point[1] - y, point[0] - x)
             actor.facing = self._turn_toward(actor.facing, desired, 1 / 60, rate=INDOOR_SWEEP_TURN_RADIANS_PER_S)
+        return False
 
     def _pace_indoor_movement(self, actor, brain, intent, time, *, room_sweep=False, independent_look=False):
         dx, dy = intent.direction

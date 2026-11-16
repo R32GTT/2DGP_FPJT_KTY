@@ -6,6 +6,7 @@
   "search_layouts": {
     "문 안쪽 수색": {
       "corner_axis": 1,
+      "corner_glance": [10.4, 6],
       "finish_poses": [
         {"position": [8.0, 10.5], "look": [11.5, 8.3]},
         {"position": [8.0, 1.4], "look": [11.5, 3.6]},

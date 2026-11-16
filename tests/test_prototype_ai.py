@@ -123,6 +123,7 @@ class PrototypeAITests(unittest.TestCase):
                 corners = set().union(*area.room_corners.values())
                 lead = simulation.guards[0]
                 first_looks = {}
+                first_glances = {}
                 passage_order = []
                 opened_at = passed_at = None
                 all_passed = False
@@ -152,6 +153,10 @@ class PrototypeAITests(unittest.TestCase):
                                        for actor in simulation.guards)
                     sweep = next((incident.indoor for incident in simulation.ai.incidents.values()
                                   if incident.indoor is not None), None)
+                    if sweep is not None:
+                        for actor in simulation.guards:
+                            if simulation.ai.brains[actor.id].look_point == area.corner_glance:
+                                first_glances.setdefault(actor.id, simulation.time)
                     if sweep is not None and sweep.checked - corners:
                         self.assertLessEqual(corners, sweep.checked)
                     if all_passed and sweep is not None and len(sweep.checked) == len(sweep.area.points):
@@ -170,7 +175,9 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertIn(first_looks[second], corners)
                 self.assertLess((first_looks[first][1] - 6) * (first_looks[second][1] - 6), 0)
                 for actor_id in (first, second):
-                    self.assertEqual(sweep.corner_checks[first_looks[actor_id]][0], actor_id)
+                    owner, confirmed_at = sweep.corner_checks[first_looks[actor_id]]
+                    self.assertEqual(owner, actor_id)
+                    self.assertAlmostEqual(first_glances[actor_id], confirmed_at)
 
                 guards = {actor.id: actor for actor in simulation.guards}
                 poses = dict(zip(passage_order, area.finish_poses))

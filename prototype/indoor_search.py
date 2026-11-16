@@ -34,6 +34,7 @@ class SearchArea:
     room_corners: dict[int, tuple[tuple[float, float], ...]]
     corner_axis: int | None = None
     finish_poses: tuple[SearchPose, ...] = ()
+    corner_glance: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -140,8 +141,10 @@ def build_search_areas(world):
             layout = world.data.get("search_layouts", {}).get(key, {})
             poses = tuple(SearchPose(tuple(row["position"]), tuple(row["look"]))
                           for row in layout.get("finish_poses", ()))
+            glance = layout.get("corner_glance")
             result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners,
-                                     corner_axis=layout.get("corner_axis"), finish_poses=poses))
+                                     corner_axis=layout.get("corner_axis"), finish_poses=poses,
+                                     corner_glance=tuple(glance) if glance is not None else None))
     return tuple(result)
 
 
