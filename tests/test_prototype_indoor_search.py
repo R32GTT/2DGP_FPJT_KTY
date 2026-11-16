@@ -85,10 +85,9 @@ class IndoorSearchTests(unittest.TestCase):
 
         guard.position = Position(1.15, 4.5)
         intent = Intent(direction=(6.95, 0))
-        ai._pace_indoor_movement(guard, brain, intent, 1.10, room_sweep=True)
-        self.assertEqual(brain.look_point, first)
+        self.assertGreater(brain.indoor_walk_look_at, 1.10)
         facing = guard.facing
-        ai._pace_indoor_movement(guard, brain, intent, 1.13, room_sweep=True)
+        ai._pace_indoor_movement(guard, brain, intent, 1.10, room_sweep=True)
 
         self.assertIn(brain.look_point, pending - {first})
         self.assertGreater(intent.move_multiplier, 0)

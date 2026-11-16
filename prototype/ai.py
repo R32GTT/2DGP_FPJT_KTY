@@ -587,9 +587,10 @@ class EnemyAI:
         sweep = brain.indoor
         previous_waypoint, point, offset = brain.indoor_walk_look or (None, None, 0.0)
         new_segment = previous_waypoint != waypoint
-        if new_segment or time >= brain.indoor_walk_look_at:
+        confirmed = point in sweep.checked
+        if new_segment or confirmed or time >= brain.indoor_walk_look_at:
             geometry = self.world.geometry
-            if (new_segment or point is None or point in sweep.checked
+            if (new_segment or confirmed or point is None
                     or geometry.raycast(actor.xy, point, category="sight") is not None):
                 room = sweep.area.rooms[brain.indoor_target]
                 choice = sweep.look(actor.xy, heading, room, geometry, walking=True)
