@@ -5,7 +5,7 @@ import unittest
 
 from campaign.models import Position
 from prototype.actors import Actor
-from prototype.ai import EnemyAI
+from prototype.ai import EnemyAI, Intent
 from prototype.geometry import Collider, Rect, SpatialIndex
 from prototype.indoor_search import IndoorSweep, build_search_areas
 from prototype.navigation import Navigation
@@ -16,6 +16,31 @@ FACILITY_SCENE = Path(__file__).resolve().parents[1] / "prototype/scenarios/ai_f
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_guard_walks_along_path_while_looking_to_the_side(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 7.2]]}},
+                                facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
+        area, = build_search_areas(world)
+        guard = Actor("guard", Position(0.9, 0.9), facing=math.pi / 2)
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        side = max(point for point in area.points if 2 < point[0] < 3)
+        target = (4.5, 0.9)
+        brain.indoor = IndoorSweep(area, target, 0, checked=set(area.points) - {side})
+        brain.indoor_target = target
+        brain.path = [target]
+        intent = Intent(direction=(3.6, 0), open_door=True)
+
+        ai._pace_indoor_movement(guard, brain, intent, 1, room_sweep=True)
+
+        self.assertEqual(intent.direction, (3.6, 0))
+        self.assertGreater(intent.move_multiplier, 0)
+        self.assertTrue(intent.open_door)
+        self.assertEqual(brain.look_point, side)
+        self.assertGreater(guard.facing, math.radians(60))
+        brain.indoor.scan_forward(guard.xy, guard.facing, area.rooms[target], geometry)
+        self.assertIn(side, brain.indoor.checked)
+
     def test_scan_checks_visible_corners_without_ignoring_pillar(self):
         geometry = SpatialIndex()
         geometry.add(Collider("west", Rect(-0.2, 0, 0.2, 7.2)))

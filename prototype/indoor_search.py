@@ -134,8 +134,10 @@ class IndoorSweep:
                     and geometry.raycast(xy, point, category="sight") is None):
                 self.checked.add(point)
 
-    def look(self, xy, facing, room, geometry):
+    def look(self, xy, facing, room, geometry, *, walking=False):
         samples = {point: 1 for point in self.area.room_points[room] if point not in self.checked}
+        if walking:
+            return choose_look(xy, facing, geometry, samples)
         return choose_look(xy, facing, geometry, samples, max_offset=math.pi, scan_range=STATIONARY_SCAN_RANGE_M)
 
     @staticmethod

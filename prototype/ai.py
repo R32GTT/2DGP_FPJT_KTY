@@ -22,8 +22,9 @@ INDOOR_START_DELAY_S = 0.14
 INDOOR_ACCEL_MPS2 = 7.0
 INDOOR_BRAKE_MPS2 = 9.0
 INDOOR_WALK_SCAN_INTERVAL_S = 0.15
+INDOOR_WALK_LOOK_INTERVAL_S = 0.45
 INDOOR_YIELD_RETRY_S = 0.25
-INDOOR_WALK_TURN_LIMIT = math.radians(55)
+INDOOR_SMOOTH_BEND = math.radians(55)
 REGROUP_HOLD_S = 1.0
 REGROUP_ARRIVAL_M = 0.2
 
@@ -92,6 +93,8 @@ class Brain:
     indoor_look_until: float = 0.0
     indoor_scan_at: float = 0.0
     indoor_heading: float | None = None
+    indoor_walk_look_at: float = 0.0
+    indoor_walk_look_point: tuple | None = None
     indoor_speed: float = 0.0
     indoor_depart_at: float | None = None
     indoor_yield: tuple | None = None
@@ -421,6 +424,7 @@ class EnemyAI:
         brain.indoor_target = brain.indoor_yield = brain.indoor_look_angle = None
         brain.indoor_look_until = brain.scan_until = 0.0
         brain.indoor_scan_at, brain.indoor_heading = 0.0, None
+        brain.indoor_walk_look_at, brain.indoor_walk_look_point = 0.0, None
         brain.indoor_speed, brain.indoor_depart_at = 0.0, None
         brain.cue = brain.search_target = brain.search_cover = None
         brain.next_sweep_at = 0.0
@@ -509,6 +513,7 @@ class EnemyAI:
                                             candidate), default=None)
         if target is not None:
             room = area.rooms[target]
+            brain.indoor_walk_look_at, brain.indoor_walk_look_point = 0.0, None
             remaining = tuple(sample for sample in area.room_points[room] if sample not in sweep.checked)
             if sweep.can_finish_here(actor.xy, remaining, self.world.geometry):
                 brain.indoor_target = target
@@ -555,6 +560,23 @@ class EnemyAI:
                 brain.look_reason = "스캔 완료"
         sweep.claims[actor.id] = target, time + 1
 
+    def _look_during_indoor_move(self, actor, brain, heading, time):
+        if time >= brain.indoor_walk_look_at:
+            sweep = brain.indoor
+            room = sweep.area.rooms[brain.indoor_target]
+            choice = sweep.look(actor.xy, heading, room, self.world.geometry, walking=True)
+            brain.indoor_walk_look_point = choice.point if choice else None
+            brain.indoor_walk_look_at = time + INDOOR_WALK_LOOK_INTERVAL_S
+
+        point = brain.indoor_walk_look_point
+        desired = heading
+        if point is not None and math.dist(actor.xy, point) > 0.15:
+            desired = math.atan2(point[1] - actor.xy[1], point[0] - actor.xy[0])
+            brain.look_point, brain.look_reason = point, "이동 중 미확인 공간 관찰"
+        else:
+            brain.look_point, brain.look_reason = brain.path[0], "진행 방향 확인"
+        actor.facing = self._turn_toward(actor.facing, desired, 1 / 60, rate=INDOOR_TURN_RADIANS_PER_S)
+
     def _pace_indoor_movement(self, actor, brain, intent, time, *, room_sweep=False):
         dx, dy = intent.direction
         if not (dx or dy):
@@ -563,17 +585,21 @@ class EnemyAI:
 
         tick = 1 / 60
         heading = math.atan2(dy, dx)
-        actor.facing = self._turn_toward(actor.facing, heading, tick, rate=INDOOR_TURN_RADIANS_PER_S)
-        if not room_sweep and brain.indoor_depart_at is None:
-            brain.indoor_depart_at = time + INDOOR_START_DELAY_S
-        error = abs(math.remainder(heading - actor.facing, math.tau))
-        turn_limit = INDOOR_WALK_TURN_LIMIT if room_sweep else 1e-6
-        if error > turn_limit or (brain.indoor_depart_at is not None and time < brain.indoor_depart_at):
-            brain.indoor_speed = 0.0
-            brain.progress_at, brain.progress_point = time, actor.xy
-            intent.direction, intent.open_door = (0, 0), False
-            brain.look_reason = "진행 방향으로 회전 중"
-            return
+        if room_sweep:
+            brain.indoor_heading = heading
+            self._look_during_indoor_move(actor, brain, heading, time)
+        else:
+            actor.facing = self._turn_toward(actor.facing, heading, tick, rate=INDOOR_TURN_RADIANS_PER_S)
+            if brain.indoor_depart_at is None:
+                brain.indoor_depart_at = time + INDOOR_START_DELAY_S
+            error = abs(math.remainder(heading - actor.facing, math.tau))
+            if error > 1e-6 or time < brain.indoor_depart_at:
+                brain.indoor_speed = 0.0
+                brain.progress_at, brain.progress_point = time, actor.xy
+                intent.direction, intent.open_door = (0, 0), False
+                brain.look_reason = "진행 방향으로 회전 중"
+                return
+            brain.look_point, brain.look_reason = brain.path[0], "진행 방향 확인"
 
         distance = math.hypot(dx, dy)
         speed_limit = actor.speed * INDOOR_MOVE_MULTIPLIER
@@ -584,19 +610,15 @@ class EnemyAI:
             bend = abs(math.remainder(outgoing - heading, math.tau))
             if bend <= math.radians(25):
                 exit_speed = speed_limit
-            elif room_sweep and bend <= turn_limit:
+            elif room_sweep and bend <= INDOOR_SMOOTH_BEND:
                 exit_speed = speed_limit * math.cos(bend)
         speed_limit = min(speed_limit, math.sqrt(exit_speed ** 2 + 2 * INDOOR_BRAKE_MPS2 * distance))
-        if room_sweep:
-            speed_limit *= math.cos(error)
         increase = INDOOR_ACCEL_MPS2 * tick
         decrease = INDOOR_BRAKE_MPS2 * tick
         brain.indoor_speed = max(brain.indoor_speed - decrease, min(speed_limit, brain.indoor_speed + increase))
         intent.move_multiplier = brain.indoor_speed / actor.speed
         intent.step_dt = min(tick, distance / brain.indoor_speed)
         intent.move_straight = True
-
-        brain.look_point, brain.look_reason = brain.path[0], "진행 방향 확인"
 
     @staticmethod
     def _show_search_look(brain):
@@ -1177,10 +1199,7 @@ class EnemyAI:
                                 and brain.action != "peek",
                                 approximate=approximate)
             if moving_sweep:
-                room_sweep = not priority_search
-                self._pace_indoor_movement(actor, brain, intent, time, room_sweep=room_sweep)
-                if room_sweep and any(intent.direction):
-                    brain.indoor_heading = math.atan2(intent.direction[1], intent.direction[0])
+                self._pace_indoor_movement(actor, brain, intent, time, room_sweep=not priority_search)
             else:
                 brain.indoor_speed, brain.indoor_depart_at = 0.0, None
             if (actor.state == "retreat" and memory.visible and any(intent.direction)
