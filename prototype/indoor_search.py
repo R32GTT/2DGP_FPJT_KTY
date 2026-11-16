@@ -26,6 +26,7 @@ class SearchArea:
     rooms: dict[tuple[float, float], int]
     room_points: dict[int, tuple[tuple[float, float], ...]]
     room_corners: dict[int, tuple[tuple[float, float], ...]]
+    corner_axis: int | None = None
 
 
 @dataclass(frozen=True)
@@ -118,7 +119,9 @@ def build_search_areas(world):
                 by_room[rooms[point]].append(point)
             room_points = {room: tuple(samples) for room, samples in by_room.items()}
             room_corners = {room: _sample_corners(samples) for room, samples in room_points.items()}
-            result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners))
+            layout = world.data.get("search_layouts", {}).get(key, {})
+            result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners,
+                                     corner_axis=layout.get("corner_axis")))
     return tuple(result)
 
 
@@ -163,16 +166,33 @@ class IndoorSweep:
             return ()
         claimed = {point for owner, (point, until) in self.corner_claims.items()
                    if owner != actor_id and time < until}
-        rooms = {self.area.rooms[point] for point in corners}
+        available = set(corners) - claimed
         if any(owner != actor_id and time - at < SEARCHER_ACTIVE_S for owner, at in self.sound_searchers.items()):
-            for room in tuple(rooms):
-                checks = [self.corner_checks[point] for point in self.area.room_corners[room]
-                          if point in self.corner_checks]
-                if (checks and all(owner == actor_id for owner, _ in checks)
-                        and time - min(at for _, at in checks) < CORNER_SHARE_WINDOW_S):
-                    # 먼저 확인한 NPC가 다음 코너까지 맡기 전에 동료에게 기회를 준다.
-                    rooms.remove(room)
-        return tuple(point for point in corners if point not in claimed and self.area.rooms[point] in rooms)
+            for room in {self.area.rooms[point] for point in available}:
+                samples = self.area.room_corners[room]
+                checks = [point for point in self.corner_checks if point in samples]
+                if checks:
+                    first = checks[0]
+                    leader, at = self.corner_checks[first]
+                    if (time - at >= CORNER_SHARE_WINDOW_S
+                            or any(self.corner_checks[point][0] != leader for point in checks)):
+                        continue
+                else:
+                    current = next(((owner, point) for owner, (point, until) in self.corner_claims.items()
+                                    if point in samples and time < until), None)
+                    if current is None or current[0] == actor_id:
+                        continue
+                    leader, first = current
+                axis = self.area.corner_axis
+                if axis is None:
+                    axis = max(range(2), key=lambda i: max(p[i] for p in samples) - min(p[i] for p in samples))
+                middle = (min(p[axis] for p in samples) + max(p[axis] for p in samples)) / 2
+                opposite = {p for p in samples if (p[axis] - middle) * (first[axis] - middle) < 0}
+                if actor_id == leader:
+                    available.difference_update(samples)
+                elif available & opposite:
+                    available.difference_update(set(samples) - opposite)
+        return tuple(point for point in corners if point in available)
 
     def confirm_corner(self, point, actor_id, time):
         self.checked.add(point)

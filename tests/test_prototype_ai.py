@@ -161,7 +161,7 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertIn(second, first_looks)
                 self.assertIn(first_looks[first], corners)
                 self.assertIn(first_looks[second], corners)
-                self.assertNotEqual(first_looks[first], first_looks[second])
+                self.assertLess((first_looks[first][1] - 6) * (first_looks[second][1] - 6), 0)
                 for actor_id in (first, second):
                     self.assertEqual(sweep.corner_checks[first_looks[actor_id]][0], actor_id)
 

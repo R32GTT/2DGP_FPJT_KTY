@@ -3,6 +3,7 @@
   "name": "AI 검증 / 문 통과 순서",
   "training_facility": true,
   "search_areas": {"문 안쪽 수색":[[7.18,0.3,6.52,11.4]]},
+  "search_layouts": {"문 안쪽 수색": {"corner_axis": 1}},
   "stack_drill": {
     "door": "shared_door",
     "approach_side": -1,
