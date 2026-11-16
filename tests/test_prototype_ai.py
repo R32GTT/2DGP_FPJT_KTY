@@ -112,6 +112,22 @@ class PrototypeAITests(unittest.TestCase):
                     simulation.step()
 
                 self.assertTrue(all(actor.xy[0] > 7.5 for actor in simulation.guards))
+                moving_scan = False
+                sweep = None
+                while simulation.time < 15:
+                    before = {actor.id: actor.xy for actor in simulation.guards}
+                    simulation.step()
+                    moving_scan |= any(actor.xy != before[actor.id]
+                                       and simulation.ai.brains[actor.id].look_reason == "이동 중 공간 확인"
+                                       for actor in simulation.guards)
+                    sweep = next((incident.indoor for incident in simulation.ai.incidents.values()
+                                  if incident.indoor is not None), None)
+                    if sweep is not None and len(sweep.checked) == len(sweep.area.points):
+                        break
+
+                self.assertIsNotNone(sweep)
+                self.assertEqual(sweep.checked, set(sweep.area.points))
+                self.assertTrue(moving_scan)
 
     def test_new_gunshot_releases_stack(self):
         simulation = PlaySimulation(DOOR_SCENE, stack_drill=True)
