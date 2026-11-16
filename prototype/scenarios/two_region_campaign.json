@@ -1,0 +1,91 @@
+{
+  "format": "revenant.region_scene.v1",
+  "name": "서부 집적소와 동부 보급 거점",
+  "bounds": [-184, -68, 368, 136],
+  "seed": 114,
+  "player_spawn": [-110, -58],
+  "safehouse_spawn": [-157, 21],
+  "campaign_facility": "depot_a",
+  "field_facilities": "modules/field/proving_ground_facilities.json",
+  "territories": {
+    "a": {"name":"서부 집적소", "bounds":[-184,-68,152,136]},
+    "b": {"name":"동부 보급 거점", "bounds":[32,-68,152,136]}
+  },
+  "road_controls": [
+    {"road":"a_b", "name":"동서 보급로 차단기", "position":[0,-27]}
+  ],
+  "road_nodes": {
+    "outside":[-225,0], "entry":[-184,0], "west_road":[-158,0], "safehouse_turn":[-157,12],
+    "depot_a":[-113,0], "junction_a":[-80,0], "hq_a":[-80,23], "comms_a":[-56,-24],
+    "west_border":[-32,0], "west_radio_turn":[-37,-28],
+    "east_border":[32,0], "east_radio_turn":[53,-28], "junction_b":[73,0],
+    "comms_b":[73,-24], "depot_b":[106,0], "hq_b":[143,21], "east_exit":[184,0],
+    "bypass":[-184,86], "depot_c":[500,86], "hq_c":[500,156], "comms_c":[565,156], "exit":[570,86]
+  },
+  "roads": [
+    {"id":"external_entry", "start":"outside", "end":"entry"},
+    {"id":"entry_a", "start":"entry", "end":"west_road", "width":6},
+    {"id":"west_depot", "start":"west_road", "end":"depot_a", "width":6},
+    {"id":"a_hq", "start":"depot_a", "end":"junction_a", "width":6},
+    {"id":"a_hq_access", "start":"junction_a", "end":"hq_a"},
+    {"id":"a_radio_approach", "start":"west_border", "end":"west_radio_turn"},
+    {"id":"a_comms", "start":"west_radio_turn", "end":"comms_a"},
+    {"id":"west_approach", "start":"junction_a", "end":"west_border", "width":6},
+    {"id":"a_b", "start":"west_border", "end":"east_border", "width":6},
+    {"id":"east_approach", "start":"east_border", "end":"junction_b", "width":6},
+    {"id":"east_depot", "start":"junction_b", "end":"depot_b", "width":6},
+    {"id":"b_radio_approach", "start":"east_border", "end":"east_radio_turn"},
+    {"id":"b_comms", "start":"east_radio_turn", "end":"comms_b"},
+    {"id":"b_hq", "start":"depot_b", "end":"hq_b"},
+    {"id":"east_outbound", "start":"depot_b", "end":"east_exit", "width":6},
+    {"id":"b_c", "start":"east_exit", "end":"depot_c"},
+    {"id":"a_bypass", "start":"entry", "end":"bypass"},
+    {"id":"bypass_c", "start":"bypass", "end":"depot_c"},
+    {"id":"c_hq", "start":"depot_c", "end":"hq_c"},
+    {"id":"c_comms", "start":"hq_c", "end":"comms_c"},
+    {"id":"c_exit", "start":"depot_c", "end":"exit"}
+  ],
+  "walk_nodes": {
+    "north_west_trail":[-110,-58], "north_crossing":[0,-58],
+    "north_east_trail":[110,-58], "gate_switch":[0,-27]
+  },
+  "footpaths": [
+    {"id":"safehouse_path", "start":"west_road", "end":"safehouse_turn", "width":2},
+    {"id":"north_west_path", "start":"north_west_trail", "end":"north_crossing"},
+    {"id":"north_east_path", "start":"north_crossing", "end":"north_east_trail"},
+    {"id":"gate_trail", "start":"north_crossing", "end":"gate_switch"}
+  ],
+  "facilities": [
+    {"id":"safehouse", "name":"서부 안전가옥", "prefab":"safehouse", "position":[-157,18],
+     "service_node":"safehouse_turn", "closed":false, "ai_access":false},
+    {"id":"depot_a", "name":"서부 창고", "prefab":"warehouse", "position":[-113,-16],
+     "service_node":"depot_a", "campaign_id":"depot_a"},
+    {"id":"hq_a", "name":"서부 HQ", "prefab":"hq", "position":[-80,37],
+     "service_node":"hq_a", "campaign_id":"hq_a"},
+    {"id":"comms_a", "name":"서부 통신초소", "prefab":"comms", "position":[-56,-12],
+     "service_node":"comms_a", "campaign_id":"comms_a"},
+    {"id":"depot_b", "name":"동부 창고", "prefab":"warehouse", "position":[106,-16],
+     "service_node":"depot_b", "campaign_id":"depot_b"},
+    {"id":"hq_b", "name":"동부 HQ", "prefab":"hq", "position":[143,35],
+     "service_node":"hq_b", "campaign_id":"hq_b"},
+    {"id":"comms_b", "name":"동부 통신초소", "prefab":"comms", "position":[73,-12],
+     "service_node":"comms_b", "campaign_id":"comms_b"}
+  ],
+  "garrisons": [
+    {"unit":"a_garrison", "count":10, "facility":"hq_a"},
+    {"unit":"a_comms_guard", "count":2, "facility":"comms_a"},
+    {"unit":"a_escort_1", "count":2, "facility":"depot_a"},
+    {"unit":"a_escort_2", "count":2, "facility":"depot_a"},
+    {"unit":"b_garrison", "count":10, "facility":"hq_b"},
+    {"unit":"b_comms_guard", "count":2, "facility":"comms_b"},
+    {"unit":"b_escort_1", "count":2, "facility":"depot_b"},
+    {"unit":"b_escort_2", "count":2, "facility":"depot_b"}
+  ],
+  "field_colliders": [
+    {"id":"gate_control_box", "kind":"cover", "material":"metal", "rect":[-1.3,-26,2.6,1]},
+    {"id":"west_road_cover", "kind":"cover", "material":"wood", "rect":[-133,5,4,1]},
+    {"id":"east_road_cover", "kind":"cover", "material":"wood", "rect":[50,6,4,1]}
+  ],
+  "dirt_patches": [[-8,-34,16,14]],
+  "tree_count": 130
+}

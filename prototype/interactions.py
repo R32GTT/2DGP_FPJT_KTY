@@ -8,6 +8,18 @@ def nearby_facility(world, point, radius=1.8):
                key=lambda facility: math.dist(point, facility["terminal"]), default=None)
 
 
+def nearby_road_control(world, point):
+    return next((control for control in world.road_controls
+                 if math.dist(point, control["position"]) <= 1.8), None)
+
+
+def use_road_control(bridge, control):
+    road = bridge.simulation.state.roads[control["road"]]
+    blocked = not road.blocked
+    bridge.simulation.apply_action({"type": "block_road", "road_id": road.id, "blocked": blocked})
+    return f"{control['name']} · {'수송 차단' if blocked else '수송 재개'}"
+
+
 def use_facility(simulation, facility):
     player, bridge = simulation.player, simulation.campaign
     kind, key = facility["kind"], facility["campaign_id"]

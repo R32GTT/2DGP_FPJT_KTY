@@ -9,7 +9,7 @@ import pico2d as pico
 
 from campaign.viewmodel import world_clock
 from .weapons import STAGE_NAMES
-from .interactions import nearby_facility
+from .interactions import nearby_facility, nearby_road_control
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -122,6 +122,10 @@ class HUD:
             self.next_update = perf_counter() + 0.2
             self.label("brand", "REVENANT / FIELD PROTOTYPE", 16, (118, 215, 191))
             self.label("clock", f"{world_clock(simulation.campaign.simulation.state.world_time)}  |  {camera.magnification:.0%}", 13)
+            if simulation.world.territories:
+                territory = simulation.world.territory_at(player.xy)
+                name = simulation.world.data["territories"].get(territory, {}).get("name", "지역 사이 연결로")
+                self.label("campaign_location", name, 16, (118, 215, 191))
             self.label("vitals", f"HP {player.hp:03d}   ARMOR {player.armor:02d}", 16)
             self.label("weapon", weapon.spec.name if weapon else "UNARMED", 24)
             self.label("ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}" if weapon else "-- / ---", 24)
@@ -132,7 +136,12 @@ class HUD:
             self.label("timing", f"update {update_ms:.2f}ms / draw {draw_ms:.2f}ms | cache {cache_count}/24 | 근거리 AI {getattr(simulation.ai, 'near_count', 0)}", 13)
             self.label("stock", f"DEPOT {simulation.campaign.supplies}  /  확보 {simulation.campaign.simulation.state.player_stock['supplies']}", 13)
             facility_here = nearby_facility(simulation.world, simulation.player.xy)
-            self.label("prompt", f"[E] {facility_here['name']} 사용" if facility_here else "", 16, (241, 211, 135))
+            prompt = f"[E] {facility_here['name']} 사용" if facility_here else ""
+            control = nearby_road_control(simulation.world, simulation.player.xy)
+            if control and not prompt:
+                road = simulation.campaign.simulation.state.roads[control["road"]]
+                prompt = f"[E] {'수송로 개방' if road.blocked else '수송로 차단'}"
+            self.label("prompt", prompt, 16, (241, 211, 135))
             self.label("map_title", simulation.world.data.get("name", "지역 지도"), 24, (118, 215, 191))
             self.label("map_help", "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보", 13)
             self.label("map_size", f"{simulation.world.bounds.w:g} × {simulation.world.bounds.h:g} m", 13)
@@ -142,6 +151,8 @@ class HUD:
                 self.label("site/" + facility["id"], facility["name"], 13)
                 campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
                 status = f"피해 {campaign.damage}%" if campaign else "복귀 거점"
+                if simulation.world.territories and campaign and facility["kind"] == "warehouse":
+                    status += f" · 보급 {campaign.inventory['supplies']}"
                 self.label("site_info/" + facility["id"], f"{facility['name']} · {status}", 13)
             for index, (key, title) in enumerate(STAGE_NAMES.items()):
                 duration = weapon.spec.reload_stages[index].duration if weapon else 0
@@ -157,6 +168,8 @@ class HUD:
         self.panel(12, height - 67, width - 24, 55)
         self.text("brand", 26, height - 30)
         self.text("clock", 26, height - 50)
+        if simulation.world.territories:
+            self.text("campaign_location", 304, height - 41)
         self.text("vitals", width - 245, height - 29)
         pico.draw_rectangle(width - 245, height - 53, width - 30, height - 47, 45, 57, 55, filled=True)
         pico.draw_rectangle(width - 245, height - 53, width - 245 + 215 * player.hp / 100,
@@ -270,9 +283,19 @@ class HUD:
         right, bottom = point(world.bounds.right, world.bounds.bottom)
         pico.draw_rectangle(left, bottom, right, top, 34, 49, 43, filled=True)
         self._draw_field_terrain(world, point)
+        for rect in world.territories.values():
+            a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
+            pico.draw_rectangle(a[0], b[1], b[0], a[1], 90, 122, 110)
+        state = simulation.campaign.simulation.state
+        controlled_roads = {control["road"] for control in world.road_controls}
         for road in world.roads:
             color = (114, 103, 77) if road.get("kind") == "footpath" else (153, 155, 123)
+            if road["id"] in controlled_roads and state.roads[road["id"]].blocked:
+                color = (231, 111, 85)
             pico.draw_line(*point(*road["start"]), *point(*road["end"]), *color)
+        for control in world.road_controls:
+            x, y = point(*control["position"])
+            pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 241, 211, 135, filled=True)
         if not world.facilities:
             for layer in world.layers:
                 a, b = point(layer.rect.x, layer.rect.y), point(layer.rect.right, layer.rect.bottom)

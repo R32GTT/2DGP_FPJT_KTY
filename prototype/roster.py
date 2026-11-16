@@ -17,12 +17,23 @@ class CampaignRoster:
         self.seated_deaths = set()
         self.materialized = True
         self.nodes = {facility["service_node"] for facility in world.facilities if facility["campaign_id"]}
+        self.node_territories = {facility["service_node"]: world.territory_at(facility["position"])
+                                 for facility in world.facilities if facility["campaign_id"]}
+        self.active_nodes = self.nodes
         self.unit_ids = sorted({actor.source_unit for actor in actors if actor.source_unit})
         self._stamp, self._active = None, []
         self.bridge.simulation.departure_ready = self.ready
 
+    def track_player(self, point):
+        if not self.world.territories:
+            return
+        nearby = {key for key, rect in self.world.territories.items()
+                  if rect.expanded(48).segment_entry(point, point) is not None}
+        self.active_nodes = {key for key, territory in self.node_territories.items()
+                             if territory is None or territory in nearby}
+
     def ready(self, operation):
-        if not self.materialized or operation.home_node not in self.nodes:
+        if not self.materialized or operation.home_node not in self.active_nodes:
             return True
         state = self.bridge.simulation.state
         point = state.nodes[operation.home_node].position
@@ -67,7 +78,7 @@ class CampaignRoster:
 
     def sync(self, *, restore=False):
         state = self.bridge.simulation.state
-        stamp = (self.materialized, len(self.local_deaths),
+        stamp = (self.materialized, self.active_nodes, len(self.local_deaths),
                  tuple((key, state.units[key].node_id, state.units[key].soldiers,
                         state.units[key].status, state.units[key].operation_id) for key in self.unit_ids))
         if not restore and stamp == self._stamp:
@@ -85,7 +96,7 @@ class CampaignRoster:
                 if actor.id in self.local_deaths:
                     actor.present = actor.id not in self.seated_deaths
                     continue
-                actor.present = self.materialized and actor.hp > 0 and unit.node_id in self.nodes
+                actor.present = self.materialized and actor.hp > 0 and unit.node_id in self.active_nodes
                 if not actor.present:
                     continue
                 if restore or actor.last_node != unit.node_id:

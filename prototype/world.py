@@ -71,7 +71,13 @@ class World:
         self.facilities = self.data.get("facilities", [])
         self.roads = self.data.get("roads", [])
         self.region_layout = self.data.get("region_layout")
+        self.territories = {key: Rect(*area["bounds"]) for key, area in self.data.get("territories", {}).items()}
+        self.road_controls = self.data.get("road_controls", [])
         self.search_areas = build_search_areas(self)
+
+    def territory_at(self, point):
+        return next((key for key, rect in self.territories.items()
+                     if rect.segment_entry(point, point) is not None), None)
 
     def indoor_search_area(self, point):
         nearby = []

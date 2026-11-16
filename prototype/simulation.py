@@ -12,7 +12,7 @@ from .combat import Combat
 from .events import EventBus
 from .feedback import Feedback
 from .movement import move_actor
-from .interactions import nearby_facility, use_facility
+from .interactions import nearby_facility, nearby_road_control, use_facility, use_road_control
 from .roster import CampaignRoster
 from .transport import TransportCrew
 from .weapons import WeaponState, load_weapons
@@ -40,6 +40,7 @@ class PlaySimulation:
             actor.active_weapon = key
         self.campaign = CampaignBridge(self.world.data["campaign_facility"], world=self.world)
         self.roster = CampaignRoster(self.campaign, self.guard_records, self.world)
+        self.roster.track_player(self.player.xy)
         self.guards = self.roster.sync()
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in self.world.data["guards"]],
                           can_radio=self.campaign.can_radio)
@@ -48,6 +49,8 @@ class PlaySimulation:
         self.combat = Combat(self.events, self.transports)
         self.time, self.footstep_at = 0.0, 0.0
         self.message = "R 재장전 / C 취소 / 1·2 총기 교체 / V 단발·연사 / F 문 / E 상호작용"
+        if self.world.territories:
+            self.message = "M 지도에서 동서 보급로 확인 · 차단기 가까이에서 E"
         self.respawn_target = None
         self.dropped = []
         self.kit_available = True
@@ -117,6 +120,7 @@ class PlaySimulation:
             self.message = "전투 불능 — Enter: 6시간 진행 후 무장 없이 복귀"
 
     def _sync_guards(self, *, restore=False):
+        self.roster.track_player(self.player.xy)
         self.transports.sync(self.time)
         self.guards = self.roster.sync(restore=restore) + self.transports.dismounted
 
@@ -244,6 +248,10 @@ class PlaySimulation:
         facility = nearby_facility(self.world, self.player.xy)
         if facility is not None:
             self.message = use_facility(self, facility)
+            return
+        control = nearby_road_control(self.world, self.player.xy)
+        if control is not None:
+            self.message = use_road_control(self.campaign, control)
             return
         if self.world.facilities:
             self.message = "시설 단말·보급 상자 가까이에서 E"
