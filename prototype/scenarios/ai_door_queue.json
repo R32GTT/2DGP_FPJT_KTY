@@ -3,7 +3,17 @@
   "name": "AI 검증 / 문 통과 순서",
   "training_facility": true,
   "search_areas": {"문 안쪽 수색":[[7.18,0.3,6.52,11.4]]},
-  "search_layouts": {"문 안쪽 수색": {"corner_axis": 1}},
+  "search_layouts": {
+    "문 안쪽 수색": {
+      "corner_axis": 1,
+      "finish_poses": [
+        {"position": [8.0, 10.5], "look": [11.5, 8.3]},
+        {"position": [8.0, 1.4], "look": [11.5, 3.6]},
+        {"position": [8.0, 3.8], "look": [11.5, 3.8]},
+        {"position": [8.0, 4.85], "look": [11.5, 4.85]}
+      ]
+    }
+  },
   "stack_drill": {
     "door": "shared_door",
     "approach_side": -1,

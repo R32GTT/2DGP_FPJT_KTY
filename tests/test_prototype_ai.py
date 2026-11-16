@@ -172,6 +172,30 @@ class PrototypeAITests(unittest.TestCase):
                 for actor_id in (first, second):
                     self.assertEqual(sweep.corner_checks[first_looks[actor_id]][0], actor_id)
 
+                guards = {actor.id: actor for actor in simulation.guards}
+                poses = dict(zip(passage_order, area.finish_poses))
+                deadline = simulation.time + 3
+                while simulation.time < deadline:
+                    simulation.step()
+                    if all(math.dist(guards[actor_id].xy, pose.position) <= 0.05
+                           for actor_id, pose in poses.items()):
+                        break
+                for _ in range(90):
+                    simulation.step()
+
+                expected_order = [passage_order[rank] for rank in (1, 2, 3, 0) if rank < len(passage_order)]
+                self.assertEqual(sorted(guards, key=lambda actor_id: guards[actor_id].xy[1]), expected_order)
+                for actor_id, pose in poses.items():
+                    actor = guards[actor_id]
+                    self.assertLessEqual(math.dist(actor.xy, pose.position), 0.05)
+                    self.assertEqual(simulation.ai.brains[actor_id].look_point, pose.look)
+                    desired = math.atan2(pose.look[1] - actor.xy[1], pose.look[0] - actor.xy[0])
+                    self.assertAlmostEqual(math.remainder(actor.facing - desired, math.tau), 0.0)
+                self.assertLess(math.remainder(guards[first].facing, math.tau), -0.3)
+                self.assertGreater(math.remainder(guards[second].facing, math.tau), 0.3)
+                for actor_id in passage_order[2:]:
+                    self.assertLess(abs(math.remainder(guards[actor_id].facing, math.tau)), 0.05)
+
     def test_new_gunshot_releases_stack(self):
         simulation = PlaySimulation(DOOR_SCENE, stack_drill=True)
         while simulation.time < 1 and not simulation.ai.door_traffic.stacks:

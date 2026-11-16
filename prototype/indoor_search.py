@@ -19,6 +19,12 @@ SEARCHER_ACTIVE_S = 0.2
 
 
 @dataclass(frozen=True)
+class SearchPose:
+    position: tuple[float, float]
+    look: tuple[float, float]
+
+
+@dataclass(frozen=True)
 class SearchArea:
     id: str
     floors: tuple[Rect, ...]
@@ -27,6 +33,7 @@ class SearchArea:
     room_points: dict[int, tuple[tuple[float, float], ...]]
     room_corners: dict[int, tuple[tuple[float, float], ...]]
     corner_axis: int | None = None
+    finish_poses: tuple[SearchPose, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -120,8 +127,10 @@ def build_search_areas(world):
             room_points = {room: tuple(samples) for room, samples in by_room.items()}
             room_corners = {room: _sample_corners(samples) for room, samples in room_points.items()}
             layout = world.data.get("search_layouts", {}).get(key, {})
+            poses = tuple(SearchPose(tuple(row["position"]), tuple(row["look"]))
+                          for row in layout.get("finish_poses", ()))
             result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners,
-                                     corner_axis=layout.get("corner_axis")))
+                                     corner_axis=layout.get("corner_axis"), finish_poses=poses))
     return tuple(result)
 
 
@@ -135,8 +144,10 @@ class IndoorSweep:
     corner_claims: dict[str, tuple[tuple[float, float], float]] = field(default_factory=dict)
     corner_checks: dict[tuple[float, float], tuple[str, float]] = field(default_factory=dict)
     sound_searchers: dict[str, float] = field(default_factory=dict)
+    entry_order: list[str] = field(default_factory=list)
     observed_from: dict = field(default_factory=dict)
     regroup_slots: dict[str, tuple[float, float]] = field(default_factory=dict)
+    regroup_looks: dict[str, tuple[float, float]] = field(default_factory=dict)
     regroup_swaps: set[tuple[str, str]] = field(default_factory=set)
     regroup_until: float | None = None
     regroup_done: bool = False
