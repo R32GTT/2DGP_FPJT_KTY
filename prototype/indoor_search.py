@@ -43,6 +43,17 @@ class LookChoice:
     visible_count: int
 
 
+def sample_views(xy, facing, samples, geometry, *, stationary=False):
+    forward_x, forward_y = math.cos(facing), math.sin(facing)
+    scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
+    near = 0.15 if stationary else 0.075
+    for point in samples:
+        dx, dy = point[0] - xy[0], point[1] - xy[1]
+        distance = math.hypot(dx, dy)
+        if distance <= scan_range and (distance <= near or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS):
+            yield point, geometry.raycast(xy, point, category="sight") is None
+
+
 def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range=SCAN_RANGE_M,
                 continue_scan=False):
     visible = []
@@ -153,17 +164,16 @@ class IndoorSweep:
     regroup_done: bool = False
 
     def scan_forward(self, xy, facing, room, geometry, *, stationary=False):
-        forward_x, forward_y = math.cos(facing), math.sin(facing)
-        scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
-        for point in self.area.room_points[room]:
-            if point in self.checked:
-                continue
-            dx, dy = point[0] - xy[0], point[1] - xy[1]
-            distance = math.hypot(dx, dy)
-            if (distance <= scan_range and (distance <= (0.15 if stationary else 0.075)
-                    or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS)
-                    and geometry.raycast(xy, point, category="sight") is None):
-                self.checked.add(point)
+        pending = (point for point in self.area.room_points[room] if point not in self.checked)
+        self.checked.update(point for point, visible in sample_views(xy, facing, pending, geometry,
+                                                                    stationary=stationary) if visible)
+
+    def current_view(self, observers, geometry):
+        visible, blocked = set(), set()
+        for xy, facing, stationary in observers:
+            for point, clear in sample_views(xy, facing, self.area.points, geometry, stationary=stationary):
+                (visible if clear else blocked).add(point)
+        return visible, blocked - visible
 
     def pending_corners(self, room):
         if room is None:

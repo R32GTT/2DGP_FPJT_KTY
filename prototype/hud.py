@@ -8,6 +8,7 @@ from time import perf_counter
 import pico2d as pico
 
 from campaign.viewmodel import world_clock
+from .indoor_search import SEARCHER_ACTIVE_S
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
 
@@ -323,16 +324,24 @@ class HUD:
                 if incident.indoor is not None:
                     sweeps[incident.indoor.area.id] = incident.indoor
             for sweep in sweeps.values():
-                claimed = {target for target, until in sweep.claims.values() if simulation.time < until}
+                observers = []
+                for actor in simulation.guards:
+                    brain = simulation.ai.brains[actor.id]
+                    active = simulation.time - sweep.sound_searchers.get(actor.id, -math.inf) < SEARCHER_ACTIVE_S
+                    if actor.hp > 0 and (active or (brain.indoor is sweep
+                                                   and actor.state in {"search", "regroup", "combat_guard"})):
+                        observers.append((actor.xy, actor.facing, brain.indoor_scanning(simulation.time)))
+                visible, blocked = sweep.current_view(observers, world.geometry)
                 for sample in sweep.area.points:
-                    color = ((100, 213, 167) if sample in sweep.checked else (235, 135, 69)
-                             if sample in claimed else (236, 206, 118))
                     x, y = point(*sample)
-                    pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *color, filled=True)
+                    color = (233, 77, 65) if sample in visible else (245, 205, 69) if sample in blocked else (166, 169, 161)
+                    pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *color, filled=True)
+                    if sample in sweep.checked:
+                        pico.draw_rectangle(x - 1, y - 1, x + 1, y + 1, 100, 213, 167, filled=True)
             if sweeps:
                 checked = sum(len(sweep.checked) for sweep in sweeps.values())
                 total = sum(len(sweep.area.points) for sweep in sweeps.values())
-                self.label("map_search", f"수색 {checked}/{total} · 황색 확인 전 · 주황 조사 중 · 청록 확인 · 흰 선 시선", 13)
+                self.label("map_search", f"수색 {checked}/{total} · 빨강 보임 · 노랑 가림 · 청록 확인 · 흰 선 시선", 13)
                 self.text("map_search", 84, 194)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp <= 0 or (actor.team != "player" and not debug):

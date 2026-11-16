@@ -17,6 +17,26 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_current_view_keeps_shared_occlusion_separate_from_confirmation(self):
+        geometry = SpatialIndex()
+        geometry.add(Collider("partition", Rect(1.9, 3, 3.4, 0.3)))
+        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 7.2, 7.2]]}},
+                                facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
+        area, = build_search_areas(world)
+        sample = min(area.points, key=lambda point: math.dist(point, (2.7, 0.9)))
+        sweep = IndoorSweep(area, sample, 0)
+        left = ((1.0, 6.0), -math.pi / 2, False)
+        right = ((6.2, 6.0), -math.pi / 2, False)
+
+        visible, blocked = sweep.current_view((left, right), geometry)
+        self.assertIn(sample, blocked)
+        self.assertNotIn(sample, visible)
+
+        visible, blocked = sweep.current_view((((0.9, 3.0), -math.pi / 2, False), right), geometry)
+        self.assertIn(sample, visible)
+        self.assertNotIn(sample, blocked)
+        self.assertFalse(sweep.checked)
+
     def test_indoor_gunshot_starts_a_sweep_in_normal_play(self):
         for scene in (FACILITY_SCENE, KILLHOUSE_SCENE):
             with self.subTest(scene=scene.name):
