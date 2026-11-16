@@ -60,7 +60,7 @@ class IndoorSearchTests(unittest.TestCase):
         guard = Actor("guard", Position(0.9, 0.9))
         ai = EnemyAI(world, [guard], [[]])
         brain = ai.brains[guard.id]
-        side = (4.5, 2.7)
+        side = (0.9, 2.7)
         target = (4.5, 0.9)
         brain.indoor = IndoorSweep(area, target, 0, checked=set(area.points) - {side})
         brain.indoor_target = target
@@ -73,15 +73,18 @@ class IndoorSearchTests(unittest.TestCase):
         self.assertGreater(intent.move_multiplier, 0)
         self.assertTrue(intent.open_door)
         self.assertEqual(brain.look_point, side)
-        ai._pace_indoor_movement(guard, brain, intent, 1 + 1 / 60, room_sweep=True)
-        self.assertAlmostEqual(guard.facing, math.radians(15))
+        for tick in range(1, 11):
+            ai._pace_indoor_movement(guard, brain, intent, 1 + tick / 60, room_sweep=True)
+        self.assertAlmostEqual(guard.facing, math.pi / 2)
+        self.assertEqual(intent.direction, (3.6, 0))
         brain.indoor.scan_forward(guard.xy, guard.facing, area.rooms[target], geometry)
         self.assertIn(side, brain.indoor.checked)
         guard.position = Position(1.5, 0.9)
         intent.direction = (3, 0)
         ai._pace_indoor_movement(guard, brain, intent, 2, room_sweep=True)
         ai._pace_indoor_movement(guard, brain, intent, 2 + 1 / 60, room_sweep=True)
-        self.assertEqual(guard.facing, 0)
+        self.assertAlmostEqual(guard.facing, math.pi / 2)
+        self.assertIsNone(brain.look_point)
 
     def test_walking_scan_changes_focus_before_reaching_its_waypoint(self):
         geometry = SpatialIndex()
@@ -100,7 +103,7 @@ class IndoorSearchTests(unittest.TestCase):
         ai._pace_indoor_movement(guard, brain, Intent(direction=(7.2, 0)), 1, room_sweep=True)
         first = brain.look_point
         ai._pace_indoor_movement(guard, brain, Intent(direction=(7.2, 0)), 1 + 1 / 60, room_sweep=True)
-        self.assertAlmostEqual(abs(guard.facing), math.radians(15))
+        self.assertAlmostEqual(abs(guard.facing), math.radians(18))
         brain.indoor.scan_forward(guard.xy, guard.facing, area.rooms[target], geometry)
         self.assertIn(first, brain.indoor.checked)
 
@@ -115,27 +118,36 @@ class IndoorSearchTests(unittest.TestCase):
         self.assertAlmostEqual(abs(guard.facing - facing), math.radians(9))
         self.assertEqual(brain.path, [target])
 
-    def test_indoor_guard_starts_turning_before_a_bend(self):
+    def test_indoor_guard_keeps_looking_at_a_sample_when_its_path_turns(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 5.4]]}},
                                 facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
         area, = build_search_areas(world)
         waypoint = (2.7, 0.9)
         target = min(area.points, key=lambda point: math.dist(point, (2.7, 2.7)))
-        guard = Actor("guard", Position(2.1, 0.9))
+        behind = (0.9, 0.9)
+        guard = Actor("guard", Position(2.1, 0.9), facing=math.pi)
         ai = EnemyAI(world, [guard], [[]])
         brain = ai.brains[guard.id]
-        brain.indoor = IndoorSweep(area, target, 0, checked=set(area.points))
+        brain.indoor = IndoorSweep(area, target, 0, checked=set(area.points) - {behind})
         brain.indoor_target = target
         brain.path = [waypoint, target]
 
         intent = Intent(direction=(0.6, 0))
         ai._pace_indoor_movement(guard, brain, intent, 1, room_sweep=True)
 
-        self.assertGreater(guard.facing, 0)
-        self.assertGreater(brain.look_point[1], guard.xy[1])
+        self.assertEqual(brain.look_point, behind)
+        self.assertAlmostEqual(guard.facing, math.pi)
         self.assertEqual(intent.direction, (0.6, 0))
-        self.assertEqual(brain.path[0], waypoint)
+
+        guard.position = Position(*waypoint)
+        brain.path.pop(0)
+        intent = Intent(direction=(0, 1.8))
+        ai._pace_indoor_movement(guard, brain, intent, 1 + 1 / 60, room_sweep=True)
+
+        self.assertEqual(brain.look_point, behind)
+        self.assertAlmostEqual(guard.facing, math.pi)
+        self.assertEqual(intent.direction, (0, 1.8))
 
     def test_scan_checks_visible_corners_without_ignoring_pillar(self):
         geometry = SpatialIndex()

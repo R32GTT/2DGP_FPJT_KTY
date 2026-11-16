@@ -14,7 +14,6 @@ OBSERVATION_SAMPLE_LIMIT = 32
 SCAN_HOLD_S = 0.18
 SCAN_HALF_CONE = math.radians(45)
 SCAN_CONE_COS = math.cos(SCAN_HALF_CONE)
-WALK_LOOK_HALF_ANGLE = math.radians(15)
 
 
 @dataclass(frozen=True)
@@ -135,9 +134,8 @@ class IndoorSweep:
 
     def look(self, xy, facing, room, geometry, *, walking=False):
         samples = {point: 1 for point in self.area.room_points[room] if point not in self.checked}
-        if walking:
-            return choose_look(xy, facing, geometry, samples, max_offset=WALK_LOOK_HALF_ANGLE)
-        return choose_look(xy, facing, geometry, samples, scan_range=STATIONARY_SCAN_RANGE_M)
+        scan_range = SCAN_RANGE_M if walking else STATIONARY_SCAN_RANGE_M
+        return choose_look(xy, facing, geometry, samples, scan_range=scan_range)
 
     @staticmethod
     def _visible_from(origin, point, geometry):

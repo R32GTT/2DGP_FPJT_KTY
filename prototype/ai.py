@@ -8,9 +8,7 @@ from campaign.viewmodel import segment_distance
 from .cover import CoverFinder
 from .door_traffic import DoorTraffic
 from .geometry import Rect
-from .indoor_search import (
-    IndoorSweep, LookChoice, SCAN_HALF_CONE, SCAN_HOLD_S, SCAN_RANGE_M, WALK_LOOK_HALF_ANGLE, choose_look,
-)
+from .indoor_search import IndoorSweep, LookChoice, SCAN_HOLD_S, SCAN_RANGE_M, choose_look
 from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
 
 
@@ -27,7 +25,6 @@ INDOOR_ACCEL_MPS2 = 7.0
 INDOOR_BRAKE_MPS2 = 9.0
 INDOOR_WALK_SCAN_INTERVAL_S = 0.15
 INDOOR_WALK_LOOK_INTERVAL_S = 0.12
-INDOOR_TURN_LOOKAHEAD_M = 0.85
 INDOOR_YIELD_RETRY_S = 0.25
 INDOOR_SMOOTH_BEND = math.radians(55)
 REGROUP_HOLD_S = 1.0
@@ -103,7 +100,7 @@ class Brain:
     indoor_scan_origin: tuple | None = None
     indoor_scan_at: float = 0.0
     indoor_heading: float | None = None
-    indoor_walk_look: tuple[tuple, tuple | None] | None = None
+    indoor_walk_look: tuple | None = None
     indoor_walk_look_at: float = 0.0
     indoor_speed: float = 0.0
     indoor_depart_at: float | None = None
@@ -443,6 +440,7 @@ class EnemyAI:
         brain.indoor_look_until = brain.scan_until = 0.0
         brain.indoor_scan_at, brain.indoor_heading = 0.0, None
         brain.indoor_scan_origin = brain.indoor_walk_look = None
+        brain.indoor_walk_look_at = 0.0
         brain.indoor_speed, brain.indoor_depart_at = 0.0, None
         brain.cue = brain.search_target = brain.search_cover = None
         brain.next_sweep_at = 0.0
@@ -525,6 +523,7 @@ class EnemyAI:
             brain.indoor_look_until = 0.0
             brain.indoor_scan_origin = brain.indoor_walk_look = None
             brain.indoor_scan_at, brain.indoor_heading = 0.0, None
+            brain.indoor_walk_look_at = 0.0
 
         revision = self.world.revision
         target = brain.indoor_target
@@ -566,6 +565,7 @@ class EnemyAI:
         if target is not None:
             room = area.rooms[target]
             brain.indoor_walk_look = None
+            brain.indoor_walk_look_at = 0.0
             remaining = tuple(sample for sample in area.room_points[room] if sample not in sweep.checked)
             heading = actor.facing if brain.indoor_heading is None else brain.indoor_heading
             candidates = [candidate for candidate in available if area.rooms[candidate] == room]
@@ -625,30 +625,26 @@ class EnemyAI:
                 brain.look_reason = "스캔 완료"
         sweep.claims[actor.id] = target, time + 1
 
-    def _look_during_indoor_move(self, actor, brain, heading, time):
-        waypoint = brain.path[0]
+    def _look_during_indoor_move(self, actor, brain, time):
         sweep = brain.indoor
-        previous_waypoint, point = brain.indoor_walk_look or (None, None)
-        new_segment = previous_waypoint != waypoint
+        point = brain.indoor_walk_look
         confirmed = point in sweep.checked
-        x, y = actor.xy
-        offset = math.remainder(math.atan2(point[1] - y, point[0] - x) - heading, math.tau) if point else 0.0
-        outside_cone = abs(offset) > SCAN_HALF_CONE + WALK_LOOK_HALF_ANGLE
-        if new_segment or confirmed or outside_cone or time >= brain.indoor_walk_look_at:
+        if confirmed or time >= brain.indoor_walk_look_at:
             geometry = self.world.geometry
-            if (new_segment or confirmed or outside_cone or point is None
+            if (confirmed or point is None or math.dist(actor.xy, point) > SCAN_RANGE_M
                     or geometry.raycast(actor.xy, point, category="sight") is not None):
                 room = sweep.area.rooms[brain.indoor_target]
-                choice = sweep.look(actor.xy, heading, room, geometry, walking=True)
-                point, offset = (choice.point, choice.offset) if choice is not None else (None, 0.0)
-                brain.indoor_walk_look = waypoint, point
+                choice = sweep.look(actor.xy, actor.facing, room, geometry, walking=True)
+                point = choice.point if choice is not None else None
+                brain.indoor_walk_look = point
             brain.indoor_walk_look_at = time + INDOOR_WALK_LOOK_INTERVAL_S
 
-        desired = heading + max(-WALK_LOOK_HALF_ANGLE, min(WALK_LOOK_HALF_ANGLE, offset))
-        brain.look_point = point if point is not None else (x + math.cos(desired), y + math.sin(desired))
-        brain.look_reason = "이동 중 공간 확인" if point is not None else "진행 방향 확인"
-        actor.facing = self._turn_toward(actor.facing, desired, 1 / 60, rate=INDOOR_SWEEP_TURN_RADIANS_PER_S)
-        return max(0.65, math.cos(desired - actor.facing))
+        brain.look_point = point
+        brain.look_reason = "이동 중 공간 확인" if point is not None else "주시 방향 유지"
+        if point is not None:
+            x, y = actor.xy
+            desired = math.atan2(point[1] - y, point[0] - x)
+            actor.facing = self._turn_toward(actor.facing, desired, 1 / 60, rate=INDOOR_SWEEP_TURN_RADIANS_PER_S)
 
     def _pace_indoor_movement(self, actor, brain, intent, time, *, room_sweep=False, cue=None):
         if cue is not None:
@@ -668,13 +664,9 @@ class EnemyAI:
             point, following = brain.path[:2]
             outgoing = math.atan2(following[1] - point[1], following[0] - point[0])
             bend = math.remainder(outgoing - heading, math.tau)
-        pace = 1.0
         if room_sweep:
             brain.indoor_heading = heading
-            # 몸체는 확보한 경로를 따라가며 시선은 다가오는 구간으로 먼저 돌아간다.
-            blend = max(0.0, 1.0 - distance / INDOOR_TURN_LOOKAHEAD_M)
-            look_heading = heading + bend * blend * blend * (3 - 2 * blend)
-            pace = self._look_during_indoor_move(actor, brain, look_heading, time)
+            self._look_during_indoor_move(actor, brain, time)
         else:
             if brain.indoor_depart_at is None:
                 brain.indoor_depart_at = time + INDOOR_START_DELAY_S
@@ -691,7 +683,7 @@ class EnemyAI:
                     brain.look_reason = "진행 방향으로 회전 중"
                 return
 
-        speed_limit = actor.speed * INDOOR_MOVE_MULTIPLIER * pace
+        speed_limit = actor.speed * INDOOR_MOVE_MULTIPLIER
         exit_speed = 0.0
         if len(brain.path) > 1:
             bend = abs(bend)
