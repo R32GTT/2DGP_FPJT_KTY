@@ -17,6 +17,27 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_indoor_gunshot_starts_a_sweep_in_normal_play(self):
+        for scene in (FACILITY_SCENE, KILLHOUSE_SCENE):
+            with self.subTest(scene=scene.name):
+                simulation = PlaySimulation(scene)
+                guard = simulation.guards[0]
+                area = simulation.world.search_areas[0]
+                navigation = simulation.world.navigation
+                point = min((point for point in area.points if navigation.clear(guard.xy, point)),
+                            key=lambda point: math.dist(guard.xy, point))
+                source = Actor("test_sound", Position(*point), team="player")
+                simulation.player.hp = 0
+                simulation.events.emit("noise", simulation.time, source, radius=30, strength=0.8, reason="gunshot")
+                brain = simulation.ai.brains[guard.id]
+                while simulation.time < 3 and brain.indoor is None:
+                    simulation.step()
+
+                self.assertIsNotNone(brain.indoor)
+                self.assertIs(brain.indoor.area, area)
+                self.assertEqual(guard.state, "search")
+                self.assertIsNone(brain.memory.reported)
+
     def test_patrol_turns_to_its_next_node_while_moving(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(geometry=geometry, revision=0, door_on_ai_path=lambda actor, point: None,

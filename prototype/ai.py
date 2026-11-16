@@ -93,6 +93,7 @@ class Brain:
     checked_sound_at: float = -1000.0
     indoor: IndoorSweep | None = None
     indoor_target: tuple | None = None
+    indoor_sound_cue: SearchCue | None = None
     indoor_blocked: dict = field(default_factory=dict)
     indoor_look_angle: float | None = None
     indoor_look_until: float = 0.0
@@ -435,6 +436,7 @@ class EnemyAI:
         if incident is not None:
             incident.claims.pop(actor.id, None)
         brain.indoor_target = brain.indoor_yield = brain.indoor_look_angle = None
+        brain.indoor_sound_cue = None
         brain.indoor_look_until = brain.scan_until = 0.0
         brain.indoor_scan_at, brain.indoor_heading = 0.0, None
         brain.indoor_scan_origin = brain.indoor_walk_look = None
@@ -469,8 +471,26 @@ class EnemyAI:
             if incident is not None and incident.indoor is not None and incident.indoor.regroup_slots:
                 incident.indoor = None
 
-    def _indoor_sweep(self, actor, brain, point, evidence_at, time, *, new_contact=False):
-        area = self.world.indoor_search_area(point)
+    def _indoor_sound_area(self, actor, brain, cue, time):
+        if brain.indoor_sound_cue == cue and brain.indoor is not None:
+            return brain.indoor.area
+        if (cue.kind != "sound" or math.dist(actor.xy, cue.point) > 1
+                or not self.world.navigation.clear(actor.xy, cue.point)):
+            return None
+        area = self.world.indoor_search_area(cue.point)
+        if area is None or not all(any(rect.segment_entry(point, point) is not None for rect in area.floors)
+                                   for point in (actor.xy, cue.point)):
+            return None
+        brain.indoor_sound_cue = cue
+        key = f"sound/{area.id}/{cue.at}"
+        if key not in self.incidents:
+            self.incidents[key] = Incident(time, actor.facing, cue.point)
+        brain.incident = key
+        return area
+
+    def _indoor_sweep(self, actor, brain, point, evidence_at, time, *, new_contact=False, area=None):
+        if area is None:
+            area = self.world.indoor_search_area(point)
         if area is None:
             if brain.indoor is not None:
                 brain.indoor.claims.pop(actor.id, None)
@@ -1002,8 +1022,9 @@ class EnemyAI:
             memory = brain.memory
             brain.suppression = max(0, brain.suppression - 0.2 * (time - brain.pressure_at))
             brain.pressure_at = time
+            searching_sound = brain.indoor_sound_cue is not None
             investigating = (memory.last_sound is not None and memory.sound_at > brain.checked_sound_at
-                             and time - memory.sound_heard_at < SOUND_MEMORY_SECONDS
+                             and (searching_sound or time - memory.sound_heard_at < SOUND_MEMORY_SECONDS)
                              and (memory.suspicion >= 0.3 or actor.state in {"alert", "search", "regroup"}))
             confirmed = time < brain.combat_alert_until
             incoming = brain.incoming if time - brain.incoming_at < (12 if confirmed else 4) else None
@@ -1134,9 +1155,15 @@ class EnemyAI:
                     self._combat_action(actor, brain, actors, cue.point, time)
                     actor.state, goal = "retreat", brain.action_goal
                 else:
-                    goal = self._search(actor, brain, (cue.kind, cue.point, cue.at), time, confirmed=True, direct=True)
-                    if not brain.search_points and time >= brain.scan_until:
+                    area = self._indoor_sound_area(actor, brain, cue, time)
+                    if area is None:
+                        goal = self._search(actor, brain, (cue.kind, cue.point, cue.at), time, confirmed=True, direct=True)
+                        finished = not brain.search_points
+                    else:
+                        goal, finished = self._indoor_sweep(actor, brain, cue.point, cue.at, time, area=area)
+                    if finished and time >= brain.scan_until:
                         brain.priority_checked = True
+                        brain.indoor_sound_cue = None
                         if cue.kind == "sound":
                             brain.checked_sound_at = memory.sound_at if memory.last_sound == cue.point else cue.at
                             brain.sound_response, brain.sound_response_at = "checked", time
@@ -1242,8 +1269,8 @@ class EnemyAI:
                 approximate = False
             if not priority_search and brain.cue is not None and brain.cue[1] == memory.last_sound:
                 approximate = False
-            moving_sweep = (actor.state == "search" and goal is not None
-                            and (goal == brain.indoor_target or priority_search))
+            room_sweep = actor.state == "search" and goal is not None and goal == brain.indoor_target
+            moving_sweep = room_sweep or (actor.state == "search" and goal is not None and priority_search)
             starting_peek = brain.peek_home is not None and brain.action == "peek" and not brain.peek_departed
             if starting_peek and not memory.visible and threat is not None:
                 # 최초 옆걸음 전에 이전 관측 방향으로 몸을 돌리는 시간을 확보한다.
@@ -1258,8 +1285,8 @@ class EnemyAI:
             if starting_peek and any(intent.direction):
                 brain.peek_departed = True
             if moving_sweep:
-                self._pace_indoor_movement(actor, brain, intent, time, room_sweep=not priority_search,
-                                           cue=brain.priority_cue if priority_search else None)
+                self._pace_indoor_movement(actor, brain, intent, time, room_sweep=room_sweep,
+                                           cue=brain.priority_cue if priority_search and not room_sweep else None)
             else:
                 brain.indoor_speed, brain.indoor_depart_at = 0.0, None
             if (actor.state == "retreat" and memory.visible and any(intent.direction)
@@ -1280,7 +1307,7 @@ class EnemyAI:
                     rate = INDOOR_TURN_RADIANS_PER_S
                 elif intents[actor.id].face_path:
                     rate = PATH_TURN_RADIANS_PER_S
-                elif actor.state == "search" and brain.indoor_target is not None and not brain.investigating_priority:
+                elif actor.state == "search" and brain.indoor_target is not None and brain.goal == brain.indoor_target:
                     rate = INDOOR_SWEEP_TURN_RADIANS_PER_S
                 actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60, rate=rate)
         return intents
