@@ -17,14 +17,14 @@
     {"id": "south", "rect": [0, 11.7, 14, 0.3]},
     {"id": "west", "rect": [0, 0, 0.3, 12]},
     {"id": "east", "rect": [13.7, 0, 0.3, 12]},
-    {"id": "divider_north", "rect": [7, 0, 0.3, 5]},
-    {"id": "shared_door", "rect": [7, 5, 0.3, 2], "kind": "door", "rotation": 90, "material": "wood"},
-    {"id": "divider_south", "rect": [7, 7, 0.3, 5]}
+    {"id": "divider_north", "rect": [7, 0, 0.18, 5.5875]},
+    {"id": "shared_door", "rect": [7, 5.5875, 0.18, 0.825], "kind": "door", "rotation": 90, "material": "wood"},
+    {"id": "divider_south", "rect": [7, 6.4125, 0.18, 5.5875]}
   ],
   "navigation": {"left": [6, 6], "right": [8.3, 6]},
   "navigation_edges": [["left", "right"]],
   "guards": [
-    {"id": "front_guard", "position": [6.05, 5.55], "patrol": [[10.5, 5.55]]},
-    {"id": "following_guard", "position": [5.95, 6.45], "patrol": [[10, 6.45]]}
+    {"id": "front_guard", "position": [6.12, 5.91], "patrol": [[10.5, 5.91]]},
+    {"id": "following_guard", "position": [5.62, 6.08], "patrol": [[10, 6.08]]}
   ]
 }
