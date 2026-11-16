@@ -115,6 +115,28 @@ class IndoorSearchTests(unittest.TestCase):
         self.assertAlmostEqual(abs(guard.facing - facing), math.radians(9))
         self.assertEqual(brain.path, [target])
 
+    def test_indoor_guard_starts_turning_before_a_bend(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 5.4]]}},
+                                facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
+        area, = build_search_areas(world)
+        waypoint = (2.7, 0.9)
+        target = min(area.points, key=lambda point: math.dist(point, (2.7, 2.7)))
+        guard = Actor("guard", Position(2.1, 0.9))
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        brain.indoor = IndoorSweep(area, target, 0, checked=set(area.points))
+        brain.indoor_target = target
+        brain.path = [waypoint, target]
+
+        intent = Intent(direction=(0.6, 0))
+        ai._pace_indoor_movement(guard, brain, intent, 1, room_sweep=True)
+
+        self.assertGreater(guard.facing, 0)
+        self.assertGreater(brain.look_point[1], guard.xy[1])
+        self.assertEqual(intent.direction, (0.6, 0))
+        self.assertEqual(brain.path[0], waypoint)
+
     def test_scan_checks_visible_corners_without_ignoring_pillar(self):
         geometry = SpatialIndex()
         geometry.add(Collider("west", Rect(-0.2, 0, 0.2, 7.2)))
