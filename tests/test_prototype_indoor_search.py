@@ -55,7 +55,7 @@ class IndoorSearchTests(unittest.TestCase):
     def test_guard_walks_along_path_while_looking_to_the_side(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 7.2]]}},
-                                facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
+                                facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
         area, = build_search_areas(world)
         guard = Actor("guard", Position(0.9, 0.9))
         ai = EnemyAI(world, [guard], [[]])
@@ -89,7 +89,7 @@ class IndoorSearchTests(unittest.TestCase):
     def test_walking_scan_changes_focus_before_reaching_its_waypoint(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 9, 9]]}},
-                                facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
+                                facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
         area, = build_search_areas(world)
         guard = Actor("guard", Position(0.9, 4.5))
         ai = EnemyAI(world, [guard], [[]])
@@ -121,7 +121,7 @@ class IndoorSearchTests(unittest.TestCase):
     def test_indoor_guard_keeps_looking_at_a_sample_when_its_path_turns(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 5.4]]}},
-                                facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
+                                facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
         area, = build_search_areas(world)
         waypoint = (2.7, 0.9)
         target = min(area.points, key=lambda point: math.dist(point, (2.7, 2.7)))
@@ -154,7 +154,7 @@ class IndoorSearchTests(unittest.TestCase):
         obstacle = Collider("occluder", Rect(1.8, 0.6, 0.2, 0.6), active=False)
         geometry.add(obstacle)
         world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 3.6]]}},
-                                facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
+                                facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
         area, = build_search_areas(world)
         target = min(area.points, key=lambda point: math.dist(point, (4.5, 0.9)))
         sample = min(area.points, key=lambda point: math.dist(point, (2.7, 0.9)))
@@ -165,23 +165,23 @@ class IndoorSearchTests(unittest.TestCase):
         brain.indoor_target = target
 
         for tick in range(18):
-            ai._look_during_indoor_move(guard, brain, tick / 60)
+            ai._look_during_indoor_move(guard, brain, tick / 60, brain.indoor)
         self.assertEqual(brain.look_point, sample)
         self.assertNotIn(sample, brain.indoor.checked)
 
         obstacle.active = True
-        ai._look_during_indoor_move(guard, brain, 18 / 60)
+        ai._look_during_indoor_move(guard, brain, 18 / 60, brain.indoor)
         self.assertIsNone(brain.indoor_walk_focus_since)
         self.assertIsNone(brain.look_point)
 
         obstacle.active = False
         for tick in range(19, 40):
-            ai._look_during_indoor_move(guard, brain, tick / 60)
+            ai._look_during_indoor_move(guard, brain, tick / 60, brain.indoor)
         self.assertEqual(brain.look_point, sample)
         self.assertNotIn(sample, brain.indoor.checked)
 
         for tick in range(40, 53):
-            ai._look_during_indoor_move(guard, brain, tick / 60)
+            ai._look_during_indoor_move(guard, brain, tick / 60, brain.indoor)
         self.assertIn(sample, brain.indoor.checked)
         self.assertIsNone(brain.look_point)
 

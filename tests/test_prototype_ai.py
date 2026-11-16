@@ -119,12 +119,21 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertEqual(sum(point[1] > 6 for point in stack.slots.values()), right)
                 self.assertEqual(len(set(stack.slots.values())), left + right)
                 door = simulation.world.geometry.objects["shared_door"]
+                lead = simulation.guards[0]
+                lead_brain = simulation.ai.brains[lead.id]
+                first_look = None
                 all_passed = False
                 moving_scan = False
                 sweep = None
                 while simulation.time < 15:
                     before = {actor.id: actor.xy for actor in simulation.guards}
+                    was_open = not door.active
                     simulation.step()
+                    if was_open and first_look is None and lead_brain.look_point in simulation.world.search_areas[0].points:
+                        first_look = lead_brain.look_point
+                        self.assertLess(before[lead.id][0], door.rect.right)
+                        self.assertGreater(lead.xy[0], before[lead.id][0])
+                        self.assertIsNone(simulation.world.geometry.raycast(before[lead.id], first_look, category="sight"))
                     all_passed |= all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards)
                     moving_scan |= any(actor.xy != before[actor.id]
                                        and simulation.ai.brains[actor.id].look_reason == "이동 중 공간 확인"
@@ -135,6 +144,7 @@ class PrototypeAITests(unittest.TestCase):
                         break
 
                 self.assertTrue(all_passed)
+                self.assertIsNotNone(first_look)
                 self.assertIsNotNone(sweep)
                 self.assertEqual(sweep.checked, set(sweep.area.points))
                 self.assertTrue(moving_scan)

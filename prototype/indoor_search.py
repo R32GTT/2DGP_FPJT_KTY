@@ -136,7 +136,8 @@ class IndoorSweep:
                 self.checked.add(point)
 
     def look(self, xy, facing, room, geometry, *, walking=False, continue_scan=False):
-        samples = {point: 1 for point in self.area.room_points[room] if point not in self.checked}
+        points = self.area.points if room is None else self.area.room_points[room]
+        samples = {point: 1 for point in points if point not in self.checked}
         scan_range = SCAN_RANGE_M if walking else STATIONARY_SCAN_RANGE_M
         return choose_look(xy, facing, geometry, samples, scan_range=scan_range, continue_scan=continue_scan)
 
