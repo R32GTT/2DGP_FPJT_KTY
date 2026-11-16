@@ -52,6 +52,62 @@ class PrototypeAITests(unittest.TestCase):
         self.assertGreaterEqual(front.xy[0], 9)
         self.assertLessEqual(following.xy[0], 5)
 
+    def _door_investigation(self):
+        simulation = PlaySimulation(DOOR_SCENE)
+        simulation.player.hp = 0
+        simulation.player.position = Position(10, 6)
+        front, following = simulation.guards
+        front.position, following.position = Position(6.16, 5.72), Position(5.78, 6.33)
+        simulation.events.emit("noise", simulation.time, simulation.player,
+                               radius=30, strength=0.8, reason="gunshot")
+        return simulation
+
+    def test_investigators_stack_along_the_wall_then_pass(self):
+        simulation = self._door_investigation()
+        front, following = simulation.guards
+        door = simulation.world.geometry.objects["shared_door"]
+        while simulation.time < 1 and not simulation.ai.door_traffic.stacks:
+            simulation.step()
+
+        stack = simulation.ai.door_traffic.stacks["shared_door"]
+        first, second = stack.slots[front.id], stack.slots[following.id]
+        self.assertLess(first[0], door.rect.x)
+        self.assertAlmostEqual(first[0], second[0])
+        self.assertLess(first[1], door.rect.y)
+        self.assertGreater(second[1], door.rect.bottom)
+        while simulation.time < 1.5 and stack.ready_at is None:
+            simulation.step()
+
+        self.assertIsNotNone(stack.ready_at)
+        self.assertTrue(door.active)
+        self.assertLess(math.dist(front.xy, first), 0.06)
+        self.assertLess(math.dist(following.xy, second), 0.06)
+
+        while simulation.time < 3 and not all(actor.xy[0] > 8 for actor in simulation.guards):
+            simulation.step()
+
+        self.assertTrue(all(actor.xy[0] > 8 for actor in simulation.guards))
+        self.assertFalse(simulation.ai.door_traffic.stacks)
+        self.assertFalse(door.active)
+
+    def test_new_gunshot_releases_stack(self):
+        simulation = self._door_investigation()
+        while simulation.time < 1 and not simulation.ai.door_traffic.stacks:
+            simulation.step()
+        self.assertIn("shared_door", simulation.ai.door_traffic.stacks)
+
+        simulation.player.position = Position(3, 6)
+        simulation.events.emit("noise", simulation.time, simulation.player,
+                               radius=30, strength=0.8, reason="gunshot")
+        simulation.step()
+
+        self.assertFalse(simulation.ai.door_traffic.stacks)
+        self.assertTrue(simulation.world.geometry.objects["shared_door"].active)
+        for actor in simulation.guards:
+            brain = simulation.ai.brains[actor.id]
+            self.assertIsNone(brain.door_stack)
+            self.assertEqual(brain.priority_cue.point, (3, 6))
+
     def test_gunshot_replaces_a_patrol_route_while_waiting_at_a_door(self):
         simulation = PlaySimulation(DOOR_SCENE)
         simulation.player.hp = 0

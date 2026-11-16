@@ -55,6 +55,7 @@ class Brain:
     pending_goal: tuple | None = None
     blocked_by: str = ""
     door_wait: str = ""
+    door_stack: tuple[float, float] | None = None
     fire_at: float = 0.0
     fired_at: float = -1000.0
     burst: int = 0
@@ -765,6 +766,8 @@ class EnemyAI:
                     or time < other.scan_until):
                 continue
             if other.investigating_priority and not brain.investigating_priority:
+                continue
+            if other.door_stack is not None:
                 continue
             if other.path and not other.door_wait and (other.blocked_by != actor.id or actor.id > blocker.id):
                 continue

@@ -129,20 +129,23 @@ class World:
         return collider
 
     def door_on_ai_path(self, actor, destination):
-        x, y = actor.xy
+        return self.door_on_ai_path_from(actor.xy, destination, reach=1.2, padding=actor.radius + 0.08,
+                                         clearance=actor.radius)
+
+    def door_on_ai_path_from(self, origin, destination, *, reach, padding, clearance=0, ignore=""):
+        x, y = origin
         dx, dy = destination[0] - x, destination[1] - y
         length = math.hypot(dx, dy)
         if length == 0:
             return None
-        reach = min(1.2, length)
+        reach = min(reach, length)
         end = x + dx * reach / length, y + dy * reach / length
-        padding = actor.radius + 0.08
         bounds = Rect(min(x, end[0]), min(y, end[1]), abs(end[0] - x), abs(end[1] - y)).expanded(padding)
         candidates = []
         for collider in self.collider_index.query(bounds):
-            if collider.kind != "door" or (collider.active and not collider.ai_access):
+            if collider.id == ignore or collider.kind != "door" or (collider.active and not collider.ai_access):
                 continue
-            hit = collider.rect.expanded(padding).segment_entry(actor.xy, end)
+            hit = collider.rect.expanded(padding).segment_entry(origin, end)
             if hit is not None:
                 candidates.append((hit, collider.id))
         if not candidates:
@@ -150,6 +153,6 @@ class World:
         hit, door_id = min(candidates)
         # 열린 문도 같은 통로를 사용한다. 벽 뒤의 문은 요청하지 않는다.
         entry = x + (end[0] - x) * hit, y + (end[1] - y) * hit
-        if not self.navigation.clear(actor.xy, entry, clearance=actor.radius, ignore_doors=True):
+        if not self.navigation.clear(origin, entry, clearance=clearance, ignore_doors=True):
             return None
         return door_id, reach * hit
