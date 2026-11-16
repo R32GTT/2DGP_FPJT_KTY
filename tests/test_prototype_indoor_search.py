@@ -149,6 +149,42 @@ class IndoorSearchTests(unittest.TestCase):
         self.assertAlmostEqual(guard.facing, math.pi)
         self.assertEqual(intent.direction, (0, 1.8))
 
+    def test_walking_focus_requires_uninterrupted_visibility(self):
+        geometry = SpatialIndex()
+        obstacle = Collider("occluder", Rect(1.8, 0.6, 0.2, 0.6), active=False)
+        geometry.add(obstacle)
+        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 3.6]]}},
+                                facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry))
+        area, = build_search_areas(world)
+        target = min(area.points, key=lambda point: math.dist(point, (4.5, 0.9)))
+        sample = min(area.points, key=lambda point: math.dist(point, (2.7, 0.9)))
+        guard = Actor("guard", Position(0.9, 0.9))
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        brain.indoor = IndoorSweep(area, target, 0, checked=set(area.points) - {sample})
+        brain.indoor_target = target
+
+        for tick in range(18):
+            ai._look_during_indoor_move(guard, brain, tick / 60)
+        self.assertEqual(brain.look_point, sample)
+        self.assertNotIn(sample, brain.indoor.checked)
+
+        obstacle.active = True
+        ai._look_during_indoor_move(guard, brain, 18 / 60)
+        self.assertIsNone(brain.indoor_walk_focus_since)
+        self.assertIsNone(brain.look_point)
+
+        obstacle.active = False
+        for tick in range(19, 40):
+            ai._look_during_indoor_move(guard, brain, tick / 60)
+        self.assertEqual(brain.look_point, sample)
+        self.assertNotIn(sample, brain.indoor.checked)
+
+        for tick in range(40, 53):
+            ai._look_during_indoor_move(guard, brain, tick / 60)
+        self.assertIn(sample, brain.indoor.checked)
+        self.assertIsNone(brain.look_point)
+
     def test_scan_checks_visible_corners_without_ignoring_pillar(self):
         geometry = SpatialIndex()
         geometry.add(Collider("west", Rect(-0.2, 0, 0.2, 7.2)))

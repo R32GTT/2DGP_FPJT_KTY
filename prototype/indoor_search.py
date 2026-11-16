@@ -32,7 +32,8 @@ class LookChoice:
     visible_count: int
 
 
-def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range=SCAN_RANGE_M):
+def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range=SCAN_RANGE_M,
+                continue_scan=False):
     visible = []
     for point, weight in samples.items():
         dx, dy = point[0] - xy[0], point[1] - xy[1]
@@ -48,7 +49,9 @@ def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range
         offset = max(-max_offset, min(max_offset, point_angle))
         seen = [row for row in visible if abs(math.remainder(row[1] - offset, math.tau)) <= SCAN_HALF_CONE]
         # 가까운 표본 하나보다 시야로 확인할 수 있는 공간 전체를 비교한다.
-        score = (sum(row[3] for row in seen), sum(row[2] for row in seen), -abs(offset), distance, point)
+        nearby_angle = continue_scan and abs(point_angle) <= math.radians(60)
+        score = (nearby_angle, sum(row[3] for row in seen), sum(row[2] for row in seen),
+                 -abs(offset), distance, point)
         if best is None or score > best[0]:
             best = score, LookChoice(point, offset, len(seen))
     return best[1] if best else None
@@ -132,10 +135,10 @@ class IndoorSweep:
                     and geometry.raycast(xy, point, category="sight") is None):
                 self.checked.add(point)
 
-    def look(self, xy, facing, room, geometry, *, walking=False):
+    def look(self, xy, facing, room, geometry, *, walking=False, continue_scan=False):
         samples = {point: 1 for point in self.area.room_points[room] if point not in self.checked}
         scan_range = SCAN_RANGE_M if walking else STATIONARY_SCAN_RANGE_M
-        return choose_look(xy, facing, geometry, samples, scan_range=scan_range)
+        return choose_look(xy, facing, geometry, samples, scan_range=scan_range, continue_scan=continue_scan)
 
     @staticmethod
     def _visible_from(origin, point, geometry):
