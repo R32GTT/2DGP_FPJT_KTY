@@ -1263,16 +1263,18 @@ class EnemyAI:
                 intent.retreat_fire = True
             intents[actor.id] = intent
         self._update_regroups(actors, time)
+        self.door_traffic.update(self.world, actors, self.brains, intents, time, previous_facing=previous_facing)
         for actor in actors:
             if actor.id in intents and not self.brains[actor.id].memory.visible:
                 brain = self.brains[actor.id]
                 rate = (INDOOR_TURN_RADIANS_PER_S if actor.state == "regroup" or brain.indoor_yield is not None
                         or (actor.state == "search" and (brain.indoor is not None or brain.investigating_priority))
                         else SEARCH_TURN_RADIANS_PER_S)
-                if intents[actor.id].face_path:
+                if brain.door_stack is not None:
+                    rate = INDOOR_TURN_RADIANS_PER_S
+                elif intents[actor.id].face_path:
                     rate = PATH_TURN_RADIANS_PER_S
                 elif actor.state == "search" and brain.indoor_target is not None and not brain.investigating_priority:
                     rate = INDOOR_SWEEP_TURN_RADIANS_PER_S
                 actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60, rate=rate)
-        self.door_traffic.update(self.world, actors, self.brains, intents, time)
         return intents

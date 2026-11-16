@@ -17,6 +17,7 @@ class Passage:
 @dataclass
 class Stack:
     slots: dict[str, tuple[float, float]]
+    look_at: tuple[float, float]
     deadline: float
     ready_at: float | None = None
 
@@ -85,12 +86,12 @@ class DoorTraffic:
                 continue
             slots = layout.waiting_slots(side, [actor for _, _, actor in sorted(group)], actors, world.navigation)
             if len(slots) >= 2:
-                self.stacks[door_id] = Stack(slots, now + 1.5)
+                self.stacks[door_id] = Stack(slots, layout.center, now + 1.5)
                 for actor_id in slots:
                     self.staged[door_id, actor_id] = tickets[actor_id]
                 break
 
-    def _update_stack(self, door_id, actors, brains, intents, tickets, now, *, interrupted):
+    def _update_stack(self, door_id, actors, brains, intents, tickets, now, *, interrupted, previous_facing):
         stack = self.stacks[door_id]
         valid = {actor_id: point for actor_id, point in stack.slots.items()
                  if actor_id in intents and tickets[actor_id] is not None
@@ -107,10 +108,14 @@ class DoorTraffic:
                 intent.direction, intent.open_door = (0, 0), False
             return set(valid)
 
-        arrived = True
+        ready = True
         for actor_id, point in valid.items():
             actor, brain, intent = actors[actor_id], brains[actor_id], intents[actor_id]
             brain.door_wait, brain.door_stack = door_id, point
+            brain.look_point, brain.look_reason = stack.look_at, "출입구 주시"
+            x, y = actor.xy
+            actor.facing = math.atan2(stack.look_at[1] - y, stack.look_at[0] - x)
+            angle_error = abs(math.remainder(actor.facing - previous_facing[actor_id], math.tau))
             brain.progress_point, brain.progress_at = actor.xy, now
             brain.indoor_speed = 0.0
             intent.open_door, intent.move_straight = False, True
@@ -119,12 +124,12 @@ class DoorTraffic:
             intent.move_multiplier = speed / actor.speed
             intent.direction = (point[0] - actor.xy[0], point[1] - actor.xy[1]) if distance > 0.06 else (0, 0)
             intent.step_dt = min(1 / 60, distance / speed)
-            arrived &= distance <= 0.06
-        if arrived and stack.ready_at is None:
+            ready &= distance <= 0.06 and angle_error <= math.radians(5)
+        if ready and stack.ready_at is None:
             stack.ready_at = now + 0.25
         return set(valid)
 
-    def update(self, world, actors, brains, intents, now):
+    def update(self, world, actors, brains, intents, now, *, previous_facing):
         requests = {}
         started = {}
         tickets = {}
@@ -172,7 +177,7 @@ class DoorTraffic:
                 interrupted = any(actor.id not in stack.slots and (distance == 0 or actor.state == "combat")
                                   for actor, distance in crossing)
                 staged[door_id] = self._update_stack(door_id, by_id, brains, intents, tickets, now,
-                                                     interrupted=interrupted)
+                                                     interrupted=interrupted, previous_facing=previous_facing)
         next_passages = {}
         for door_id, contenders in requests.items():
             staged_actors = staged.get(door_id, set())
