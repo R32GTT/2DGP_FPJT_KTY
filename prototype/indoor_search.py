@@ -145,19 +145,31 @@ class IndoorSweep:
     def can_scan_here(self, origin, remaining, geometry):
         return any(self._visible_from(origin, point, geometry) for point in remaining)
 
-    def entry_observation(self, origin, heading, candidates, remaining, navigation, *, clear_space=False):
-        hidden = [point for point in remaining if not self._visible_from(origin, point, navigation.geometry)]
-        if not hidden and not clear_space:
-            return None
-        nearby = [point for point in candidates if 0.5 <= math.dist(origin, point) <= 2 * SAMPLE_M
+    def entry_observation(self, origin, heading, candidates, remaining, navigation, *, reserved=()):
+        geometry = navigation.geometry
+        nearby = [point for point in candidates if point not in reserved
+                  and 0.5 <= math.dist(origin, point) <= 2 * SAMPLE_M
                   and navigation.clear(origin, point)]
         if not nearby:
             return None
+
+        def separation(point):
+            return min(math.dist(point, other) for other in reserved)
+
+        if reserved:
+            separated = [point for point in nearby if separation(point) >= SAMPLE_M]
+            nearby = separated or nearby
+
+        hidden = [point for point in remaining if not self._visible_from(origin, point, geometry)
+                  and not any(self._visible_from(other, point, geometry) for other in reserved)]
         if hidden:
             point = self.observation_point(origin, heading, nearby, hidden, navigation)
-            if self.can_scan_here(point, hidden, navigation.geometry):
+            if self.can_scan_here(point, hidden, geometry):
                 return point
-        return min(nearby, key=lambda point: math.dist(origin, point)) if clear_space else None
+        if reserved:
+            # 다른 지점에서 새 표본이 드러나지 않아도 관찰 위치와 통로를 서로 차지하지 않게 한다.
+            return max(nearby, key=lambda point: min(separation(point), 2 * SAMPLE_M) - math.dist(origin, point) / 2)
+        return None
 
     def observation_point(self, origin, heading, candidates, remaining, navigation):
         forward_x, forward_y = math.cos(heading), math.sin(heading)

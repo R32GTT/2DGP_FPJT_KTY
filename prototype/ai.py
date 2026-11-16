@@ -570,9 +570,9 @@ class EnemyAI:
             heading = actor.facing if brain.indoor_heading is None else brain.indoor_heading
             candidates = [candidate for candidate in available if area.rooms[candidate] == room]
             if entering:
-                observation = sweep.entry_observation(actor.xy, heading,
-                                                      [point for point in candidates if point not in reserved],
-                                                      remaining, self.world.navigation, clear_space=room in claimed_rooms)
+                room_claims = {point for point in reserved if area.rooms[point] == room}
+                observation = sweep.entry_observation(actor.xy, heading, candidates, remaining,
+                                                      self.world.navigation, reserved=room_claims)
                 if observation is not None:
                     brain.indoor_target = observation
                     sweep.claims[actor.id] = observation, time + 1

@@ -82,18 +82,20 @@ class PrototypeAITests(unittest.TestCase):
         self.assertGreater(front.facing, 0)
         self.assertLess(following.facing, 0)
 
-        first_observation = None
-        while simulation.time < 3 and not all(actor.xy[0] > door.rect.right + actor.radius
-                                             for actor in simulation.guards):
+        observations = {}
+        while simulation.time < 3 and len(observations) < len(simulation.guards):
             simulation.step()
-            if first_observation is None:
-                first_observation = next((brain.indoor_target for brain in simulation.ai.brains.values()
-                                          if brain.indoor_target is not None and brain.path), None)
+            for actor in simulation.guards:
+                brain = simulation.ai.brains[actor.id]
+                if brain.indoor_target is not None and brain.path:
+                    observations.setdefault(actor.id, brain.indoor_target)
 
         self.assertTrue(all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards))
-        self.assertIsNotNone(first_observation)
+        self.assertEqual(set(observations), {front.id, following.id})
+        first_observation, next_observation = observations[front.id], observations[following.id]
         self.assertLess(first_observation[0], simulation.world.data["stack_drill"]["sound"][0])
         self.assertGreater(abs(first_observation[1] - center_y), door.rect.h / 2)
+        self.assertGreater(abs(first_observation[1] - next_observation[1]), door.rect.h)
         self.assertFalse(simulation.ai.door_traffic.stacks)
         self.assertFalse(door.active)
         self.assertEqual(simulation.player.hp, 100)
