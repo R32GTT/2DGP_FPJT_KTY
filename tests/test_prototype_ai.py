@@ -72,11 +72,12 @@ class PrototypeAITests(unittest.TestCase):
         self.assertTrue(door.active)
         self.assertLess(math.dist(front.xy, first), 0.06)
         self.assertLess(math.dist(following.xy, second), 0.06)
-        center_x = door.rect.x + door.rect.w / 2
         center_y = door.rect.y + door.rect.h / 2
         for actor in simulation.guards:
-            self.assertEqual(simulation.ai.brains[actor.id].look_point, (center_x, center_y))
-            expected = math.atan2(center_y - actor.xy[1], center_x - actor.xy[0])
+            look_x, look_y = simulation.ai.brains[actor.id].look_point
+            self.assertGreater(look_x, door.rect.right)
+            self.assertLess((look_y - center_y) * (actor.xy[1] - center_y), 0)
+            expected = math.atan2(look_y - actor.xy[1], look_x - actor.xy[0])
             self.assertLessEqual(abs(math.remainder(actor.facing - expected, math.tau)), math.radians(5))
         self.assertGreater(front.facing, 0)
         self.assertLess(following.facing, 0)

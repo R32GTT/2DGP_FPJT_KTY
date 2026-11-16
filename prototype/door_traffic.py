@@ -7,6 +7,10 @@ import math
 from .door_layout import DoorLayout
 
 
+MAX_STACK_MEMBERS = 4
+STACK_APPROACH_M = 3.8
+
+
 @dataclass
 class Passage:
     actor_id: str
@@ -17,7 +21,7 @@ class Passage:
 @dataclass
 class Stack:
     slots: dict[str, tuple[float, float]]
-    look_at: tuple[float, float]
+    looks: dict[str, tuple[float, float]]
     deadline: float
     ready_at: float | None = None
 
@@ -31,9 +35,9 @@ class DoorTraffic:
 
     @staticmethod
     def _ticket(actor, brain):
-        if (actor.state in {"alert", "search"} and not brain.visible and brain.goal is not None
-                and (brain.path or brain.pending_goal == brain.goal)
-                and brain.pending_goal in (None, brain.goal) and brain.indoor_yield is None):
+        goal = brain.pending_goal or brain.goal
+        if (actor.state in {"alert", "search"} and not brain.visible and goal is not None
+                and (brain.path or brain.pending_goal is not None) and brain.indoor_yield is None):
             if brain.investigating_priority and brain.priority_cue.kind == "sound":
                 party = ("sound", brain.priority_cue.at)
             elif brain.investigating_priority:
@@ -43,7 +47,7 @@ class DoorTraffic:
             else:
                 party = brain.incident
             if party:
-                return party, brain.goal, brain.priority_cue
+                return party, goal, brain.priority_cue
         return None
 
     @staticmethod
@@ -51,12 +55,12 @@ class DoorTraffic:
         # 문 앞의 짧은 경유점에 아직 닿지 않아도 바로 다음 구간의 문을 찾는다.
         walked = 0.0
         for start, end in pairwise([actor.xy, *path]):
-            hit = world.door_on_ai_path_from(start, end, reach=1.8 - walked,
+            hit = world.door_on_ai_path_from(start, end, reach=STACK_APPROACH_M - walked,
                                             padding=actor.radius + 0.08, clearance=actor.radius)
             if hit is not None:
                 return hit[0], walked + hit[1]
             walked += math.dist(start, end)
-            if walked >= 1.8:
+            if walked >= STACK_APPROACH_M:
                 break
         return None
 
@@ -81,12 +85,22 @@ class DoorTraffic:
                 continue
             groups.setdefault((party, side), []).append((distance, actor.id, actor))
 
-        for (_, side), group in groups.items():
+        for (party, side), group in groups.items():
             if len(group) < 2:
                 continue
-            slots = layout.waiting_slots(side, [actor for _, _, actor in sorted(group)], actors, world.navigation)
+            # 경로 계산 예산 때문에 같은 조사조의 경로가 몇 틱에 걸쳐 준비될 수 있다.
+            if len(group) < MAX_STACK_MEMBERS and any(
+                brains[actor.id].pending_goal is not None and not brains[actor.id].path
+                and tickets[actor.id] is not None and tickets[actor.id][0] == party
+                and math.dist(actor.xy, layout.center) <= STACK_APPROACH_M
+                and side * (actor.xy[across] - layout.center[across]) > 0
+                for actor in actors
+            ):
+                continue
+            members = [actor for _, _, actor in sorted(group)[:MAX_STACK_MEMBERS]]
+            slots = layout.waiting_slots(side, members, actors, world.navigation)
             if len(slots) >= 2:
-                self.stacks[door_id] = Stack(slots, layout.center, now + 1.5)
+                self.stacks[door_id] = Stack(slots, layout.waiting_looks(side, slots), now + 1.5)
                 for actor_id in slots:
                     self.staged[door_id, actor_id] = tickets[actor_id]
                 break
@@ -112,9 +126,10 @@ class DoorTraffic:
         for actor_id, point in valid.items():
             actor, brain, intent = actors[actor_id], brains[actor_id], intents[actor_id]
             brain.door_wait, brain.door_stack = door_id, point
-            brain.look_point, brain.look_reason = stack.look_at, "출입구 주시"
+            look_x, look_y = stack.looks[actor_id]
+            brain.look_point, brain.look_reason = (look_x, look_y), "출입구 주시"
             x, y = actor.xy
-            actor.facing = math.atan2(stack.look_at[1] - y, stack.look_at[0] - x)
+            actor.facing = math.atan2(look_y - y, look_x - x)
             angle_error = abs(math.remainder(actor.facing - previous_facing[actor_id], math.tau))
             brain.progress_point, brain.progress_at = actor.xy, now
             brain.indoor_speed = 0.0

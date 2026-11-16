@@ -27,24 +27,40 @@ class DoorLayout:
         xy[self.across] += across
         return tuple(xy)
 
+    def waiting_position(self, side, flank, level, radius):
+        spacing = 2 * radius + 0.16
+        offset = self.half_width + spacing / 2 + level * spacing
+        setback = self.half_depth + radius + 0.12
+        return self.point(flank * offset, side * setback)
+
     def waiting_slots(self, side, group, actors, navigation):
         slots = {}
         radius = max(actor.radius for actor in group)
-        spacing = 2 * radius + 0.16
-        setback = side * (self.half_depth + radius + 0.12)
+        rows = [[self.waiting_position(side, flank, level, radius) for level in range(len(group))]
+                for flank in (-1, 1)]
         for actor in group:
-            for level in range(len(group)):
-                offset = self.half_width + spacing / 2 + level * spacing
-                candidates = (self.point(-offset, setback), self.point(offset, setback))
-                for point in sorted(candidates, key=lambda point: math.dist(actor.xy, point)):
+            candidates = []
+            for row in rows:
+                for point in row:
                     if (point in slots.values() or not navigation.walkable(point)
                             or not navigation.clear(actor.xy, point, clearance=actor.radius)
                             or any(other.id != actor.id and other.hp > 0
                                    and math.dist(other.xy, point) < other.radius + actor.radius + 0.05
                                    for other in actors)):
                         continue
-                    slots[actor.id] = point
+                    candidates.append(point)
                     break
-                if actor.id in slots:
-                    break
+            if candidates:
+                slots[actor.id] = min(candidates, key=lambda point: math.dist(actor.xy, point))
         return slots
+
+    def waiting_looks(self, side, slots):
+        looks = dict.fromkeys(slots, self.center)
+        for flank in (-1, 1):
+            candidates = [(abs(point[self.along] - self.center[self.along]), actor_id)
+                          for actor_id, point in slots.items()
+                          if flank * (point[self.along] - self.center[self.along]) > 0]
+            if candidates:
+                _, first = min(candidates)
+                looks[first] = self.point(-flank * self.half_width * 0.7, -side * (self.half_depth + 0.12))
+        return looks
