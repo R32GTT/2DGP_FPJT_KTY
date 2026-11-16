@@ -474,12 +474,16 @@ class EnemyAI:
     def _indoor_sound_area(self, actor, brain, cue, time):
         if brain.indoor_sound_cue == cue and brain.indoor is not None:
             return brain.indoor.area
-        if (cue.kind != "sound" or math.dist(actor.xy, cue.point) > 1
-                or not self.world.navigation.clear(actor.xy, cue.point)):
+        if cue.kind != "sound":
             return None
         area = self.world.indoor_search_area(cue.point)
         if area is None or not all(any(rect.segment_entry(point, point) is not None for rect in area.floors)
                                    for point in (actor.xy, cue.point)):
+            return None
+        distance = math.dist(actor.xy, cue.point)
+        if (not self.world.navigation.clear(actor.xy, cue.point)
+                or self.world.door_on_ai_path_from(actor.xy, cue.point, reach=distance,
+                                                   padding=actor.radius + 0.25) is not None):
             return None
         brain.indoor_sound_cue = cue
         key = f"sound/{area.id}/{cue.at}"
@@ -488,7 +492,7 @@ class EnemyAI:
         brain.incident = key
         return area
 
-    def _indoor_sweep(self, actor, brain, point, evidence_at, time, *, new_contact=False, area=None):
+    def _indoor_sweep(self, actor, brain, point, evidence_at, time, *, new_contact=False, area=None, entering=False):
         if area is None:
             area = self.world.indoor_search_area(point)
         if area is None:
@@ -549,9 +553,10 @@ class EnemyAI:
                      if sweep.observed_from.get(candidate) != revision
                      and brain.indoor_blocked.get(candidate) != revision]
         unchecked = [candidate for candidate in available if candidate not in sweep.checked]
-        claimed_rooms = {area.rooms[target] for owner, (target, until) in sweep.claims.items()
-                         if owner != actor.id and time < until}
-        target = min((candidate for candidate in unchecked if area.rooms[candidate] not in claimed_rooms),
+        reserved = {target for owner, (target, until) in sweep.claims.items()
+                    if owner != actor.id and time < until}
+        claimed_rooms = {area.rooms[target] for target in reserved}
+        target = min((candidate for candidate in unchecked if entering or area.rooms[candidate] not in claimed_rooms),
                      key=lambda candidate: (area.rooms[candidate] != previous_room,
                                             math.dist(actor.xy, candidate) + 0.3 * math.dist(point, candidate),
                                             candidate), default=None)
@@ -559,6 +564,18 @@ class EnemyAI:
             room = area.rooms[target]
             brain.indoor_walk_look = None
             remaining = tuple(sample for sample in area.room_points[room] if sample not in sweep.checked)
+            heading = actor.facing if brain.indoor_heading is None else brain.indoor_heading
+            candidates = [candidate for candidate in available if area.rooms[candidate] == room]
+            if entering:
+                observation = sweep.entry_observation(actor.xy, heading,
+                                                      [point for point in candidates if point not in reserved],
+                                                      remaining, self.world.navigation, clear_space=room in claimed_rooms)
+                if observation is not None:
+                    brain.indoor_target = observation
+                    sweep.claims[actor.id] = observation, time + 1
+                    return observation, False
+                if room in claimed_rooms:
+                    return None, False
             scan_origin = (actor.xy, room, revision)
             if (brain.indoor_scan_origin != scan_origin
                     and sweep.can_scan_here(actor.xy, remaining, self.world.geometry)):
@@ -566,8 +583,6 @@ class EnemyAI:
                 sweep.claims[actor.id] = target, time + 1
                 self._begin_indoor_look(actor, brain)
                 return None, False
-            heading = actor.facing if brain.indoor_heading is None else brain.indoor_heading
-            candidates = [candidate for candidate in available if area.rooms[candidate] == room]
             target = sweep.observation_point(actor.xy, heading, candidates, remaining, self.world.navigation)
             brain.indoor_target = target
             sweep.claims[actor.id] = target, time + 1
@@ -1155,12 +1170,14 @@ class EnemyAI:
                     self._combat_action(actor, brain, actors, cue.point, time)
                     actor.state, goal = "retreat", brain.action_goal
                 else:
+                    entering = brain.indoor_sound_cue != cue
                     area = self._indoor_sound_area(actor, brain, cue, time)
                     if area is None:
                         goal = self._search(actor, brain, (cue.kind, cue.point, cue.at), time, confirmed=True, direct=True)
                         finished = not brain.search_points
                     else:
-                        goal, finished = self._indoor_sweep(actor, brain, cue.point, cue.at, time, area=area)
+                        goal, finished = self._indoor_sweep(actor, brain, cue.point, cue.at, time,
+                                                            area=area, entering=entering)
                     if finished and time >= brain.scan_until:
                         brain.priority_checked = True
                         brain.indoor_sound_cue = None

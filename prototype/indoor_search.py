@@ -147,6 +147,20 @@ class IndoorSweep:
     def can_scan_here(self, origin, remaining, geometry):
         return any(self._visible_from(origin, point, geometry) for point in remaining)
 
+    def entry_observation(self, origin, heading, candidates, remaining, navigation, *, clear_space=False):
+        hidden = [point for point in remaining if not self._visible_from(origin, point, navigation.geometry)]
+        if not hidden and not clear_space:
+            return None
+        nearby = [point for point in candidates if 0.5 <= math.dist(origin, point) <= 2 * SAMPLE_M
+                  and navigation.clear(origin, point)]
+        if not nearby:
+            return None
+        if hidden:
+            point = self.observation_point(origin, heading, nearby, hidden, navigation)
+            if self.can_scan_here(point, hidden, navigation.geometry):
+                return point
+        return min(nearby, key=lambda point: math.dist(origin, point)) if clear_space else None
+
     def observation_point(self, origin, heading, candidates, remaining, navigation):
         forward_x, forward_y = math.cos(heading), math.sin(heading)
 

@@ -82,10 +82,18 @@ class PrototypeAITests(unittest.TestCase):
         self.assertGreater(front.facing, 0)
         self.assertLess(following.facing, 0)
 
-        while simulation.time < 3 and not all(actor.xy[0] > 8 for actor in simulation.guards):
+        first_observation = None
+        while simulation.time < 3 and not all(actor.xy[0] > door.rect.right + actor.radius
+                                             for actor in simulation.guards):
             simulation.step()
+            if first_observation is None:
+                first_observation = next((brain.indoor_target for brain in simulation.ai.brains.values()
+                                          if brain.indoor_target is not None and brain.path), None)
 
-        self.assertTrue(all(actor.xy[0] > 8 for actor in simulation.guards))
+        self.assertTrue(all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards))
+        self.assertIsNotNone(first_observation)
+        self.assertLess(first_observation[0], simulation.world.data["stack_drill"]["sound"][0])
+        self.assertGreater(abs(first_observation[1] - center_y), door.rect.h / 2)
         self.assertFalse(simulation.ai.door_traffic.stacks)
         self.assertFalse(door.active)
         self.assertEqual(simulation.player.hp, 100)
@@ -108,23 +116,23 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertEqual(sum(point[1] < 6 for point in stack.slots.values()), left)
                 self.assertEqual(sum(point[1] > 6 for point in stack.slots.values()), right)
                 self.assertEqual(len(set(stack.slots.values())), left + right)
-                while simulation.time < 7 and not all(actor.xy[0] > 7.5 for actor in simulation.guards):
-                    simulation.step()
-
-                self.assertTrue(all(actor.xy[0] > 7.5 for actor in simulation.guards))
+                door = simulation.world.geometry.objects["shared_door"]
+                all_passed = False
                 moving_scan = False
                 sweep = None
                 while simulation.time < 15:
                     before = {actor.id: actor.xy for actor in simulation.guards}
                     simulation.step()
+                    all_passed |= all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards)
                     moving_scan |= any(actor.xy != before[actor.id]
                                        and simulation.ai.brains[actor.id].look_reason == "이동 중 공간 확인"
                                        for actor in simulation.guards)
                     sweep = next((incident.indoor for incident in simulation.ai.incidents.values()
                                   if incident.indoor is not None), None)
-                    if sweep is not None and len(sweep.checked) == len(sweep.area.points):
+                    if all_passed and sweep is not None and len(sweep.checked) == len(sweep.area.points):
                         break
 
+                self.assertTrue(all_passed)
                 self.assertIsNotNone(sweep)
                 self.assertEqual(sweep.checked, set(sweep.area.points))
                 self.assertTrue(moving_scan)
