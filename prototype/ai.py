@@ -765,7 +765,7 @@ class EnemyAI:
         self._look_at_indoor_samples(actor, brain, time, sweep, room, stationary=True)
         if brain.look_point is not None:
             return
-        if brain.indoor_exposure or brain.indoor_coverage.exposure:
+        if brain.indoor_exposure:
             return
         revision = self.world.revision
         brain.indoor_scan_origin = (actor.xy, room, revision)
@@ -800,21 +800,16 @@ class EnemyAI:
         geometry, revision = self.world.geometry, self.world.revision
         if time - brain.indoor_sample_at > 1 / 30:
             brain.indoor_exposure.clear()
-            brain.indoor_coverage.exposure.clear()
         brain.indoor_sample_at = time
         brain.indoor_sample_stationary = stationary
         hold = SCAN_HOLD_S if stationary else INDOOR_WALK_CONFIRM_S
         if sweep.pending_cells:
-            scan = brain.indoor_coverage
-            scan.update_view(actor.xy, actor.facing, stationary, revision, time)
             budget = getattr(self, "coverage_budgets", {}).pop(actor.id, 0)
             if budget:
-                scan.exposure = sweep.observe_coverage(
-                    room, actor.xy, actor.facing, geometry, time, scan.exposure,
-                    stationary=stationary, hold=hold, scan=scan, budget=budget)
-                scan.scanned_at = time
-        else:
-            brain.indoor_coverage.exposure.clear()
+                scan = brain.indoor_coverage
+                scan.update_location(actor.xy, revision)
+                sweep.observe_coverage(room, actor.xy, actor.facing, geometry,
+                                       stationary=stationary, scan=scan, budget=budget)
         pending = sweep.pending_for(actor.id, room, revisit_corners=not brain.indoor_staging)
         corners = set(pending) & set(sweep.pending_corners(room))
         probes = not pending and bool(sweep.pending_cells) and not brain.indoor_staging
@@ -912,7 +907,6 @@ class EnemyAI:
         if not (dx or dy):
             brain.indoor_speed, brain.indoor_depart_at = 0.0, None
             brain.indoor_exposure.clear()
-            brain.indoor_coverage.exposure.clear()
             return
 
         tick = 1 / 60
@@ -1581,7 +1575,6 @@ class EnemyAI:
                 brain.indoor_speed, brain.indoor_depart_at = 0.0, None
                 if not brain.indoor_staging:
                     brain.indoor_exposure.clear()
-                    brain.indoor_coverage.exposure.clear()
             if (actor.state == "retreat" and memory.visible and any(intent.direction)
                     and brain.action in {"cover", "retreat"} and brain.suppression < 0.85
                     and weapon is not None and weapon.chambered and not weapon.reloading
@@ -1609,7 +1602,6 @@ class EnemyAI:
                         else SEARCH_TURN_RADIANS_PER_S)
                 if brain.door_stack is not None:
                     brain.indoor_exposure.clear()
-                    brain.indoor_coverage.exposure.clear()
                     rate = INDOOR_TURN_RADIANS_PER_S
                 elif intent.face_path:
                     rate = PATH_TURN_RADIANS_PER_S

@@ -34,7 +34,7 @@ class IndoorSearchTests(unittest.TestCase):
             braking = EnemyAI._turn_indoor_gaze(actor, brain, braking, math.radians(540))
         self.assertAlmostEqual(braking, -math.pi / 2)
 
-    def test_coverage_scan_limits_work_and_discards_elapsed_time_on_geometry_revision(self):
+    def test_coverage_scan_confirms_immediately_within_its_budget(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(
             data={"search_areas": {"room": [[3, 0, 4, 2]]},
@@ -45,29 +45,18 @@ class IndoorSearchTests(unittest.TestCase):
         sweep = IndoorSweep(area, area.points[0], 0)
         scan = CoverageScan()
 
-        def observe(tick, x, revision):
-            time = tick / 60
-            origin = (x, 1)
-            scan.update_view(origin, 0, True, revision, time)
-            if tick % 3 == 0:
-                scan.exposure = sweep.observe_coverage(None, origin, 0, geometry, time, scan.exposure,
-                                                        stationary=True, hold=0.35, scan=scan, budget=1)
-                scan.scanned_at = time
-
-        for tick in range(4):
-            observe(tick, 0, 0)
-        self.assertEqual(list(scan.exposure.values()), [3 / 60])
+        origin = (0, 1)
+        scan.update_location(origin, 0)
+        sweep.observe_coverage(None, origin, 0, geometry, stationary=True, scan=scan, budget=1)
+        self.assertEqual(len(sweep.covered_cells), 1)
+        self.assertEqual(len(sweep.pending_cells), 1)
         self.assertEqual(len(scan.occlusion), 1)
-        self.assertEqual(len(sweep.pending_cells), 2)
 
-        for tick in range(4, 7):
-            observe(tick, 0.1, 0)
-        self.assertEqual(len(scan.exposure), 1)
-        self.assertAlmostEqual(next(iter(scan.exposure.values())), 4 / 60)
-
-        observe(7, 0.1, 1)
-        self.assertFalse(scan.exposure)
+        scan.update_location(origin, 1)
         self.assertFalse(scan.occlusion)
+        sweep.observe_coverage(None, origin, 0, geometry, stationary=True, scan=scan, budget=1)
+        self.assertEqual(len(sweep.covered_cells), 2)
+        self.assertFalse(sweep.pending_cells)
 
     def test_area_coverage_retains_a_shadow_between_visible_sample_rays(self):
         geometry = SpatialIndex()
@@ -86,21 +75,18 @@ class IndoorSearchTests(unittest.TestCase):
         self.assertIsNotNone(geometry.raycast(origin, shadow))
         sweep = IndoorSweep(area, center, 0)
         sweep.confirm(center, 0)
-        exposure = {}
-        for tick in range(60):
-            exposure = sweep.observe_coverage(None, origin, 0, geometry, tick / 60, exposure,
-                                              stationary=False, hold=0.35)
+        scan = CoverageScan()
+        scan.update_location(origin, 0)
+        for _ in range(8):
+            sweep.observe_coverage(None, origin, 0, geometry, stationary=False, scan=scan, budget=64)
         self.assertFalse(sweep.complete)
         self.assertTrue(sweep.covered_cells)
         self.assertTrue(any(cell.rect.segment_entry(shadow, shadow) is not None for cell in sweep.pending_cells))
         self.assertFalse(any(cell.rect.segment_entry(shadow, shadow) is not None for cell in sweep.covered_cells))
 
         screen.active = False
-        exposure = sweep.observe_coverage(None, origin, 0, geometry, 1, exposure, stationary=False, hold=0.35)
-        self.assertFalse(sweep.complete)
-        for tick in range(61, 83):
-            exposure = sweep.observe_coverage(None, origin, 0, geometry, tick / 60, exposure,
-                                              stationary=False, hold=0.35)
+        scan.update_location(origin, 1)
+        sweep.observe_coverage(None, origin, 0, geometry, stationary=False, scan=scan, budget=64)
         self.assertTrue(sweep.complete)
         self.assertAlmostEqual(sum(cell.rect.w * cell.rect.h for cell in sweep.covered_cells), 2)
 
