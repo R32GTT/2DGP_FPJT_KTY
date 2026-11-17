@@ -6,6 +6,8 @@ import math
 
 SOUND_MEMORY_SECONDS = 14
 GUNSHOT_REPLAN_DISTANCE = 4.0
+SIGHT_RANGE = 16.0
+SIGHT_RETENTION_MARGIN = 0.25
 
 
 @dataclass
@@ -27,13 +29,14 @@ class Knowledge:
 
 
 def observe(actor, target, geometry, memory, time):
+    sight_range = SIGHT_RANGE + SIGHT_RETENTION_MARGIN if memory.visible else SIGHT_RANGE
     memory.visible = False
     if target.hp <= 0:
         return
     dx, dy = target.position.x - actor.position.x, target.position.y - actor.position.y
     distance = math.hypot(dx, dy)
     in_cone = distance < 1.2 or dx * math.cos(actor.facing) + dy * math.sin(actor.facing) >= distance * 0.5
-    if distance <= 16 and in_cone and geometry.raycast(actor.xy, target.xy) is None:
+    if distance <= sight_range and in_cone and geometry.raycast(actor.xy, target.xy) is None:
         if memory.last_seen is not None and time - memory.seen_at < 0.5:
             vx, vy = target.xy[0] - memory.last_seen[0], target.xy[1] - memory.last_seen[1]
             if math.hypot(vx, vy) > 0.06:
@@ -71,6 +74,8 @@ def hear(actor, memory, event, navigation, *, checked_sound_at):
     gunshot = event.data.get("reason") == "gunshot"
     recent_gunshot = memory.gunshot_origin is not None and event.time - memory.sound_heard_at < SOUND_MEMORY_SECONDS
     if recent_gunshot:
+        if not gunshot and memory.sound_at > checked_sound_at and priority < memory.sound_priority:
+            return "lower_priority"
         # 비교 기준은 첫 총성의 위치다. 같은 구역의 총성은 조사 목표를 그대로 둔다.
         nearby = (math.dist(event.position, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE
                   and navigation.clear(memory.gunshot_origin, event.position, clearance=0))

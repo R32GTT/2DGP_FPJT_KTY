@@ -23,7 +23,7 @@ AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reloa
               "peek": "피킹", "peek_return": "엄폐 복귀"}
 SOUND_RESPONSES = {"new": "총성 감지", "renewed": "총성 재조사", "same_area": "총성 감지 · 경로 유지",
                    "out_of_range": "총성 감지 범위 밖", "no_estimate": "총성 감지 · 위치 추정 실패",
-                   "checked": "총성 조사 종료"}
+                   "checked": "총성 조사 종료", "unreachable": "소리 위치에 접근할 수 없음"}
 SEARCH_CONFIRMED = (96, 236, 186)
 SEARCH_VISIBLE = (255, 108, 98)
 SEARCH_OCCLUDED = (255, 215, 83)

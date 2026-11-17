@@ -13,6 +13,7 @@ from prototype.geometry import Collider, Rect, SpatialIndex
 from prototype.indoor_search import IndoorSweep, SearchArea
 from prototype.movement import move_actor
 from prototype.navigation import Navigation
+from prototype.perception import Knowledge, hear
 from prototype.simulation import PlaySimulation
 from prototype.weapons import WeaponState, load_weapons
 
@@ -34,6 +35,87 @@ def field_approach(count, y=-65, distance=15):
 
 
 class PrototypeAITests(unittest.TestCase):
+    def test_unreachable_sound_is_only_checked_after_access_opens(self):
+        for reason in ("gunshot", "footstep"):
+            with self.subTest(reason=reason):
+                geometry = SpatialIndex()
+                wall = Collider("barrier", Rect(3, 0, 1, 8))
+                geometry.add(wall)
+                bounds = Rect(0, 0, 10, 8)
+                world = SimpleNamespace(geometry=geometry, bounds=bounds, revision=0,
+                                        navigation=Navigation({}, [], geometry, bounds=bounds),
+                                        door_on_ai_path=lambda *_: None, indoor_search_area=lambda *_: None)
+                guard = Actor("guard", Position(1, 4))
+                source = Actor("player", Position(6, 4), team="player", hp=0)
+                ai = EnemyAI(world, [guard], [[]])
+                brain = ai.brains[guard.id]
+                events = EventBus()
+                events.emit("noise", 0, source, radius=15, strength=0.8, reason=reason)
+                ai.receive([guard], events.drain())
+
+                for frame in range(1, 100):
+                    ai.update([guard], source, frame / 60)
+                self.assertFalse(brain.priority_checked)
+                self.assertLess(brain.checked_sound_at, 0)
+                self.assertEqual(brain.sound_response, "unreachable")
+
+                wall.active = False
+                world.revision += 1
+                world.navigation.invalidate()
+                for frame in range(100, 700):
+                    intent = ai.update([guard], source, frame / 60)[guard.id]
+                    move_actor(guard, intent.direction, world, intent.step_dt,
+                               speed=guard.speed * intent.move_multiplier)
+                    if brain.checked_sound_at == 0:
+                        break
+                self.assertEqual(brain.checked_sound_at, 0)
+                self.assertEqual(brain.sound_response, "checked")
+
+    def test_visibility_at_the_range_boundary_is_stable_and_can_be_reported(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry),
+                                door_on_ai_path=lambda *_: None, indoor_search_area=lambda *_: None)
+        guard = Actor("guard", Position(0, 0), active_weapon="ar_a")
+        guard.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])
+        ally = Actor("ally", Position(0, 2), facing=math.pi)
+        player = Actor("player", Position(15.99, 0), team="player")
+        ai = EnemyAI(world, [guard, ally], [[], []])
+        for frame in range(1, 121):
+            player.position.x = 15.99 if (frame - 1) // 9 % 2 == 0 else 16.01
+            ai.update([guard, ally], player, frame / 60)
+            self.assertTrue(ai.brains[guard.id].visible)
+        self.assertIsNotNone(ai.brains[ally.id].memory.reported)
+        geometry.add(Collider("wall", Rect(4, -1, 1, 2)))
+        ai.update([guard, ally], player, 2.2)
+        self.assertFalse(ai.brains[guard.id].visible)
+
+    def test_radio_reports_the_next_grid_cell_and_keeps_observation_time(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(geometry=geometry, navigation=Navigation({}, [], geometry))
+        sender, receiver = Actor("sender", Position(0, 0)), Actor("receiver", Position(1, 0))
+        actors = [sender, receiver]
+        ai = EnemyAI(world, actors, [[], []])
+        brain = ai.brains[sender.id]
+        brain.memory.last_seen, brain.memory.seen_at = (0, 4), 1.0
+        ai._report_sighting(sender, brain, actors, 1.1)
+        brain.memory.last_seen, brain.memory.seen_at = (4, 4), 5.0
+        ai._report_sighting(sender, brain, actors, 5.1)
+        memory = ai.brains[receiver.id].memory
+        self.assertEqual((memory.reported, memory.reported_at), ((4, 4), 5.0))
+
+    def test_quiet_footstep_does_not_replace_an_active_gunshot_investigation(self):
+        guard = Actor("guard", Position(0, 0))
+        player = Actor("player", Position(6, 0), team="player")
+        nav = Navigation({}, [], SpatialIndex())
+        events, memory = EventBus(), Knowledge()
+        shot = events.emit("noise", 0, player, radius=15, strength=0.8, reason="gunshot")
+        self.assertEqual(hear(guard, memory, shot, nav, checked_sound_at=-1), "new")
+        player.position.x = 1
+        step = events.emit("noise", 0.1, player, radius=15, strength=0.25, reason="footstep")
+        self.assertEqual(hear(guard, memory, step, nav, checked_sound_at=-1), "lower_priority")
+        self.assertEqual(memory.last_sound, (6, 0))
+        self.assertEqual(hear(guard, memory, step, nav, checked_sound_at=0), "new")
+
     def test_squad_updates_its_stops_when_player_steps_out_of_range(self):
         simulation, guards = field_approach(2)
         with patch.object(simulation.combat, "fire"):
