@@ -128,7 +128,7 @@ class PrototypeAITests(unittest.TestCase):
                 passage_order = []
                 at_entry_positions = None
                 scanned_while_staging = set()
-                used_observation_point = False
+                moved_during_followup = False
                 opened_at = passed_at = None
                 all_passed = False
                 moving_scan = False
@@ -172,7 +172,8 @@ class PrototypeAITests(unittest.TestCase):
                                 if brain.indoor_staging and actor.xy != before[actor.id] and look in area.points:
                                     scanned_while_staging.add(actor.id)
                             else:
-                                used_observation_point |= brain.indoor_target in area.observations
+                                moved_during_followup |= (brain.indoor_target is not None and look is not None
+                                                          and actor.xy != before[actor.id])
                             if actor.id in owners and pending_inside:
                                 self.assertNotIn(look, corners)
                                 if look in area.points:
@@ -188,7 +189,7 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertTrue(sweep.complete)
                 if (left, right) == (1, 1):
                     self.assertTrue(points_finished_before_area)
-                    self.assertTrue(used_observation_point)
+                    self.assertTrue(moved_during_followup)
                 self.assertIsNotNone(at_entry_positions)
                 self.assertTrue(moving_scan)
                 first, second = passage_order[:2]

@@ -23,6 +23,8 @@ PATH_TURN_RADIANS_PER_S = math.radians(720)
 INDOOR_MOVE_MULTIPLIER = 1.30
 INDOOR_TURN_RADIANS_PER_S = math.radians(240)
 INDOOR_SWEEP_TURN_RADIANS_PER_S = math.radians(540)
+INDOOR_SWEEP_TURN_ACCEL = math.radians(4800)
+INDOOR_REFOCUS_ANGLE = math.radians(15)
 INDOOR_START_DELAY_S = 0.08
 INDOOR_ACCEL_MPS2 = 11.0
 INDOOR_BRAKE_MPS2 = 15.0
@@ -112,6 +114,7 @@ class Brain:
     indoor_walk_look_at: float = 0.0
     indoor_walk_look_revision: int = -1
     indoor_walk_look_started: bool = False
+    indoor_turn_rate: float = 0.0
     indoor_exposure: dict[tuple[float, float], float] = field(default_factory=dict)
     indoor_coverage: CoverageScan = field(default_factory=CoverageScan)
     indoor_probe_key: tuple | None = None
@@ -233,6 +236,28 @@ class EnemyAI:
         difference = math.remainder(desired - current, math.tau)
         step = rate * dt
         return current + max(-step, min(step, difference))
+
+    @staticmethod
+    def _turn_indoor_gaze(actor, brain, previous, rate):
+        point = brain.look_point
+        if point is None:
+            brain.indoor_turn_rate = 0.0
+            return previous
+        dx, dy = point[0] - actor.xy[0], point[1] - actor.xy[1]
+        if math.hypot(dx, dy) < 0.15:
+            brain.indoor_turn_rate = 0.0
+            return previous
+        error = math.remainder(math.atan2(dy, dx) - previous, math.tau)
+        desired = math.copysign(min(rate, math.sqrt(2 * INDOOR_SWEEP_TURN_ACCEL * abs(error))), error)
+        acceleration = INDOOR_SWEEP_TURN_ACCEL / 60
+        change = max(-acceleration, min(acceleration, desired - brain.indoor_turn_rate))
+        velocity = brain.indoor_turn_rate + change
+        step = velocity / 60
+        if abs(error) < 1e-6 or (step * error > 0 and abs(step) >= abs(error)):
+            brain.indoor_turn_rate = 0.0
+            return previous + error
+        brain.indoor_turn_rate = velocity
+        return previous + step
 
     def _report_sighting(self, actor, brain, actors, time):
         brain.radio_at = time + 4
@@ -766,6 +791,7 @@ class EnemyAI:
         brain.indoor_walk_look_at = 0.0
         brain.indoor_walk_look_revision = -1
         brain.indoor_walk_look_started = False
+        brain.indoor_turn_rate = 0.0
 
     def _look_at_indoor_samples(self, actor, brain, time, sweep, room=None, *, stationary=False):
         if brain.indoor_observation is not sweep:
@@ -833,7 +859,11 @@ class EnemyAI:
         brain.indoor_revealed.update(revealed.intersection(seen))
 
         confirmed = point in sweep.checked
-        newly_visible = not corners and bool(revealed.intersection(seen)) and point not in brain.indoor_revealed
+        settled = not visible or abs(math.remainder(
+            math.atan2(point[1] - actor.xy[1], point[0] - actor.xy[0]) - actor.facing, math.tau
+        )) <= INDOOR_REFOCUS_ANGLE
+        newly_visible = (settled and not corners and bool(revealed.intersection(seen))
+                         and point not in brain.indoor_revealed)
         if newly_visible or confirmed or (not visible and (point is not None or stationary
                 or time >= brain.indoor_walk_look_at or revision != brain.indoor_walk_look_revision)):
             if not probes:
@@ -1586,5 +1616,9 @@ class EnemyAI:
                 elif actor.state == "search" and (brain.indoor_target is not None and brain.goal == brain.indoor_target
                                                 or approach_look is not None and brain.indoor_walk_look_started):
                     rate = INDOOR_SWEEP_TURN_RADIANS_PER_S
-                actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60, rate=rate)
+                if actor.state == "search" and brain.door_stack is None and brain.indoor_sample_at == time:
+                    actor.facing = self._turn_indoor_gaze(actor, brain, previous_facing[actor.id], rate)
+                else:
+                    brain.indoor_turn_rate = 0.0
+                    actor.facing = self._turn_toward(previous_facing[actor.id], actor.facing, 1 / 60, rate=rate)
         return intents

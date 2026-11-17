@@ -5,7 +5,7 @@ import unittest
 
 from campaign.models import Position
 from prototype.actors import Actor
-from prototype.ai import EnemyAI, Intent
+from prototype.ai import Brain, EnemyAI, Intent
 from prototype.geometry import Collider, Rect, SpatialIndex
 from prototype.indoor_search import CoverageScan, IndoorSweep, build_search_areas, sample_views
 from prototype.navigation import Navigation
@@ -17,6 +17,23 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_indoor_gaze_starts_turning_immediately_and_brakes_before_reversing(self):
+        actor = Actor("guard", Position(0, 0))
+        brain = Brain([])
+        brain.look_point = (0, 2)
+        first = EnemyAI._turn_indoor_gaze(actor, brain, 0.0, math.radians(540))
+        self.assertGreater(first, 0)
+
+        facing = first
+        for _ in range(3):
+            facing = EnemyAI._turn_indoor_gaze(actor, brain, facing, math.radians(540))
+        brain.look_point = (0, -2)
+        braking = EnemyAI._turn_indoor_gaze(actor, brain, facing, math.radians(540))
+        self.assertGreater(braking, facing)
+        for _ in range(60):
+            braking = EnemyAI._turn_indoor_gaze(actor, brain, braking, math.radians(540))
+        self.assertAlmostEqual(braking, -math.pi / 2)
+
     def test_coverage_scan_limits_work_and_discards_elapsed_time_on_geometry_revision(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(
