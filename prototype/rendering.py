@@ -191,8 +191,11 @@ class Renderer:
                                 px, py = truck.world_point(1.95, side)
                                 self._rect(view, Rect(px - 0.09, py - 0.09, 0.18, 0.18),
                                            (255, 168, 92) if seat == 0 else (137, 201, 210))
+        search_counts = None
         if debug:
             self._draw_navigation(world.navigation, view)
+            if not map_open:
+                search_counts = self.hud.draw_search_overlay(simulation, view)
         for actor in [*simulation.guards, simulation.player]:
             body_angle = actor.facing + BODY_FORWARD_OFFSET
             body_bounds = self._rotated_bounds(actor.xy, BODY_SIZE_M, body_angle)
@@ -249,7 +252,7 @@ class Renderer:
             self.vignette.draw(camera.width / 2, camera.height / 2, camera.width, camera.height)
         self.hud.render(simulation, camera, paused=paused, debug=debug,
                         update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=map_open,
-                        cache_count=len(self.map_images.cache))
+                        cache_count=len(self.map_images.cache), search_counts=search_counts)
         self.last_draw_ms = (perf_counter() - started) * 1000
         pico.update_canvas()
 

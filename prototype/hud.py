@@ -123,7 +123,8 @@ class HUD:
             self.label(f"ai_sound/{index}", sound or "최근 총성 반응 없음", 13, (240, 187, 104))
         self.label("ai_hint", simulation.ai_hint, 13)
 
-    def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False, cache_count=0):
+    def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
+               cache_count=0, search_counts=None):
         player, weapon = simulation.player, simulation.player.weapon
         if perf_counter() >= self.next_update:
             self.next_update = perf_counter() + 0.2
@@ -218,7 +219,14 @@ class HUD:
             if "ai_hint" in self.labels:
                 self.text("ai_hint", 24, height - 136)
             self.label("ai_legend", "파랑  맵 노드 · 청록  현재 경로 · 주황 +  소리 추정", 13)
-            self.text("ai_legend", 24, height - (156 if "ai_hint" in self.labels else 136))
+            legend_y = height - (156 if "ai_hint" in self.labels else 136)
+            self.text("ai_legend", 24, legend_y)
+            if search_counts is not None:
+                checked, total, blocked = search_counts
+                self.label("search_counts", f"화면 안 표본 · 확인 {checked}/{total} · 미확인 {total - checked} · 가림 {blocked}", 13)
+                self.label("search_legend", "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖", 13)
+                self.text("search_counts", 24, legend_y - 20)
+                self.text("search_legend", 24, legend_y - 38)
         else:
             self.text("help", 24, height - 88)
         if paused and (simulation.ai_scenario or simulation.world.data.get("training_facility")):
@@ -277,6 +285,57 @@ class HUD:
                 a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
                 pico.draw_rectangle(a[0], b[1], b[0], a[1], *layer.color, filled=True)
 
+    def draw_search_overlay(self, simulation, view):
+        world = simulation.world
+        sweeps = {}
+        for incident in simulation.ai.incidents.values():
+            sweep = incident.indoor
+            if sweep is not None:
+                previous = sweeps.get(sweep.area.id)
+                if previous is None or sweep.evidence_at >= previous.evidence_at:
+                    sweeps[sweep.area.id] = sweep
+        checked_count = total = blocked_count = 0
+        bounds = view.viewport()
+        radius = max(5, min(10, round(view.scale * 0.18)))
+        for area in world.search_areas:
+            sweep = sweeps.get(area.id)
+            if sweep is None and not world.data.get("training_facility"):
+                continue
+            samples = tuple((x, y) for x, y in area.points
+                            if bounds.x <= x <= bounds.right and bounds.y <= y <= bounds.bottom)
+            if not samples:
+                continue
+            checked, visible, blocked = (), (), ()
+            if sweep is not None:
+                checked = sweep.checked.intersection(samples)
+                observers = []
+                for actor in simulation.guards:
+                    brain = simulation.ai.brains[actor.id]
+                    active = simulation.time - sweep.sound_searchers.get(actor.id, -math.inf) < SEARCHER_ACTIVE_S
+                    observing = brain.indoor is sweep and actor.state in {"search", "regroup", "combat_guard"}
+                    if actor.hp > 0 and (active or observing):
+                        stationary = (brain.indoor_sample_stationary if brain.indoor_sample_at == simulation.time
+                                      else brain.indoor_scanning(simulation.time))
+                        observers.append((actor.xy, actor.facing, stationary))
+                visible, blocked = sweep.pending_view(observers, world.geometry, samples=samples)
+            checked_count += len(checked)
+            blocked_count += len(blocked)
+            total += len(samples)
+            for sample in samples:
+                x, y = view.pico(*sample)
+                box = (x - radius, y - radius, x + radius, y + radius)
+                pico.draw_rectangle(x - radius - 2, y - radius - 2, x + radius + 2, y + radius + 2,
+                                    14, 22, 24, 190, filled=True)
+                if sample in checked:
+                    pico.draw_rectangle(*box, *SEARCH_CONFIRMED, filled=True)
+                elif sample in blocked:
+                    pico.draw_line(box[0], box[1], box[2], box[3], *SEARCH_OCCLUDED)
+                    pico.draw_line(box[0], box[3], box[2], box[1], *SEARCH_OCCLUDED)
+                else:
+                    color = SEARCH_VISIBLE if sample in visible else SEARCH_OUTSIDE
+                    pico.draw_rectangle(*box, *color)
+        return (checked_count, total, blocked_count) if total else None
+
     def _region_map(self, simulation, camera, debug):
         self.panel(60, 166, camera.width - 120, camera.height - 246)
         self.text("map_title", 84, camera.height - 111)
@@ -322,52 +381,6 @@ class HUD:
             pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=True)
             self.text("site/" + facility["id"], a[0], b[1] - 13)
             self.text("site_info/" + facility["id"], camera.width - 350, camera.height - 200 - index * 34)
-        if debug:
-            sweeps = {}
-            for incident in simulation.ai.incidents.values():
-                sweep = incident.indoor
-                if sweep is not None:
-                    previous = sweeps.get(sweep.area.id)
-                    if previous is None or sweep.evidence_at >= previous.evidence_at:
-                        sweeps[sweep.area.id] = sweep
-            checked_count = total = blocked_count = 0
-            radius = max(3, min(7, round(scale * 0.3)))
-            for area in world.search_areas:
-                sweep = sweeps.get(area.id)
-                if sweep is None and not world.data.get("training_facility"):
-                    continue
-                checked, visible, blocked = (), (), ()
-                if sweep is not None:
-                    checked = sweep.checked
-                    observers = []
-                    for actor in simulation.guards:
-                        brain = simulation.ai.brains[actor.id]
-                        active = simulation.time - sweep.sound_searchers.get(actor.id, -math.inf) < SEARCHER_ACTIVE_S
-                        observing = brain.indoor is sweep and actor.state in {"search", "regroup", "combat_guard"}
-                        if actor.hp > 0 and (active or observing):
-                            stationary = (brain.indoor_sample_stationary if brain.indoor_sample_at == simulation.time
-                                          else brain.indoor_scanning(simulation.time))
-                            observers.append((actor.xy, actor.facing, stationary))
-                    visible, blocked = sweep.pending_view(observers, world.geometry)
-                checked_count += len(checked)
-                blocked_count += len(blocked)
-                total += len(area.points)
-                for sample in area.points:
-                    x, y = point(*sample)
-                    box = (x - radius, y - radius, x + radius, y + radius)
-                    if sample in checked:
-                        pico.draw_rectangle(*box, *SEARCH_CONFIRMED, filled=True)
-                    elif sample in blocked:
-                        pico.draw_line(box[0], box[1], box[2], box[3], *SEARCH_OCCLUDED)
-                        pico.draw_line(box[0], box[3], box[2], box[1], *SEARCH_OCCLUDED)
-                    else:
-                        color = SEARCH_VISIBLE if sample in visible else SEARCH_OUTSIDE
-                        pico.draw_rectangle(*box, *color)
-            if total:
-                counts = f"확인 {checked_count}/{total} · 미확인 {total - checked_count} · 그중 가림 {blocked_count}"
-                legend = "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖"
-                self.label("map_search", f"{counts}    {legend}", 13)
-                self.text("map_search", 84, 194)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp <= 0 or (actor.team != "player" and not debug):
                 continue

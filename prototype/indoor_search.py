@@ -201,8 +201,9 @@ class IndoorSweep:
     def entry_pose(self, actor_id):
         return next((pose for member, pose in zip(self.entry_order, self.area.entry_poses) if member == actor_id), None)
 
-    def pending_view(self, observers, geometry):
-        pending = tuple(point for point in self.area.points if point not in self.checked)
+    def pending_view(self, observers, geometry, *, samples=None):
+        samples = self.area.points if samples is None else samples
+        pending = tuple(point for point in samples if point not in self.checked)
         visible, clear_line, blocked = set(), set(), set()
         for xy, facing, stationary in observers:
             for point, status in sample_views(xy, facing, pending, geometry, stationary=stationary,
