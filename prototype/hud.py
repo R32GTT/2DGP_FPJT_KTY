@@ -222,9 +222,15 @@ class HUD:
             legend_y = height - (156 if "ai_hint" in self.labels else 136)
             self.text("ai_legend", 24, legend_y)
             if search_counts is not None:
-                checked, total, blocked = search_counts
-                self.label("search_counts", f"화면 안 표본 · 확인 {checked}/{total} · 미확인 {total - checked} · 가림 {blocked}", 13)
-                self.label("search_legend", "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖", 13)
+                checked, total, blocked, covered_area, total_area = search_counts
+                if total_area:
+                    counts = f"화면 안 면적 · 확인 {covered_area:.2f}㎡ · 미확인 {total_area - covered_area:.2f}㎡"
+                    legend = "청록 확인 면적 · 노랑 미확인 면적"
+                else:
+                    counts = f"화면 안 표본 · 확인 {checked}/{total} · 미확인 {total - checked} · 가림 {blocked}"
+                    legend = "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖"
+                self.label("search_counts", counts, 13)
+                self.label("search_legend", legend, 13)
                 self.text("search_counts", 24, legend_y - 20)
                 self.text("search_legend", 24, legend_y - 38)
         else:
@@ -295,11 +301,31 @@ class HUD:
                 if previous is None or sweep.evidence_at >= previous.evidence_at:
                     sweeps[sweep.area.id] = sweep
         checked_count = total = blocked_count = 0
+        covered_area = total_area = 0.0
         bounds = view.viewport()
         radius = max(5, min(10, round(view.scale * 0.18)))
         for area in world.search_areas:
             sweep = sweeps.get(area.id)
             if sweep is None and not world.data.get("training_facility"):
+                continue
+            if area.coverage_cells:
+                coverage = ((sweep.covered_cells, True), (sweep.pending_cells, False)) if sweep is not None else (
+                    (area.coverage_cells, False),)
+                for cells, confirmed in coverage:
+                    for cell in cells:
+                        rect = cell.rect
+                        left, right = max(rect.x, bounds.x), min(rect.right, bounds.right)
+                        top, bottom = max(rect.y, bounds.y), min(rect.bottom, bounds.bottom)
+                        if right <= left or bottom <= top:
+                            continue
+                        surface = (right - left) * (bottom - top)
+                        total_area += surface
+                        if confirmed:
+                            covered_area += surface
+                        x0, y1 = view.pico(left, top)
+                        x1, y0 = view.pico(right, bottom)
+                        color = SEARCH_CONFIRMED if confirmed else SEARCH_OCCLUDED
+                        pico.draw_rectangle(x0, y0, x1, y1, *color, 75, filled=True)
                 continue
             samples = tuple((x, y) for x, y in area.points
                             if bounds.x <= x <= bounds.right and bounds.y <= y <= bounds.bottom)
@@ -334,7 +360,7 @@ class HUD:
                 else:
                     color = SEARCH_VISIBLE if sample in visible else SEARCH_OUTSIDE
                     pico.draw_rectangle(*box, *color)
-        return (checked_count, total, blocked_count) if total else None
+        return (checked_count, total, blocked_count, covered_area, total_area) if total or total_area else None
 
     def _region_map(self, simulation, camera, debug):
         self.panel(60, 166, camera.width - 120, camera.height - 246)

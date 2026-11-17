@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 import math
 
+from .actors import Actor
 from .geometry import Rect
 
 
@@ -26,6 +27,86 @@ class SearchPose:
 
 
 @dataclass(frozen=True)
+class CoverageCell:
+    rect: Rect
+    room: int
+
+    @property
+    def center(self):
+        return self.rect.x + self.rect.w / 2, self.rect.y + self.rect.h / 2
+
+    def split(self, resolution):
+        rect = self.rect
+        columns = 2 if rect.w > resolution else 1
+        rows = 2 if rect.h > resolution else 1
+        if columns == rows == 1:
+            return ()
+        width, height = rect.w / columns, rect.h / rows
+        return tuple(CoverageCell(Rect(rect.x + col * width, rect.y + row * height, width, height), self.room)
+                     for col in range(columns) for row in range(rows))
+
+
+def _vertices(rect):
+    return ((rect.x, rect.y), (rect.right, rect.y), (rect.right, rect.bottom), (rect.x, rect.bottom))
+
+
+def _hull(points):
+    def chain(ordered):
+        result = []
+        for x, y in ordered:
+            while len(result) >= 2:
+                a, b = result[-2:]
+                if (b[0] - a[0]) * (y - a[1]) > (b[1] - a[1]) * (x - a[0]):
+                    break
+                result.pop()
+            result.append((x, y))
+        return result[:-1]
+
+    ordered = sorted(set(points))
+    return chain(ordered) + chain(reversed(ordered))
+
+
+def _overlaps_hull(rect, hull):
+    # 관찰점에서 셀 내부까지의 모든 선분을 감싼 도형과 장애물의 겹침을 검사한다.
+    corners = _vertices(rect)
+    xs, ys = zip(*hull)
+    if max(xs) <= rect.x or min(xs) >= rect.right or max(ys) <= rect.y or min(ys) >= rect.bottom:
+        return False
+    for a, b in zip(hull, hull[1:] + hull[:1]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        if all(dx * (y - a[1]) - dy * (x - a[0]) <= 0 for x, y in corners):
+            return False
+    return True
+
+
+def _subtract_rect(rect, blocker):
+    if not rect.overlaps(blocker):
+        return (rect,)
+    left, top = max(rect.x, blocker.x), max(rect.y, blocker.y)
+    right, bottom = min(rect.right, blocker.right), min(rect.bottom, blocker.bottom)
+    strips = (Rect(rect.x, rect.y, left - rect.x, rect.h),
+              Rect(right, rect.y, rect.right - right, rect.h),
+              Rect(left, rect.y, right - left, top - rect.y),
+              Rect(left, bottom, right - left, rect.bottom - bottom))
+    return tuple(strip for strip in strips if min(strip.w, strip.h) > 1e-8)
+
+
+def _coverage_cells(world, tiles, ordered, rooms):
+    cells = []
+    for tile in tiles:
+        free = (tile,)
+        for blocker in world.geometry.query(tile.expanded(Actor.radius)):
+            if blocker.kind != "door":
+                rect = blocker.rect.expanded(Actor.radius)
+                free = tuple(piece for patch in free for piece in _subtract_rect(patch, rect))
+        for patch in free:
+            center = (patch.x + patch.w / 2, patch.y + patch.h / 2)
+            nearest = min(ordered, key=lambda sample: (math.dist(sample, center), sample))
+            cells.append(CoverageCell(patch, rooms[nearest]))
+    return tuple(cells)
+
+
+@dataclass(frozen=True)
 class SearchArea:
     id: str
     floors: tuple[Rect, ...]
@@ -36,6 +117,8 @@ class SearchArea:
     corner_axis: int | None = None
     entry_poses: tuple[SearchPose, ...] = ()
     observations: dict[tuple[float, float], int] = field(default_factory=dict)
+    coverage_cells: tuple[CoverageCell, ...] = ()
+    coverage_resolution: float = 0.0
 
     def room_of(self, point):
         room = self.rooms.get(point, self.observations.get(point))
@@ -137,15 +220,28 @@ def build_search_areas(world):
         if not math.isfinite(spacing) or spacing <= 0:
             raise ValueError(f"수색 표본 간격 오류: {key}")
         floors = tuple(row if isinstance(row, Rect) else Rect(*row) for row in rows)
+        resolution = layout.get("coverage_resolution", 0.0)
+        if not math.isfinite(resolution) or resolution < 0:
+            raise ValueError(f"수색 면적 해상도 오류: {key}")
+        tiles = []
         points = set()
         for rect in floors:
             columns, lines = math.ceil(rect.w / spacing), math.ceil(rect.h / spacing)
+            previous_tiles = tuple(tiles)
             for col in range(columns):
                 for row in range(lines):
                     point = (rect.x + (col + 0.5) * rect.w / columns,
                              rect.y + (row + 0.5) * rect.h / lines)
                     if world.navigation.walkable(point):
                         points.add(point)
+                    if resolution:
+                        width, height = rect.w / columns, rect.h / lines
+                        tile = Rect(rect.x + col * width, rect.y + row * height, width, height)
+                        pieces = (tile,)
+                        for prior in previous_tiles:
+                            if prior.overlaps(tile):
+                                pieces = tuple(piece for patch in pieces for piece in _subtract_rect(patch, prior))
+                        tiles.extend(pieces)
         authored_corners = tuple(tuple(point) for point in layout.get("corner_points", ()))
         for point in authored_corners:
             if (not any(rect.segment_entry(point, point) is not None for rect in floors)
@@ -184,7 +280,8 @@ def build_search_areas(world):
                 poses.append(SearchPose(position, tuple(row["look"]), rooms[nearest]))
             result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners,
                                      corner_axis=layout.get("corner_axis"), entry_poses=tuple(poses),
-                                     observations=observations))
+                                     observations=observations, coverage_resolution=resolution,
+                                     coverage_cells=_coverage_cells(world, tiles, ordered, rooms) if tiles else ()))
     return tuple(result)
 
 
@@ -206,6 +303,76 @@ class IndoorSweep:
     regroup_swaps: set[tuple[str, str]] = field(default_factory=set)
     regroup_until: float | None = None
     regroup_done: bool = False
+    covered_cells: set[CoverageCell] = field(default_factory=set, init=False)
+    pending_cells: set[CoverageCell] = field(default_factory=set, init=False)
+
+    def __post_init__(self):
+        self.pending_cells.update(self.area.coverage_cells)
+
+    @property
+    def complete(self):
+        return len(self.checked) == len(self.area.points) and not self.pending_cells
+
+    def coverage_probes(self, room, *, origin=None, geometry=None, stationary=True):
+        cells = (cell for cell in self.pending_cells if room is None or cell.room == room)
+        if origin is None:
+            return tuple(sorted(cell.center for cell in cells))
+        scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
+        x, y = origin
+        bounds = Rect(x - scan_range, y - scan_range, 2 * scan_range, 2 * scan_range)
+        blockers = tuple(item.rect for item in geometry.query(bounds, category="sight"))
+        probes = []
+        for cell in cells:
+            dx, dy = cell.center[0] - x, cell.center[1] - y
+            distance = math.hypot(dx, dy)
+            if not 0.15 <= distance <= scan_range:
+                continue
+            corners = _vertices(cell.rect)
+            if any(math.hypot(vx - x, vy - y) > scan_range or
+                   (vx - x) * dx + (vy - y) * dy < math.hypot(vx - x, vy - y) * distance * SCAN_CONE_COS
+                   for vx, vy in corners):
+                continue
+            hull = _hull((*corners, origin))
+            if not any(_overlaps_hull(blocker, hull) for blocker in blockers):
+                probes.append(cell.center)
+        return tuple(sorted(probes))
+
+    def observe_coverage(self, room, xy, facing, geometry, time, exposure, *, stationary, hold):
+        if not self.pending_cells:
+            return {}
+        scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
+        x, y = xy
+        bounds = Rect(x - scan_range, y - scan_range, 2 * scan_range, 2 * scan_range)
+        blockers = tuple(item.rect for item in geometry.query(bounds, category="sight"))
+        forward_x, forward_y = math.cos(facing), math.sin(facing)
+        seen = {}
+
+        def in_view(point):
+            dx, dy = point[0] - x, point[1] - y
+            distance = math.hypot(dx, dy)
+            return distance <= scan_range and dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS
+
+        for cell in tuple(self.pending_cells):
+            if (room is not None and cell.room != room) or not bounds.overlaps(cell.rect):
+                continue
+            corners = _vertices(cell.rect)
+            if all(in_view(corner) for corner in corners):
+                hull = _hull((*corners, xy))
+                if not any(_overlaps_hull(blocker, hull) for blocker in blockers):
+                    since = exposure.get(cell, time)
+                    if time - since < hold:
+                        seen[cell] = since
+                    else:
+                        self.pending_cells.remove(cell)
+                        self.covered_cells.add(cell)
+                    continue
+            children = cell.split(self.area.coverage_resolution)
+            if children and any(in_view(point) and not any(
+                    blocker.segment_entry(xy, point) is not None for blocker in blockers)
+                    for point in (cell.center, *corners)):
+                self.pending_cells.remove(cell)
+                self.pending_cells.update(children)
+        return seen
 
     def entry_pose(self, actor_id):
         return next((pose for member, pose in zip(self.entry_order, self.area.entry_poses) if member == actor_id), None)
@@ -299,6 +466,9 @@ class IndoorSweep:
         for sample in tuple(self.observed_from):
             if self.area.room_of(sample) == room:
                 self.observed_from.pop(sample)
+        self.pending_cells = {cell for cell in self.pending_cells if cell.room != room}
+        self.covered_cells = {cell for cell in self.covered_cells if cell.room != room}
+        self.pending_cells.update(cell for cell in self.area.coverage_cells if cell.room == room)
         self.reset_regroup()
 
     def reset_regroup(self):

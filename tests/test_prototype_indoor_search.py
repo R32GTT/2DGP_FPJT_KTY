@@ -17,6 +17,41 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_area_coverage_retains_a_shadow_between_visible_sample_rays(self):
+        geometry = SpatialIndex()
+        screen = Collider("screen", Rect(1.6, 1.25, 0.2, 0.07), blocks=("sight",))
+        geometry.add(screen)
+        world = SimpleNamespace(
+            data={"search_areas": {"room": [[3, 0, 1, 2]]},
+                  "search_layouts": {"room": {"coverage_resolution": 0.225, "sample_spacing": 2}}},
+            facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry),
+        )
+        area, = build_search_areas(world)
+        center, = area.points
+        origin, shadow = (0, 1), (3.5, 1.55)
+        snapshots = (center, (3, 0), (3, 2), (4, 0), (4, 2))
+        self.assertTrue(all(geometry.raycast(origin, point) is None for point in snapshots))
+        self.assertIsNotNone(geometry.raycast(origin, shadow))
+        sweep = IndoorSweep(area, center, 0)
+        sweep.confirm(center, 0)
+        exposure = {}
+        for tick in range(60):
+            exposure = sweep.observe_coverage(None, origin, 0, geometry, tick / 60, exposure,
+                                              stationary=False, hold=0.35)
+        self.assertFalse(sweep.complete)
+        self.assertTrue(sweep.covered_cells)
+        self.assertTrue(any(cell.rect.segment_entry(shadow, shadow) is not None for cell in sweep.pending_cells))
+        self.assertFalse(any(cell.rect.segment_entry(shadow, shadow) is not None for cell in sweep.covered_cells))
+
+        screen.active = False
+        exposure = sweep.observe_coverage(None, origin, 0, geometry, 1, exposure, stationary=False, hold=0.35)
+        self.assertFalse(sweep.complete)
+        for tick in range(61, 83):
+            exposure = sweep.observe_coverage(None, origin, 0, geometry, tick / 60, exposure,
+                                              stationary=False, hold=0.35)
+        self.assertTrue(sweep.complete)
+        self.assertAlmostEqual(sum(cell.rect.w * cell.rect.h for cell in sweep.covered_cells), 2)
+
     def test_pending_view_keeps_shared_occlusion_separate_from_confirmation(self):
         geometry = SpatialIndex()
         geometry.add(Collider("partition", Rect(1.9, 3, 3.4, 0.3)))

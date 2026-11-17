@@ -132,6 +132,7 @@ class PrototypeAITests(unittest.TestCase):
                 opened_at = passed_at = None
                 all_passed = False
                 moving_scan = False
+                points_finished_before_area = False
                 sweep = None
                 while simulation.time < 15:
                     before = {actor.id: actor.xy for actor in simulation.guards}
@@ -158,6 +159,7 @@ class PrototypeAITests(unittest.TestCase):
                     sweep = next((incident.indoor for incident in simulation.ai.incidents.values()
                                   if incident.indoor is not None), None)
                     if sweep is not None:
+                        points_finished_before_area |= len(sweep.checked) == len(area.points) and not sweep.complete
                         if sweep.entry_ready and at_entry_positions is None:
                             at_entry_positions = before
                         owners = {owner for owner, _ in sweep.corner_checks.values()}
@@ -175,7 +177,7 @@ class PrototypeAITests(unittest.TestCase):
                                 self.assertNotIn(look, corners)
                                 if look in area.points:
                                     internal_looks.add(actor.id)
-                    if all_passed and sweep is not None and sweep.entry_ready and sweep.checked == set(area.points):
+                    if all_passed and sweep is not None and sweep.entry_ready and sweep.complete:
                         break
 
                 self.assertTrue(all_passed)
@@ -183,6 +185,9 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertLess(passed_at - opened_at, 3.3)
                 self.assertIsNotNone(sweep)
                 self.assertEqual(sweep.checked, set(sweep.area.points))
+                self.assertTrue(sweep.complete)
+                if (left, right) == (1, 1):
+                    self.assertTrue(points_finished_before_area)
                 self.assertIsNotNone(at_entry_positions)
                 self.assertTrue(moving_scan)
                 if len(simulation.guards) == 2:
@@ -219,10 +224,11 @@ class PrototypeAITests(unittest.TestCase):
             if sweep.corner_checks and set(area.points) - corners - sweep.checked:
                 self.assertNotIn(brain.look_point, corners)
                 saw_inside |= brain.look_point in area.points
-            if sweep.entry_ready and sweep.checked == set(area.points):
+            if sweep.entry_ready and sweep.complete:
                 break
 
         self.assertTrue(sweep.entry_ready)
+        self.assertTrue(sweep.complete)
         self.assertTrue(saw_inside)
         self.assertEqual(sweep.checked, set(area.points))
         self.assertFalse(simulation.ai.door_traffic.stacks)
