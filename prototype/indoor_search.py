@@ -1,6 +1,6 @@
 """실내 수색은 맵의 걸을 수 있는 표본점과 실제 시야로 진행한다."""
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 import math
 
@@ -46,6 +46,44 @@ class CoverageCell:
                      for col in range(columns) for row in range(rows))
 
 
+@dataclass
+class CoverageScan:
+    queue: deque[CoverageCell] = field(default_factory=deque)
+    exposure: dict[CoverageCell, float] = field(default_factory=dict)
+    occlusion: dict[CoverageCell, bool] = field(default_factory=dict)
+    location: tuple | None = None
+    view: tuple | None = None
+    unchanged_since: float = 0.0
+    tick_at: float = -math.inf
+    scanned_at: float = -math.inf
+
+    def update_view(self, xy, facing, stationary, revision, time):
+        location = (xy, revision)
+        if location != self.location:
+            if self.location is not None and revision != self.location[1]:
+                self.exposure.clear()
+            self.location = location
+            self.occlusion.clear()
+        view = (location, facing, stationary)
+        if view != self.view or time - self.tick_at > 1 / 40:
+            self.view = view
+            self.unchanged_since = time
+        self.tick_at = time
+
+    def batch(self, pending, room, budget):
+        selected = dict.fromkeys(cell for cell in self.exposure
+                                 if cell in pending and (room is None or cell.room == room))
+        if len(selected) >= budget:
+            return tuple(selected)[:budget]
+        if not self.queue:
+            self.queue.extend(sorted(pending, key=lambda cell: cell.center))
+        while self.queue and len(selected) < budget:
+            cell = self.queue.popleft()
+            if cell in pending and (room is None or cell.room == room):
+                selected[cell] = None
+        return tuple(selected)
+
+
 def _vertices(rect):
     return ((rect.x, rect.y), (rect.right, rect.y), (rect.right, rect.bottom), (rect.x, rect.bottom))
 
@@ -77,6 +115,18 @@ def _overlaps_hull(rect, hull):
         if all(dx * (y - a[1]) - dy * (x - a[0]) <= 0 for x, y in corners):
             return False
     return True
+
+
+def _clear_cell(origin, cell, corners, blockers):
+    x, y = origin
+    left, right = min(x, cell.rect.x), max(x, cell.rect.right)
+    top, bottom = min(y, cell.rect.y), max(y, cell.rect.bottom)
+    nearby = tuple(rect for rect in blockers if rect.x < right and rect.right > left
+                   and rect.y < bottom and rect.bottom > top)
+    if not nearby:
+        return True
+    hull = _hull((*corners, origin))
+    return not any(_overlaps_hull(blocker, hull) for blocker in nearby)
 
 
 def _subtract_rect(rect, blocker):
@@ -305,6 +355,7 @@ class IndoorSweep:
     regroup_done: bool = False
     covered_cells: set[CoverageCell] = field(default_factory=set, init=False)
     pending_cells: set[CoverageCell] = field(default_factory=set, init=False)
+    coverage_revision: int = 0
 
     def __post_init__(self):
         self.pending_cells.update(self.area.coverage_cells)
@@ -313,7 +364,8 @@ class IndoorSweep:
     def complete(self):
         return len(self.checked) == len(self.area.points) and not self.pending_cells
 
-    def coverage_probes(self, room, *, origin=None, geometry=None, stationary=True):
+    def coverage_probes(self, room, *, origin=None, geometry=None, stationary=True, limit=math.inf,
+                        budget=None, offset=0, preferred=None):
         cells = (cell for cell in self.pending_cells if room is None or cell.room == room)
         if origin is None:
             return tuple(sorted(cell.center for cell in cells))
@@ -322,6 +374,15 @@ class IndoorSweep:
         bounds = Rect(x - scan_range, y - scan_range, 2 * scan_range, 2 * scan_range)
         blockers = tuple(item.rect for item in geometry.query(bounds, category="sight"))
         probes = []
+        if budget is not None:
+            ordered = sorted(cells, key=lambda cell: (cell.center != preferred, cell.center))
+            if not ordered:
+                return ()
+            start = offset % len(ordered)
+            batch = (ordered + ordered)[start:start + min(budget, len(ordered))]
+            if ordered[0].center == preferred and ordered[0] not in batch:
+                batch[0] = ordered[0]
+            cells = batch
         for cell in cells:
             dx, dy = cell.center[0] - x, cell.center[1] - y
             distance = math.hypot(dx, dy)
@@ -332,12 +393,13 @@ class IndoorSweep:
                    (vx - x) * dx + (vy - y) * dy < math.hypot(vx - x, vy - y) * distance * SCAN_CONE_COS
                    for vx, vy in corners):
                 continue
-            hull = _hull((*corners, origin))
-            if not any(_overlaps_hull(blocker, hull) for blocker in blockers):
+            if _clear_cell(origin, cell, corners, blockers):
                 probes.append(cell.center)
+                if len(probes) >= limit:
+                    break
         return tuple(sorted(probes))
 
-    def observe_coverage(self, room, xy, facing, geometry, time, exposure, *, stationary, hold):
+    def observe_coverage(self, room, xy, facing, geometry, time, exposure, *, stationary, hold, scan=None, budget=0):
         if not self.pending_cells:
             return {}
         scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
@@ -352,26 +414,47 @@ class IndoorSweep:
             distance = math.hypot(dx, dy)
             return distance <= scan_range and dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS
 
-        for cell in tuple(self.pending_cells):
+        cells = tuple(self.pending_cells) if scan is None else scan.batch(self.pending_cells, room, budget)
+        for cell in cells:
             if (room is not None and cell.room != room) or not bounds.overlaps(cell.rect):
                 continue
             corners = _vertices(cell.rect)
-            if all(in_view(corner) for corner in corners):
-                hull = _hull((*corners, xy))
-                if not any(_overlaps_hull(blocker, hull) for blocker in blockers):
-                    since = exposure.get(cell, time)
-                    if time - since < hold:
-                        seen[cell] = since
+            inside = tuple(corner for corner in corners if in_view(corner))
+            center_in_view = in_view(cell.center)
+            if not inside and not center_in_view:
+                continue
+            clear = scan.occlusion.get(cell) if scan is not None else None
+            if clear is None:
+                clear = _clear_cell(xy, cell, corners, blockers)
+                if scan is not None:
+                    scan.occlusion[cell] = clear
+            if clear:
+                if len(inside) == len(corners):
+                    if scan is None:
+                        stamp = exposure.get(cell, time)
+                        complete = time - stamp >= hold
+                    else:
+                        elapsed = time - scan.scanned_at
+                        stamp = 0.0
+                        if cell in exposure and elapsed <= 0.075:
+                            # 이어진 두 검사 사이의 시야가 같을 때만 그 간격 전체를 인정한다.
+                            observed = elapsed if scan.unchanged_since <= scan.scanned_at else min(elapsed, 1 / 60)
+                            stamp = exposure[cell] + observed
+                        complete = stamp >= hold
+                    if not complete:
+                        seen[cell] = stamp
                     else:
                         self.pending_cells.remove(cell)
                         self.covered_cells.add(cell)
-                    continue
-            children = cell.split(self.area.coverage_resolution)
-            if children and any(in_view(point) and not any(
-                    blocker.segment_entry(xy, point) is not None for blocker in blockers)
-                    for point in (cell.center, *corners)):
+                        self.coverage_revision += 1
+                continue
+            candidates = (*inside, cell.center) if center_in_view else inside
+            if (max(cell.rect.w, cell.rect.h) > self.area.coverage_resolution and any(
+                    not any(blocker.segment_entry(xy, point) is not None for blocker in blockers)
+                    for point in candidates)):
                 self.pending_cells.remove(cell)
-                self.pending_cells.update(children)
+                self.pending_cells.update(cell.split(self.area.coverage_resolution))
+                self.coverage_revision += 1
         return seen
 
     def entry_pose(self, actor_id):
@@ -469,6 +552,7 @@ class IndoorSweep:
         self.pending_cells = {cell for cell in self.pending_cells if cell.room != room}
         self.covered_cells = {cell for cell in self.covered_cells if cell.room != room}
         self.pending_cells.update(cell for cell in self.area.coverage_cells if cell.room == room)
+        self.coverage_revision += 1
         self.reset_regroup()
 
     def reset_regroup(self):

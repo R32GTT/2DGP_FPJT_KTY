@@ -7,7 +7,7 @@ from campaign.models import Position
 from prototype.actors import Actor
 from prototype.ai import EnemyAI, Intent
 from prototype.geometry import Collider, Rect, SpatialIndex
-from prototype.indoor_search import IndoorSweep, build_search_areas, sample_views
+from prototype.indoor_search import CoverageScan, IndoorSweep, build_search_areas, sample_views
 from prototype.navigation import Navigation
 from prototype.simulation import PlaySimulation
 
@@ -17,6 +17,41 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_coverage_scan_limits_work_and_discards_elapsed_time_on_geometry_revision(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(
+            data={"search_areas": {"room": [[3, 0, 4, 2]]},
+                  "search_layouts": {"room": {"coverage_resolution": 0.225, "sample_spacing": 2}}},
+            facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry),
+        )
+        area, = build_search_areas(world)
+        sweep = IndoorSweep(area, area.points[0], 0)
+        scan = CoverageScan()
+
+        def observe(tick, x, revision):
+            time = tick / 60
+            origin = (x, 1)
+            scan.update_view(origin, 0, True, revision, time)
+            if tick % 3 == 0:
+                scan.exposure = sweep.observe_coverage(None, origin, 0, geometry, time, scan.exposure,
+                                                        stationary=True, hold=0.35, scan=scan, budget=1)
+                scan.scanned_at = time
+
+        for tick in range(4):
+            observe(tick, 0, 0)
+        self.assertEqual(list(scan.exposure.values()), [3 / 60])
+        self.assertEqual(len(scan.occlusion), 1)
+        self.assertEqual(len(sweep.pending_cells), 2)
+
+        for tick in range(4, 7):
+            observe(tick, 0.1, 0)
+        self.assertEqual(len(scan.exposure), 1)
+        self.assertAlmostEqual(next(iter(scan.exposure.values())), 4 / 60)
+
+        observe(7, 0.1, 1)
+        self.assertFalse(scan.exposure)
+        self.assertFalse(scan.occlusion)
+
     def test_area_coverage_retains_a_shadow_between_visible_sample_rays(self):
         geometry = SpatialIndex()
         screen = Collider("screen", Rect(1.6, 1.25, 0.2, 0.07), blocks=("sight",))

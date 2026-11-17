@@ -8,6 +8,7 @@ from time import perf_counter
 import pico2d as pico
 
 from campaign.viewmodel import world_clock
+from .geometry import Rect
 from .indoor_search import SEARCHER_ACTIVE_S
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
@@ -28,6 +29,26 @@ SEARCH_VISIBLE = (255, 108, 98)
 SEARCH_OCCLUDED = (255, 215, 83)
 SEARCH_OUTSIDE = (203, 210, 206)
 
+def _merge_coverage_rows(rects):
+    rows = sorted(rects, key=lambda rect: (round(rect.y, 9), round(rect.h, 9), rect.x))
+    merged = []
+    for rect in rows:
+        if merged:
+            previous = merged[-1]
+            if (math.isclose(previous.y, rect.y, abs_tol=1e-9, rel_tol=0)
+                    and math.isclose(previous.h, rect.h, abs_tol=1e-9, rel_tol=0)
+                    and math.isclose(previous.right, rect.x, abs_tol=1e-9, rel_tol=0)):
+                merged[-1] = Rect(previous.x, previous.y, rect.right - previous.x, previous.h)
+                continue
+        merged.append(rect)
+    return merged
+
+
+def _merge_coverage_rects(cells):
+    horizontal = _merge_coverage_rows(cell.rect for cell in cells)
+    vertical = _merge_coverage_rows(Rect(rect.y, rect.x, rect.h, rect.w) for rect in horizontal)
+    return tuple(Rect(rect.y, rect.x, rect.h, rect.w) for rect in vertical)
+
 
 class HUD:
     def __init__(self, backend):
@@ -37,6 +58,7 @@ class HUD:
         self.labels = {}
         self.next_update = 0.0
         self.ai_rows = 0
+        self.coverage_overlay = {}
 
     def label(self, key, text, size=16, color=(223, 230, 218)):
         if not text:
@@ -309,11 +331,14 @@ class HUD:
             if sweep is None and not world.data.get("training_facility"):
                 continue
             if area.coverage_cells:
-                coverage = ((sweep.covered_cells, True), (sweep.pending_cells, False)) if sweep is not None else (
-                    (area.coverage_cells, False),)
-                for cells, confirmed in coverage:
-                    for cell in cells:
-                        rect = cell.rect
+                cached = self.coverage_overlay.get(area.id)
+                revision = sweep.coverage_revision if sweep is not None else -1
+                if cached is None or cached[0] is not area or cached[1] is not sweep or cached[2] != revision:
+                    confirmed = _merge_coverage_rects(sweep.covered_cells) if sweep is not None else ()
+                    pending = _merge_coverage_rects(sweep.pending_cells if sweep is not None else area.coverage_cells)
+                    cached = self.coverage_overlay[area.id] = area, sweep, revision, confirmed, pending
+                for rects, confirmed in ((cached[3], True), (cached[4], False)):
+                    for rect in rects:
                         left, right = max(rect.x, bounds.x), min(rect.right, bounds.right)
                         top, bottom = max(rect.y, bounds.y), min(rect.bottom, bounds.bottom)
                         if right <= left or bottom <= top:
@@ -424,6 +449,7 @@ class HUD:
 
     def close(self):
         self.labels.clear()
+        self.coverage_overlay.clear()
         for font in self.fonts.values():
             self.backend.TTF_CloseFont(font.font)
         self.fonts.clear()
