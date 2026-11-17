@@ -178,7 +178,7 @@ class TransportCrew:
                 brain = self.ai.brains[actor.id]
                 memory = brain.memory
                 quiet &= (not memory.visible and seconds - max(memory.seen_at, memory.sound_heard_at,
-                                                                brain.incoming_at, brain.fired_at) >= QUIET_SECONDS)
+                                                                brain.combat.incoming_at, brain.combat.fired_at) >= QUIET_SECONDS)
             can_board = quiet and len(crew) >= len(trucks) and all(actor.id in trip.exits for actor in crew)
             for actor in crew:
                 actor.transport_boarding = can_board

@@ -224,8 +224,8 @@ class PlaySimulation:
             intent = intents.get(actor.id)
             if intent is not None:
                 brain = self.ai.brains[actor.id]
-                if intent.open_door and brain.path:
-                    door = self.world.open_for_ai(actor, brain.path[0])
+                if intent.open_door and brain.motion.path:
+                    door = self.world.open_for_ai(actor, brain.motion.path[0])
                     if door:
                         self.events.emit("door_opened", self.time, actor, door=door.id)
                         self.events.emit("noise", self.time, actor, radius=4, strength=0.25, reason="door")
@@ -233,9 +233,7 @@ class PlaySimulation:
                                        if actor.weapon and actor.weapon.reloading else 1)
                 blocker = move_actor(actor, intent.direction, self.world, intent.step_dt, speed=speed,
                                      neighbors=active_guards, allow_slide=not intent.move_straight)
-                brain.blocked_by = blocker.id if blocker is not None else ""
-                if blocker is not None:
-                    brain.progress_at = self.time
+                self.ai.motion.record_step(brain, blocker, self.time)
                 if intent.reload:
                     self.reload(actor)
         self.combat.prepare([self.player, *self.guards], FIXED_DT)
@@ -250,7 +248,7 @@ class PlaySimulation:
             if intent.retreat_fire:
                 if (self.combat.clear_fire_line(actor, self.player, self.world)
                         and self.combat.fire(actor, self.world, self.time, moving=True)):
-                    self.ai.brains[actor.id].fire_at = self.time + 0.7
+                    self.ai.brains[actor.id].combat.fire_at = self.time + 0.7
             elif (intent.fire and self.combat.clear_fire_line(actor, self.player, self.world)
                   and self.combat.fire(actor, self.world, self.time, moving=any(intent.direction))):
                 self.ai.record_burst_shot(actor, self.time)

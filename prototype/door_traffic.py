@@ -36,19 +36,19 @@ class DoorTraffic:
 
     @staticmethod
     def _ticket(actor, brain):
-        goal = brain.pending_goal or brain.goal
+        goal = brain.motion.pending_goal or brain.motion.goal
         if (actor.state in {"alert", "search"} and not brain.visible and goal is not None
-                and (brain.path or brain.pending_goal is not None) and brain.indoor_yield is None):
-            if brain.investigating_priority and brain.priority_cue.kind == "sound":
-                party = ("sound", brain.priority_cue.at)
-            elif brain.investigating_priority:
-                party = brain.incident or ("cue", brain.priority_cue)
-            elif brain.cue and brain.cue[1] == brain.memory.last_sound:
+                and (brain.motion.path or brain.motion.pending_goal is not None) and brain.motion.yield_point is None):
+            if brain.search.investigating_priority and brain.search.priority_cue.kind == "sound":
+                party = ("sound", brain.search.priority_cue.at)
+            elif brain.search.investigating_priority:
+                party = brain.incident or ("cue", brain.search.priority_cue)
+            elif brain.search.cue and brain.search.cue[1] == brain.memory.last_sound:
                 party = ("sound", brain.memory.sound_at)
             else:
                 party = brain.incident
             if party:
-                return party, goal, brain.priority_cue
+                return party, goal, brain.search.priority_cue
         return None
 
     @staticmethod
@@ -82,7 +82,7 @@ class DoorTraffic:
             # 목표까지 가는 길에 문을 더 지난다면 이 문은 중간 통로다.
             if any(world.door_on_ai_path_from(start, end, reach=math.dist(start, end), padding=0,
                                              ignore=door_id) is not None
-                   for start, end in pairwise([actor.xy, *brains[actor.id].path])):
+                   for start, end in pairwise([actor.xy, *brains[actor.id].motion.path])):
                 continue
             groups.setdefault((party, side), []).append((distance, actor.id, actor))
 
@@ -91,7 +91,7 @@ class DoorTraffic:
                 continue
             # 경로 계산 예산 때문에 같은 조사조의 경로가 몇 틱에 걸쳐 준비될 수 있다.
             if len(group) < MAX_STACK_MEMBERS and any(
-                brains[actor.id].pending_goal is not None and not brains[actor.id].path
+                brains[actor.id].motion.pending_goal is not None and not brains[actor.id].motion.path
                 and tickets[actor.id] is not None and tickets[actor.id][0] == party
                 and math.dist(actor.xy, layout.center) <= STACK_APPROACH_M
                 and side * (actor.xy[across] - layout.center[across]) > 0
@@ -117,23 +117,22 @@ class DoorTraffic:
             for actor_id in valid:
                 brain, intent = brains[actor_id], intents[actor_id]
                 # 대기 위치에서 원래 목적지까지 이어지는 경로를 다시 구한다.
-                brain.path.clear()
-                brain.path_revision, brain.plan_at = -1, 0.0
-                brain.indoor_speed, brain.indoor_depart_at = 0.0, None
+                brain.motion.invalidate()
+                brain.motion.speed, brain.motion.depart_at = 0.0, None
                 intent.direction, intent.open_door = (0, 0), False
             return set(valid)
 
         ready = True
         for actor_id, point in valid.items():
             actor, brain, intent = actors[actor_id], brains[actor_id], intents[actor_id]
-            brain.door_wait, brain.door_stack = door_id, point
+            brain.motion.door_wait, brain.motion.door_stack = door_id, point
             look_x, look_y = stack.looks[actor_id]
-            brain.look_point, brain.look_reason = (look_x, look_y), "출입구 주시"
+            brain.look.point, brain.look.reason = (look_x, look_y), "출입구 주시"
             x, y = actor.xy
             actor.facing = math.atan2(look_y - y, look_x - x)
             angle_error = abs(math.remainder(actor.facing - previous_facing[actor_id], math.tau))
-            brain.progress_point, brain.progress_at = actor.xy, now
-            brain.indoor_speed = 0.0
+            brain.motion.progress_point, brain.motion.progress_at = actor.xy, now
+            brain.motion.speed = 0.0
             intent.open_door, intent.move_straight = False, True
             distance = math.dist(actor.xy, point)
             speed = min(actor.speed, 1.7)
@@ -170,13 +169,13 @@ class DoorTraffic:
         tickets = {}
         for actor in actors:
             brain = brains[actor.id]
-            brain.door_wait = ""
-            brain.door_stack = None
+            brain.motion.door_wait = ""
+            brain.motion.door_stack = None
             intent = intents.get(actor.id)
             tickets[actor.id] = self._ticket(actor, brain) if actor.hp > 0 and intent is not None else None
-            if actor.hp <= 0 or intent is None or not intent.open_door or not brain.path:
+            if actor.hp <= 0 or intent is None or not intent.open_door or not brain.motion.path:
                 continue
-            approach = world.door_on_ai_path(actor, brain.path[0])
+            approach = world.door_on_ai_path(actor, brain.motion.path[0])
             if approach is None:
                 continue
             door_id, distance = approach
@@ -192,7 +191,7 @@ class DoorTraffic:
             for actor in actors:
                 if tickets[actor.id] is None or actor.id in stacking:
                     continue
-                approach = self._stack_approach(world, actor, brains[actor.id].path)
+                approach = self._stack_approach(world, actor, brains[actor.id].motion.path)
                 if approach is not None:
                     door_id, distance = approach
                     approaches.setdefault(door_id, []).append((actor, distance))
@@ -219,9 +218,9 @@ class DoorTraffic:
             contenders = [(actor, distance) for actor, distance in contenders if actor.id not in staged_actors]
             if door_id in self.stacks:
                 for actor, _ in contenders:
-                    brains[actor.id].door_wait = door_id
+                    brains[actor.id].motion.door_wait = door_id
                     intents[actor.id].direction, intents[actor.id].open_door = (0, 0), False
-                    brains[actor.id].progress_point, brains[actor.id].progress_at = actor.xy, now
+                    brains[actor.id].motion.progress_point, brains[actor.id].motion.progress_at = actor.xy, now
                 continue
             if not contenders:
                 continue
@@ -246,23 +245,23 @@ class DoorTraffic:
 
             owner_brain = brains[prior.actor_id]
             yielded = self.yielding.get(door_id)
-            waiter_id = yielded[1] if yielded is not None and yielded[0] == prior.actor_id else owner_brain.blocked_by
+            waiter_id = yielded[1] if yielded is not None and yielded[0] == prior.actor_id else owner_brain.motion.blocked_by
             if waiter_id in owners and waiter_id != prior.actor_id:
                 layout = DoorLayout.from_rect(world.geometry.objects[door_id].rect)
                 across = layout.across
                 waiter = brains[waiter_id]
-                owner_goal = owner_brain.goal
+                owner_goal = owner_brain.motion.goal
                 destination_side = owner_goal[across] - layout.center[across] if owner_goal is not None else 0
-                crossing_opposite = (waiter.goal is not None
-                                     and destination_side * (waiter.goal[across] - layout.center[across]) < 0)
-                if destination_side and (crossing_opposite or waiter.indoor_yield is not None):
+                crossing_opposite = (waiter.motion.goal is not None
+                                     and destination_side * (waiter.motion.goal[across] - layout.center[across]) < 0)
+                if destination_side and (crossing_opposite or waiter.motion.yield_point is not None):
                     next_yielding[door_id] = prior.actor_id, waiter_id
 
             for actor, _ in contenders:
                 if actor.id != prior.actor_id:
                     brain, intent = brains[actor.id], intents[actor.id]
-                    brain.door_wait = door_id
-                    brain.progress_point, brain.progress_at = actor.xy, now
+                    brain.motion.door_wait = door_id
+                    brain.motion.progress_point, brain.motion.progress_at = actor.xy, now
                     intent.direction, intent.open_door = (0, 0), False
                     if next_yielding.get(door_id) == (prior.actor_id, actor.id):
                         side = -1 if destination_side < 0 else 1

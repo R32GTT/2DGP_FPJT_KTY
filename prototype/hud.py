@@ -100,52 +100,52 @@ class HUD:
                     (memory.reported_at, "보고", memory.reported)]
             stamp, kind, point = max(cues, key=lambda cue: cue[0] if cue[2] is not None else -math.inf)
             cue = f"{kind} {point[0]:.0f}, {point[1]:.0f} · {time - stamp:.1f}초 전" if point else "단서 없음"
-            action = AI_ACTIONS.get(brain.action, "") if actor.state in {"combat", "retreat"} else ""
+            action = AI_ACTIONS.get(brain.combat.action, "") if actor.state in {"combat", "retreat"} else ""
             role = AI_ROLES.get(brain.role, "")
             state = " / ".join(part for part in (AI_STATES.get(actor.state, actor.state), role, action) if part)
-            if time < brain.combat_alert_until:
-                state += f" · 경계 {math.ceil(brain.combat_alert_until - time)}초"
+            if time < brain.combat.combat_alert_until:
+                state += f" · 경계 {math.ceil(brain.combat.combat_alert_until - time)}초"
             route = "목표 없음"
-            if brain.indoor_scanning(time):
-                route = "스캔 마무리" if brain.indoor_look_angle is None else "바라보는 방향 확인"
-            elif time < brain.scan_until:
+            if brain.search.indoor.scanning:
+                route = "바라보는 방향 확인"
+            elif time < brain.search.scan_until:
                 route = "주변 관찰"
-            elif (actor.state == "retreat" and brain.action == "cover" and brain.action_goal is not None
-                  and math.dist(actor.xy, brain.action_goal) <= 0.3):
-                x, y = brain.action_goal
+            elif (actor.state == "retreat" and brain.combat.action == "cover" and brain.combat.action_goal is not None
+                  and math.dist(actor.xy, brain.combat.action_goal) <= 0.3):
+                x, y = brain.combat.action_goal
                 route = f"{x:.1f}, {y:.1f} · 엄폐 도착"
-            elif brain.pending_goal is not None:
-                x, y = brain.pending_goal
+            elif brain.motion.pending_goal is not None:
+                x, y = brain.motion.pending_goal
                 route = f"{x:.1f}, {y:.1f} · 경로 계산 대기"
-            elif brain.door_stack is not None:
-                route = f"문 옆 집결 · {brain.door_wait}"
-            elif brain.door_wait:
-                route = f"문 통과 차례 대기 · {brain.door_wait}"
-            elif brain.blocked_by:
-                route = f"병력 통과 대기 · {brain.blocked_by}"
-            elif brain.goal is not None:
-                if brain.path_revision != simulation.world.revision:
+            elif brain.motion.door_stack is not None:
+                route = f"문 옆 집결 · {brain.motion.door_wait}"
+            elif brain.motion.door_wait:
+                route = f"문 통과 차례 대기 · {brain.motion.door_wait}"
+            elif brain.motion.blocked_by:
+                route = f"병력 통과 대기 · {brain.motion.blocked_by}"
+            elif brain.motion.goal is not None:
+                if brain.motion.path_revision != simulation.world.revision:
                     status = "장애물 변경 · 재계산 대기"
-                elif brain.route_failed:
+                elif brain.motion.route_failed:
                     status = "도달 경로 없음"
-                elif brain.path:
-                    status = f"경유점 {len(brain.path)}개"
+                elif brain.motion.path:
+                    status = f"경유점 {len(brain.motion.path)}개"
                 else:
                     status = "도착"
-                route = f"{brain.goal[0]:.1f}, {brain.goal[1]:.1f} · {status}"
-                if brain.goal == brain.search_cover:
+                route = f"{brain.motion.goal[0]:.1f}, {brain.motion.goal[1]:.1f} · {status}"
+                if brain.motion.goal == brain.search.cover:
                     route += " · 엄폐 이동"
             self.label(f"ai_id/{index}", f"{actor.id}   {state}", 13, (118, 215, 191))
-            self.label(f"ai_cue/{index}", f"{cue}   의심 {memory.suspicion:.2f} · 제압 {brain.suppression:.2f}", 13)
+            self.label(f"ai_cue/{index}", f"{cue}   의심 {memory.suspicion:.2f} · 제압 {brain.combat.suppression:.2f}", 13)
             self.label(f"ai_route/{index}", route, 13)
-            sound = SOUND_RESPONSES.get(brain.sound_response, "") if time - brain.sound_response_at < 5 else ""
-            if brain.indoor is not None and actor.state in {"search", "combat_guard"}:
-                sweep = brain.indoor
+            sound = SOUND_RESPONSES.get(brain.search.sound_response, "") if time - brain.search.sound_response_at < 5 else ""
+            if brain.search.indoor.sweep is not None and actor.state in {"search", "combat_guard"}:
+                sweep = brain.search.indoor.sweep
                 sound = f"실내 수색 {len(sweep.checked)}/{len(sweep.area.points)} 지점 확인"
-            if brain.look_reason:
-                focus = brain.look_point
+            if brain.look.reason:
+                focus = brain.look.point
                 location = f"{focus[0]:.1f}, {focus[1]:.1f} · " if focus is not None else ""
-                sound = f"시선 {location}{brain.look_reason}"
+                sound = f"시선 {location}{brain.look.reason}"
             self.label(f"ai_sound/{index}", sound or "최근 총성 반응 없음", 13, (240, 187, 104))
         self.label("ai_hint", simulation.ai_hint, 13)
 
@@ -463,10 +463,10 @@ class HUD:
                 for actor in simulation.guards:
                     brain = simulation.ai.brains[actor.id]
                     active = simulation.time - sweep.sound_searchers.get(actor.id, -math.inf) < SEARCHER_ACTIVE_S
-                    observing = brain.indoor is sweep and actor.state in {"search", "regroup", "combat_guard"}
+                    observing = brain.search.indoor.sweep is sweep and actor.state in {"search", "regroup", "combat_guard"}
                     if actor.hp > 0 and (active or observing):
-                        stationary = (brain.indoor_sample_stationary if brain.indoor_sample_at == simulation.time
-                                      else brain.indoor_scanning(simulation.time))
+                        stationary = (brain.search.indoor.sample_stationary if brain.search.indoor.scan.sample_at == simulation.time
+                                      else brain.search.indoor.scanning)
                         observers.append((actor.xy, actor.facing, stationary))
                 visible, blocked = sweep.pending_view(observers, world.geometry, samples=samples)
             checked_count += len(checked)

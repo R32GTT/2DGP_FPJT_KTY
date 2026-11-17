@@ -7,6 +7,8 @@ from unittest.mock import patch
 from campaign.models import Position
 from prototype.actors import Actor
 from prototype.ai import EnemyAI, Incident, SearchCue
+from prototype.ai_state import Brain, Intent, MoveRequest, MoveStatus
+from prototype.ai_motion import MotionController
 from prototype.combat import Combat
 from prototype.events import EventBus
 from prototype.geometry import Collider, Rect, SpatialIndex
@@ -35,6 +37,61 @@ def field_approach(count, y=-65, distance=15):
 
 
 class PrototypeAITests(unittest.TestCase):
+    def test_move_result_distinguishes_arrival_failure_and_temporary_wait(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
+        actor, brain = Actor("guard", Position(0, 0)), Brain([])
+        motion = MotionController(world)
+        goal = (2, 0)
+        motion.move(actor, brain, Intent(), MoveRequest(goal), 0, 0)
+        self.assertIs(brain.motion.status, MoveStatus.PLANNING)
+        motion.move(actor, brain, Intent(), MoveRequest(goal), 0.1, 1)
+        self.assertIs(brain.motion.status, MoveStatus.MOVING)
+        motion.record_step(brain, Actor("blocker", Position(1, 0)), 0.2)
+        self.assertIs(brain.motion.status, MoveStatus.WAITING)
+        actor.position = Position(*goal)
+        motion.record_step(brain, None, 0.3)
+        motion.move(actor, brain, Intent(), MoveRequest(goal), 0.3, 1)
+        self.assertTrue(brain.motion.arrived(goal, world.revision))
+
+        geometry.add(Collider("sealed", Rect(3, -100, 1, 200)))
+        motion.move(actor, brain, Intent(), MoveRequest((6, 0)), 0.6, 1)
+        self.assertTrue(brain.motion.failed((6, 0), world.revision))
+        self.assertFalse(brain.motion.arrived((6, 0), world.revision))
+        motion.move(actor, brain, Intent(), MoveRequest(None), 0.7, 1)
+        self.assertIs(brain.motion.status, MoveStatus.IDLE)
+
+    def test_reset_keeps_controller_references_and_discards_personal_task_state(self):
+        simulation, guards = field_approach(2)
+        ai = simulation.ai
+        previous = ai.brains[guards[0].id]
+        previous.motion.path.append((3, 4))
+        previous.search.indoor.scan.exposure[(1, 1)] = 0
+        ai.reset()
+        for controller in (ai.combat, ai.search, ai.squad):
+            self.assertIs(controller.brains, ai.brains)
+        current = ai.brains[guards[0].id]
+        self.assertIsNot(current, previous)
+        self.assertFalse(current.motion.path)
+        self.assertFalse(current.search.indoor.scan.exposure)
+        self.assertIs(ai.search.incidents, ai.squad.incidents)
+
+    def test_cover_is_rechecked_before_peeking_toward_a_new_threat_direction(self):
+        geometry = SpatialIndex()
+        geometry.add(Collider("wall", Rect(4, 2.5, 0.2, 1)))
+        world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry),
+                                door_on_ai_path=lambda *_: None, indoor_search_area=lambda *_: None)
+        guard = Actor("guard", Position(2, 3), facing=-math.pi / 2, state="retreat", active_weapon="ar_a")
+        guard.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])
+        player = Actor("player", Position(2, 0), team="player")
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        brain.combat.action, brain.combat.action_goal = "cover", guard.xy
+        brain.combat.cover_threat, brain.combat.cover_revision = (6, 3), world.revision
+        ai.update([guard], player, 1)
+        self.assertIsNone(brain.combat.peek_home)
+        self.assertEqual(brain.combat.action, "fire")
+
     def test_burst_advances_only_when_a_clear_shot_is_fired(self):
         simulation, (shooter, blocker) = field_approach(2, distance=11)
         shooter.state = "combat"
@@ -45,17 +102,17 @@ class PrototypeAITests(unittest.TestCase):
         brain = simulation.ai.brains[shooter.id]
 
         simulation.step()
-        self.assertEqual((simulation.combat.shots, brain.burst, brain.fire_at), (0, 0, 0))
+        self.assertEqual((simulation.combat.shots, brain.combat.burst, brain.combat.fire_at), (0, 0, 0))
         blocker.position.y += 1
         blocker_brain.patrol = [blocker.xy]
         with patch.object(simulation.combat, "fire", return_value=False) as failed_shot:
             simulation.step()
         failed_shot.assert_called_once()
-        self.assertEqual((brain.burst, brain.fire_at), (0, 0))
+        self.assertEqual((brain.combat.burst, brain.combat.fire_at), (0, 0))
 
         simulation.step()
-        self.assertEqual((simulation.combat.shots, brain.burst), (1, 1))
-        self.assertGreater(brain.fire_at, simulation.time)
+        self.assertEqual((simulation.combat.shots, brain.combat.burst), (1, 1))
+        self.assertGreater(brain.combat.fire_at, simulation.time)
 
     def test_sight_and_hitscan_only_consider_actors_on_the_same_floor(self):
         world = SimpleNamespace(geometry=SpatialIndex())
@@ -81,8 +138,8 @@ class PrototypeAITests(unittest.TestCase):
         self.assertFalse(any(event.kind == "pressure" and event.source == upstairs.id for event in events.pending))
 
     def test_unreachable_sound_is_only_checked_after_access_opens(self):
-        for reason in ("gunshot", "footstep"):
-            with self.subTest(reason=reason):
+        for reason, relocate in (("gunshot", False), ("footstep", False), ("gunshot", True)):
+            with self.subTest(reason=reason, relocate=relocate):
                 geometry = SpatialIndex()
                 wall = Collider("barrier", Rect(3, 0, 1, 8))
                 geometry.add(wall)
@@ -100,21 +157,24 @@ class PrototypeAITests(unittest.TestCase):
 
                 for frame in range(1, 100):
                     ai.update([guard], source, frame / 60)
-                self.assertFalse(brain.priority_checked)
-                self.assertLess(brain.checked_sound_at, 0)
-                self.assertEqual(brain.sound_response, "unreachable")
+                self.assertFalse(brain.search.priority_checked)
+                self.assertLess(brain.search.checked_sound_at, 0)
+                self.assertEqual(brain.search.sound_response, "unreachable")
 
-                wall.active = False
-                world.revision += 1
-                world.navigation.invalidate()
+                if relocate:
+                    guard.position = Position(4.7, 4)
+                else:
+                    wall.active = False
+                    world.revision += 1
+                    world.navigation.invalidate()
                 for frame in range(100, 700):
                     intent = ai.update([guard], source, frame / 60)[guard.id]
                     move_actor(guard, intent.direction, world, intent.step_dt,
                                speed=guard.speed * intent.move_multiplier)
-                    if brain.checked_sound_at == 0:
+                    if brain.search.checked_sound_at == 0:
                         break
-                self.assertEqual(brain.checked_sound_at, 0)
-                self.assertEqual(brain.sound_response, "checked")
+                self.assertEqual(brain.search.checked_sound_at, 0)
+                self.assertEqual(brain.search.sound_response, "checked")
 
     def test_visibility_at_the_range_boundary_is_stable_and_can_be_reported(self):
         geometry = SpatialIndex()
@@ -142,9 +202,9 @@ class PrototypeAITests(unittest.TestCase):
         ai = EnemyAI(world, actors, [[], []])
         brain = ai.brains[sender.id]
         brain.memory.last_seen, brain.memory.seen_at = (0, 4), 1.0
-        ai._report_sighting(sender, brain, actors, 1.1)
+        ai.squad.report_sighting(sender, brain, actors, 1.1)
         brain.memory.last_seen, brain.memory.seen_at = (4, 4), 5.0
-        ai._report_sighting(sender, brain, actors, 5.1)
+        ai.squad.report_sighting(sender, brain, actors, 5.1)
         memory = ai.brains[receiver.id].memory
         self.assertEqual((memory.reported, memory.reported_at), ((4, 4), 5.0))
 
@@ -191,7 +251,7 @@ class PrototypeAITests(unittest.TestCase):
                 intent = intents[guard.id]
                 move_actor(guard, intent.direction, world, intent.step_dt, neighbors=guards)
             if frame == 5:
-                plan, = ai.approaches.values()
+                plan, = ai.squad.approaches.values()
                 self.assertFalse(any(plan.orders.values()))
         self.assertGreater(abs(guards[0].xy[1] - guards[1].xy[1]), 1)
 
@@ -201,7 +261,7 @@ class PrototypeAITests(unittest.TestCase):
         simulation.events.emit("noise", 0, simulation.player, radius=15, strength=0.8, reason="gunshot")
         for _ in range(200):
             simulation.step()
-        plan, = simulation.ai.approaches.values()
+        plan, = simulation.ai.squad.approaches.values()
         self.assertTrue(all(order.passed for order in plan.orders.values()))
         door = next(item for item in simulation.world.geometry.objects.values() if item.kind == "door")
         center = (door.rect.x + door.rect.w / 2, door.rect.y + door.rect.h / 2)
@@ -226,15 +286,15 @@ class PrototypeAITests(unittest.TestCase):
         for guard in guards:
             ai.brains[guard.id].incident = "search"
 
-        ai._update_regroups(guards, 1)
+        ai.squad.update_regroups(guards, 1)
         self.assertEqual(len(sweep.regroup_slots), len(guards))
         for guard in guards[:-1]:
             guard.position = Position(*sweep.regroup_slots[guard.id])
-        ai._update_regroups(guards, 3)
+        ai.squad.update_regroups(guards, 3)
         self.assertIsNone(sweep.regroup_until)
         guards[-1].position = Position(*sweep.regroup_slots[guards[-1].id])
-        ai._update_regroups(guards, 4)
-        ai._update_regroups(guards, 5)
+        ai.squad.update_regroups(guards, 4)
+        ai.squad.update_regroups(guards, 5)
         self.assertTrue(sweep.regroup_done)
 
     def test_navigation_rejects_a_clear_goal_outside_the_map(self):
@@ -254,12 +314,12 @@ class PrototypeAITests(unittest.TestCase):
         brain, ally = ai.brains[guard.id], ai.brains[support.id]
         brain.incident = ally.incident = "report"
         brain.role, brain.memory.reported = "intercept", (8, 0)
-        ally.memory.visible, ally.action, ally.fired_at = True, "fire", 0.8
+        ally.memory.visible, ally.combat.action, ally.combat.fired_at = True, "fire", 0.8
 
-        ai._combat_action(guard, brain, [guard, support], brain.memory.reported, 1.0)
+        ai.combat.choose(guard, brain, [guard, support], brain.memory.reported, 1.0)
 
         self.assertIsNone(brain.memory.last_seen)
-        self.assertEqual(brain.action, "flank")
+        self.assertEqual(brain.combat.action, "flank")
 
     def test_visible_squad_spreads_early_and_stops_at_distinct_positions(self):
         for count, y in ((1, -65), (2, -65), (6, -65), (2, -79.65)):
@@ -271,11 +331,11 @@ class PrototypeAITests(unittest.TestCase):
                     for _ in range(30):
                         simulation.step()
                     if count == 1:
-                        self.assertEqual(simulation.ai.brains[guards[0].id].path, [simulation.player.xy])
+                        self.assertEqual(simulation.ai.brains[guards[0].id].motion.path, [simulation.player.xy])
                         self.assertEqual(guards[0].xy[1], y)
                         continue
 
-                    plan, = simulation.ai.approaches.values()
+                    plan, = simulation.ai.squad.approaches.values()
                     destinations = [plan.orders[guard.id].destination for guard in guards]
                     self.assertEqual(len(set(destinations)), count)
                     early_width = max(guard.xy[1] for guard in guards) - min(guard.xy[1] for guard in guards)
@@ -310,17 +370,17 @@ class PrototypeAITests(unittest.TestCase):
                         brain = simulation.ai.brains[guard.id]
                         self.assertFalse(brain.visible)
                         self.assertIn(guard.state, {"alert", "search"})
-                        self.assertNotEqual(brain.goal, clue)
-                        self.assertIn(clue, brain.search_points)
+                        self.assertNotEqual(brain.motion.goal, clue)
+                        self.assertIn(clue, brain.search.points)
                     for _ in range(360):
                         simulation.step()
 
                 for guard in (front, following):
                     brain = simulation.ai.brains[guard.id]
                     if reason != "footstep":
-                        self.assertTrue(brain.priority_checked)
+                        self.assertTrue(brain.search.priority_checked)
                     else:
-                        self.assertNotIn(clue, brain.search_points)
+                        self.assertNotIn(clue, brain.search.points)
 
     def test_gunshot_stays_in_focus_while_route_bends_away(self):
         simulation = PlaySimulation(DOOR_SCENE)
@@ -328,15 +388,15 @@ class PrototypeAITests(unittest.TestCase):
         simulation.player.hp = 0
         cue = (9, 9)
         brain = simulation.ai.brains[guard.id]
-        brain.combat_alert_until = 60
-        brain.priority_cue = SearchCue("sound", cue, 0)
+        brain.combat.combat_alert_until = 60
+        brain.search.priority_cue = SearchCue("sound", cue, 0)
 
         for tick in range(1, 31):
             intent = simulation.ai.update([guard], simulation.player, tick / 60)[guard.id]
 
         self.assertGreater(intent.direction[0], 0)
-        self.assertNotEqual(brain.path[0], cue)
-        self.assertEqual(brain.look_point, cue)
+        self.assertNotEqual(brain.motion.path[0], cue)
+        self.assertEqual(brain.look.point, cue)
         self.assertAlmostEqual(guard.facing, math.atan2(cue[1] - guard.xy[1], cue[0] - guard.xy[0]))
 
     def test_searchers_can_pass_an_occupied_door_in_opposite_directions(self):
@@ -349,8 +409,8 @@ class PrototypeAITests(unittest.TestCase):
                 for actor, goal in ((front, (10, 6)), (following, (4, 6))):
                     brain = simulation.ai.brains[actor.id]
                     brain.incident = "door_test"
-                    brain.combat_alert_until = 60
-                    brain.priority_cue = SearchCue("seen", goal, 0)
+                    brain.combat.combat_alert_until = 60
+                    brain.search.priority_cue = SearchCue("seen", goal, 0)
 
                 passed = set()
                 while simulation.time < 5 and len(passed) < 2:
@@ -384,7 +444,7 @@ class PrototypeAITests(unittest.TestCase):
         self.assertLess(math.dist(following.xy, second), 0.06)
         center_y = door.rect.y + door.rect.h / 2
         for actor in simulation.guards:
-            look_x, look_y = simulation.ai.brains[actor.id].look_point
+            look_x, look_y = simulation.ai.brains[actor.id].look.point
             self.assertGreater(look_x, door.rect.right)
             self.assertLess((look_y - center_y) * (actor.xy[1] - center_y), 0)
             expected = math.atan2(look_y - actor.xy[1], look_x - actor.xy[0])
@@ -397,8 +457,8 @@ class PrototypeAITests(unittest.TestCase):
             simulation.step()
             for actor in simulation.guards:
                 brain = simulation.ai.brains[actor.id]
-                if brain.indoor_target is not None and brain.path:
-                    observations.setdefault(actor.id, brain.indoor_target)
+                if brain.search.indoor.target is not None and brain.motion.path:
+                    observations.setdefault(actor.id, brain.search.indoor.target)
 
         self.assertTrue(all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards))
         self.assertEqual(set(observations), {front.id, following.id})
@@ -453,7 +513,7 @@ class PrototypeAITests(unittest.TestCase):
                     for actor in simulation.guards:
                         if actor.xy[0] >= door.rect.right and actor.id not in passage_order:
                             passage_order.append(actor.id)
-                        look = simulation.ai.brains[actor.id].look_point
+                        look = simulation.ai.brains[actor.id].look.point
                         if was_open and actor.id not in first_looks and look in area.points:
                             first_looks[actor.id] = look
                             self.assertIsNone(simulation.world.geometry.raycast(before[actor.id], look, category="sight"))
@@ -464,7 +524,7 @@ class PrototypeAITests(unittest.TestCase):
                         all_passed = True
                         passed_at = simulation.time
                     moving_scan |= any(actor.xy != before[actor.id]
-                                       and simulation.ai.brains[actor.id].look_reason == "이동 중 공간 확인"
+                                       and simulation.ai.brains[actor.id].look.reason == "이동 중 공간 확인"
                                        for actor in simulation.guards)
                     sweep = next((incident.indoor for incident in simulation.ai.incidents.values()
                                   if incident.indoor is not None), None)
@@ -476,13 +536,13 @@ class PrototypeAITests(unittest.TestCase):
                         pending_inside = set(area.points) - corners - sweep.checked
                         for actor in simulation.guards:
                             brain = simulation.ai.brains[actor.id]
-                            look = brain.look_point
+                            look = brain.look.point
                             if not sweep.entry_ready:
-                                self.assertNotIn(brain.indoor_target, area.observations)
-                                if brain.indoor_staging and actor.xy != before[actor.id] and look in area.points:
+                                self.assertNotIn(brain.search.indoor.target, area.observations)
+                                if brain.search.indoor.staging and actor.xy != before[actor.id] and look in area.points:
                                     scanned_while_staging.add(actor.id)
                             else:
-                                moved_during_followup |= (brain.indoor_target is not None and look is not None
+                                moved_during_followup |= (brain.search.indoor.target is not None and look is not None
                                                           and actor.xy != before[actor.id])
                             if actor.id in owners and pending_inside:
                                 self.assertNotIn(look, corners)
@@ -528,12 +588,12 @@ class PrototypeAITests(unittest.TestCase):
         saw_inside = False
         while simulation.time < 15:
             simulation.step()
-            sweep = brain.indoor
+            sweep = brain.search.indoor.sweep
             if sweep is None:
                 continue
             if sweep.corner_checks and set(area.points) - corners - sweep.checked:
-                self.assertNotIn(brain.look_point, corners)
-                saw_inside |= brain.look_point in area.points
+                self.assertNotIn(brain.look.point, corners)
+                saw_inside |= brain.look.point in area.points
             if sweep.entry_ready and sweep.complete:
                 break
 
@@ -558,8 +618,8 @@ class PrototypeAITests(unittest.TestCase):
         self.assertTrue(simulation.world.geometry.objects["shared_door"].active)
         for actor in simulation.guards:
             brain = simulation.ai.brains[actor.id]
-            self.assertIsNone(brain.door_stack)
-            self.assertEqual(brain.priority_cue.point, (3, 6))
+            self.assertIsNone(brain.motion.door_stack)
+            self.assertEqual(brain.search.priority_cue.point, (3, 6))
 
     def test_gunshot_replaces_a_patrol_route_while_waiting_at_a_door(self):
         simulation = PlaySimulation(DOOR_SCENE)
@@ -567,20 +627,20 @@ class PrototypeAITests(unittest.TestCase):
         waiter = None
         while waiter is None and simulation.time < 2:
             simulation.step()
-            waiter = next((actor for actor in simulation.guards if simulation.ai.brains[actor.id].door_wait), None)
+            waiter = next((actor for actor in simulation.guards if simulation.ai.brains[actor.id].motion.door_wait), None)
         self.assertIsNotNone(waiter)
         brain = simulation.ai.brains[waiter.id]
         self.assertEqual(waiter.state, "patrol")
-        old_goal = brain.goal
+        old_goal = brain.motion.goal
 
         simulation.player.position = Position(4, 4)
         simulation.events.emit("noise", simulation.time, simulation.player,
                                radius=30, strength=0.8, reason="gunshot")
         simulation.step()
 
-        self.assertEqual(brain.priority_cue.kind, "sound")
-        self.assertNotEqual(brain.goal, old_goal)
-        self.assertFalse(brain.door_wait)
+        self.assertEqual(brain.search.priority_cue.kind, "sound")
+        self.assertNotEqual(brain.motion.goal, old_goal)
+        self.assertFalse(brain.motion.door_wait)
         self.assertEqual(waiter.state, "search")
 
     def test_peek_keeps_its_direction_and_can_fire_after_reacquiring_sight(self):
@@ -594,18 +654,18 @@ class PrototypeAITests(unittest.TestCase):
         player = Actor("player", Position(6, 3), team="player")
         ai = EnemyAI(world, [guard], [[]])
         brain = ai.brains[guard.id]
-        brain.combat_alert_until = 60
+        brain.combat.combat_alert_until = 60
         brain.memory.last_seen, brain.memory.seen_at = player.xy, 0.1
-        brain.peek_home = guard.xy
-        brain.action, brain.action_goal, brain.action_until = "peek", (2, 4.8), 1.01
-        brain.fire_at = 1.2
+        brain.combat.peek_home = guard.xy
+        brain.combat.action, brain.combat.action_goal, brain.combat.action_until = "peek", (2, 4.8), 1.01
+        brain.combat.fire_at = 1.2
 
         initial = ai.update([guard], player, 0.35)[guard.id]
         self.assertEqual(initial.direction, (0, 0))
         self.assertLess(guard.facing, math.pi / 2)
         for tick in range(22, 55):
             move = ai.update([guard], player, tick / 60)[guard.id]
-        self.assertEqual(brain.action, "peek")
+        self.assertEqual(brain.combat.action, "peek")
         self.assertGreater(move.direction[1], 0)
         self.assertEqual(guard.facing, 0)
 
@@ -613,7 +673,7 @@ class PrototypeAITests(unittest.TestCase):
         brain.sense_at = 0
         ai.update([guard], player, 1.02)
         self.assertTrue(brain.visible)
-        self.assertEqual(brain.action, "peek")
+        self.assertEqual(brain.combat.action, "peek")
         self.assertTrue(ai.update([guard], player, 1.2)[guard.id].fire)
 
         combat = Combat(EventBus())
@@ -634,11 +694,11 @@ class PrototypeAITests(unittest.TestCase):
         player = Actor("player", Position(6, 3), team="player")
         ai = EnemyAI(world, [guard], [[]])
         brain = ai.brains[guard.id]
-        brain.action, brain.action_goal = "cover", home
-        brain.cover_threat, brain.cover_revision = player.xy, world.revision
-        brain.suppression, brain.combat_alert_until = 0.53, 60
+        brain.combat.action, brain.combat.action_goal = "cover", home
+        brain.combat.cover_threat, brain.combat.cover_revision = player.xy, world.revision
+        brain.combat.suppression, brain.combat.combat_alert_until = 0.53, 60
         brain.memory.last_seen, brain.memory.seen_at = player.xy, 0
-        brain.priority_cue = SearchCue("seen", player.xy, 0)
+        brain.search.priority_cue = SearchCue("seen", player.xy, 0)
 
         def step(frame):
             intent = ai.update([guard], player, frame / 60)[guard.id]
@@ -648,28 +708,28 @@ class PrototypeAITests(unittest.TestCase):
 
         for frame in range(1, 36):
             step(frame)
-            self.assertEqual((guard.state, brain.action, guard.xy), ("retreat", "cover", home))
+            self.assertEqual((guard.state, brain.combat.action, guard.xy), ("retreat", "cover", home))
         for frame in range(36, 120):
             intent = step(frame)
-            self.assertIn(brain.action, {"cover", "peek"})
+            self.assertIn(brain.combat.action, {"cover", "peek"})
             if intent.fire:
                 break
         else:
             self.fail("제압에서 회복한 NPC가 피킹 중 시야를 되찾아 사격하지 못함")
         self.assertTrue(brain.visible)
-        self.assertEqual(brain.action, "peek")
+        self.assertEqual(brain.combat.action, "peek")
 
-        brain.suppression = 0.56
+        brain.combat.suppression = 0.56
         step(frame + 1)
-        self.assertEqual(brain.action, "peek_return")
+        self.assertEqual(brain.combat.action, "peek_return")
         for frame in range(frame + 2, frame + 60):
             step(frame)
             self.assertEqual(guard.state, "retreat")
-            if brain.action == "cover":
+            if brain.combat.action == "cover":
                 break
         else:
             self.fail("다시 제압된 NPC가 엄폐로 복귀하지 못함")
         recovered_position = guard.xy
-        for frame in range(frame + 1, math.ceil(brain.peek_at * 60)):
+        for frame in range(frame + 1, math.ceil(brain.combat.peek_at * 60)):
             step(frame)
-            self.assertEqual((guard.state, brain.action, guard.xy), ("retreat", "cover", recovered_position))
+            self.assertEqual((guard.state, brain.combat.action, guard.xy), ("retreat", "cover", recovered_position))

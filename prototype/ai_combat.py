@@ -1,0 +1,147 @@
+"""전투 행동과 엄폐 이탈·복귀를 관리한다."""
+
+import math
+
+from . import ai_config as config
+
+
+class CombatController:
+    def __init__(self, world, brains, cover_finder):
+        self.world, self.brains, self.cover_finder = world, brains, cover_finder
+
+    def has_support(self, actor, brain, actors, threat, time):
+        return any(other.id != actor.id and other.hp > 0
+                   and other.position.floor == actor.position.floor
+                   and (ally := self.brains[other.id]).incident == brain.incident
+                   and ally.combat.action in {"advance", "fire"} and ally.visible
+                   and time - ally.combat.fired_at < 1.5
+                   and other.weapon is not None and other.weapon.chambered and not other.weapon.reloading
+                   and ally.combat.suppression < 0.55 and math.dist(other.xy, actor.xy) <= 18
+                   and math.dist(other.xy, threat) <= other.weapon.spec.range_m
+                   for other in actors)
+
+    def record_shot(self, actor, time):
+        brain = self.brains[actor.id]
+        burst_size = 2 if brain.combat.suppression >= 0.3 or brain.combat.action == "peek" else 4
+        brain.combat.burst = (brain.combat.burst + 1) % burst_size
+        delay = 0.20 if brain.combat.burst else 0.58
+        brain.combat.fire_at = time + delay * (1 + brain.combat.suppression * 2)
+
+    def cover_exposed(self, brain, threat):
+        combat = brain.combat
+        home = combat.peek_home or combat.action_goal
+        return home is not None and (
+            combat.cover_threat != threat or combat.cover_revision != self.world.revision
+        ) and self.world.geometry.raycast(threat, home, category="bullet") is None
+
+    def choose(self, actor, brain, actors, threat, time):
+        combat = brain.combat
+        weapon = actor.weapon
+        empty = weapon is None or (not weapon.chambered and weapon.stage < 2 and weapon.reserve <= 0)
+        urgent = empty or actor.hp < 20 or actor.hurt_until - time > 1.75 or combat.suppression >= 0.55
+        route_failed = combat.action_goal is not None and combat.action_goal == brain.motion.goal and brain.motion.route_failed
+        safe_action = combat.action in {"cover", "retreat", "pin"}
+        needs_reload = weapon is not None and (weapon.reloading or not weapon.chambered)
+        if combat.action == "cover" and combat.action_goal is not None and not route_failed:
+            if self.cover_exposed(brain, threat):
+                route_failed = True
+            else:
+                combat.cover_threat = threat
+                combat.cover_revision = self.world.revision
+                if (math.dist(actor.xy, combat.action_goal) > 0.3 or (needs_reload and not empty) or urgent
+                        or combat.suppression >= config.PEEK_SUPPRESSION_LIMIT or time < combat.peek_at):
+                    return
+
+        elif (time < combat.action_until and not route_failed and not brain.role_changed
+                and (combat.action != "flank" or (math.dist(actor.xy, combat.action_goal) > 0.35
+                                                and self.has_support(actor, brain, actors, threat, time)))
+                and (not urgent or safe_action) and (not needs_reload or safe_action or combat.action == "reload")):
+            return
+        brain.role_changed = False
+        rejected = combat.action_goal if route_failed else None
+        combat.action_goal = None
+        if urgent or needs_reload:
+            occupied = [ally.combat.action_goal for other in actors if other.id != actor.id and other.hp > 0
+                        and (ally := self.brains[other.id]).combat.action == "cover"
+                        and ally.combat.action_goal is not None and other.state == "retreat"]
+            if rejected is not None:
+                occupied.append(rejected)
+            cover = self.cover_finder.choose(actor, threat, occupied)
+            if cover is not None:
+                combat.action, combat.action_goal = "cover", cover
+                combat.cover_threat = threat
+                combat.cover_revision = self.world.revision
+            elif empty or actor.hp < 20:
+                combat.action = "retreat"
+                combat.action_goal = max(brain.patrol, key=lambda point: math.dist(point, threat), default=None)
+            elif not urgent:
+                combat.action = "reload"
+            else:
+                combat.action = "pin"
+            combat.action_until = time + 1.65
+            return
+
+        distance = math.dist(actor.xy, threat)
+        combat.action, combat.action_until = "fire", time + 1.3
+        if distance > config.ADVANCE_DISTANCE:
+            combat.action, combat.action_goal = "advance", threat
+            return
+        if distance <= 3 or brain.role not in {"intercept", "sweep"}:
+            return
+        if not self.has_support(actor, brain, actors, threat, time):
+            return
+        dx, dy = threat[0] - actor.position.x, threat[1] - actor.position.y
+        nav = self.world.navigation
+        for side in ((1, -1) if brain.role == "intercept" else (-1, 1)):
+            for lateral in (4, 6):
+                point = (actor.position.x + (dx - side * dy * lateral) / distance,
+                         actor.position.y + (dy + side * dx * lateral) / distance)
+                if (point != rejected and nav.walkable(point)
+                        and nav.clear(actor.xy, point, ignore_doors=True)
+                        and self.world.geometry.raycast(point, threat, category="bullet") is None):
+                    combat.action, combat.action_goal, combat.action_until = "flank", point, time + 3.2
+                    return
+
+    def peek(self, actor, brain, threat, time):
+        combat = brain.combat
+        if threat is not None and combat.action in {"cover", "peek", "peek_return"} and self.cover_exposed(brain, threat):
+            combat.peek_home = None
+            combat.action = "cover"
+            return False
+        if combat.peek_home is not None:
+            if combat.action == "peek" and brain.visible and not combat.peek_contact:
+                combat.peek_contact = True
+                combat.action_until = max(combat.action_until, max(combat.fire_at, time) + 0.2)
+            if combat.action == "peek" and (time >= combat.action_until or combat.suppression >= 0.55
+                                          or actor.hp < 20
+                                          or actor.weapon is None or not actor.weapon.chambered
+                                          or (brain.motion.goal == combat.action_goal and brain.motion.route_failed)):
+                combat.action, combat.action_goal = "peek_return", combat.peek_home
+            if combat.action == "peek_return" and (
+                    math.dist(actor.xy, combat.peek_home) <= 0.3
+                    or (brain.motion.goal == combat.peek_home and brain.motion.route_failed)):
+                combat.action, combat.action_goal = "cover", combat.peek_home
+                combat.peek_home = None
+                combat.peek_at = time + config.PEEK_RECOVERY_SECONDS
+                return False
+            return True
+        weapon = actor.weapon
+        if (threat is None or combat.action != "cover" or combat.action_goal is None
+                or math.dist(actor.xy, combat.action_goal) > 0.3 or time < combat.peek_at
+                or combat.suppression >= config.PEEK_SUPPRESSION_LIMIT or actor.hp < 20
+                or weapon is None or not weapon.chambered or weapon.reloading):
+            return False
+        point = self.cover_finder.peek(actor, threat)
+        if point is None:
+            return False
+        combat.peek_home = combat.action_goal
+        combat.peek_contact = brain.visible
+        combat.peek_departed = False
+        combat.action, combat.action_goal, combat.action_until = "peek", point, time + 1.65
+        return True
+
+    def continue_cover(self, actor, brain, actors, threat, time):
+        if self.peek(actor, brain, threat, time):
+            return True
+        self.choose(actor, brain, actors, threat, time)
+        return brain.combat.action in {"cover", "retreat", "pin", "reload"}

@@ -38,23 +38,6 @@ class CoverFinder:
                 return point
         return None
 
-    def advance(self, actor, threat, goal, occupied=()):
-        x, y = actor.xy
-        distance = math.dist(actor.xy, goal)
-        if distance < 2.5:
-            return None
-        nearby = self.index.query(Rect(x - 7, y - 7, 14, 14))
-        nav = self.world.navigation
-        for point in sorted(nearby, key=lambda p: (math.dist(actor.xy, p) + math.dist(p, goal), p)):
-            if not 1.5 <= math.dist(actor.xy, point) <= 7 or math.dist(point, goal) > distance - 1:
-                continue
-            if any(math.dist(point, reserved) < 0.75 for reserved in occupied):
-                continue
-            if (nav.walkable(point) and nav.clear(actor.xy, point)
-                    and self.world.geometry.raycast(threat, point, category="bullet") is not None):
-                return point
-        return None
-
     def peek(self, actor, threat):
         x, y = actor.xy
         distance = math.dist(actor.xy, threat)

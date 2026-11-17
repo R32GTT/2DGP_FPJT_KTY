@@ -222,15 +222,15 @@ class Renderer:
                 brain = simulation.ai.brains.get(actor.id)
                 if brain and actor.hp:
                     previous = (x, y)
-                    for point in brain.path:
+                    for point in brain.motion.path:
                         current = view.pico(*point)
                         pico.draw_line(*previous, *current, 102, 215, 194)
                         px, py = current
                         pico.draw_rectangle(px - 2, py - 2, px + 2, py + 2, 102, 215, 194, filled=True)
                         previous = current
-                    if brain.goal is not None:
-                        gx, gy = view.pico(*brain.goal)
-                        color = (231, 107, 82) if brain.route_failed else (102, 215, 194)
+                    if brain.motion.goal is not None:
+                        gx, gy = view.pico(*brain.motion.goal)
+                        color = (231, 107, 82) if brain.motion.route_failed else (102, 215, 194)
                         pico.draw_rectangle(gx - 4, gy - 4, gx + 4, gy + 4, *color, filled=False)
                     if brain.memory.visible:
                         pico.draw_line(x, y, *view.pico(*brain.memory.last_seen), 212, 103, 75)
