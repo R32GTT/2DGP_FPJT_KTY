@@ -23,6 +23,10 @@ AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reloa
 SOUND_RESPONSES = {"new": "총성 감지", "renewed": "총성 재조사", "same_area": "총성 감지 · 경로 유지",
                    "out_of_range": "총성 감지 범위 밖", "no_estimate": "총성 감지 · 위치 추정 실패",
                    "checked": "총성 조사 종료"}
+SEARCH_CONFIRMED = (96, 236, 186)
+SEARCH_VISIBLE = (255, 108, 98)
+SEARCH_OCCLUDED = (255, 215, 83)
+SEARCH_OUTSIDE = (203, 210, 206)
 
 
 class HUD:
@@ -321,27 +325,48 @@ class HUD:
         if debug:
             sweeps = {}
             for incident in simulation.ai.incidents.values():
-                if incident.indoor is not None:
-                    sweeps[incident.indoor.area.id] = incident.indoor
-            for sweep in sweeps.values():
-                observers = []
-                for actor in simulation.guards:
-                    brain = simulation.ai.brains[actor.id]
-                    active = simulation.time - sweep.sound_searchers.get(actor.id, -math.inf) < SEARCHER_ACTIVE_S
-                    if actor.hp > 0 and (active or (brain.indoor is sweep
-                                                   and actor.state in {"search", "regroup", "combat_guard"})):
-                        observers.append((actor.xy, actor.facing, brain.indoor_scanning(simulation.time)))
-                visible, blocked = sweep.current_view(observers, world.geometry)
-                for sample in sweep.area.points:
+                sweep = incident.indoor
+                if sweep is not None:
+                    previous = sweeps.get(sweep.area.id)
+                    if previous is None or sweep.evidence_at >= previous.evidence_at:
+                        sweeps[sweep.area.id] = sweep
+            checked_count = total = blocked_count = 0
+            radius = max(3, min(7, round(scale * 0.3)))
+            for area in world.search_areas:
+                sweep = sweeps.get(area.id)
+                if sweep is None and not world.data.get("training_facility"):
+                    continue
+                checked, visible, blocked = (), (), ()
+                if sweep is not None:
+                    checked = sweep.checked
+                    observers = []
+                    for actor in simulation.guards:
+                        brain = simulation.ai.brains[actor.id]
+                        active = simulation.time - sweep.sound_searchers.get(actor.id, -math.inf) < SEARCHER_ACTIVE_S
+                        observing = brain.indoor is sweep and actor.state in {"search", "regroup", "combat_guard"}
+                        if actor.hp > 0 and (active or observing):
+                            stationary = (brain.indoor_sample_stationary if brain.indoor_sample_at == simulation.time
+                                          else brain.indoor_scanning(simulation.time))
+                            observers.append((actor.xy, actor.facing, stationary))
+                    visible, blocked = sweep.pending_view(observers, world.geometry)
+                checked_count += len(checked)
+                blocked_count += len(blocked)
+                total += len(area.points)
+                for sample in area.points:
                     x, y = point(*sample)
-                    color = (233, 77, 65) if sample in visible else (245, 205, 69) if sample in blocked else (166, 169, 161)
-                    pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *color, filled=True)
-                    if sample in sweep.checked:
-                        pico.draw_rectangle(x - 1, y - 1, x + 1, y + 1, 100, 213, 167, filled=True)
-            if sweeps:
-                checked = sum(len(sweep.checked) for sweep in sweeps.values())
-                total = sum(len(sweep.area.points) for sweep in sweeps.values())
-                self.label("map_search", f"수색 {checked}/{total} · 빨강 보임 · 노랑 가림 · 청록 확인 · 흰 선 시선", 13)
+                    box = (x - radius, y - radius, x + radius, y + radius)
+                    if sample in checked:
+                        pico.draw_rectangle(*box, *SEARCH_CONFIRMED, filled=True)
+                    elif sample in blocked:
+                        pico.draw_line(box[0], box[1], box[2], box[3], *SEARCH_OCCLUDED)
+                        pico.draw_line(box[0], box[3], box[2], box[1], *SEARCH_OCCLUDED)
+                    else:
+                        color = SEARCH_VISIBLE if sample in visible else SEARCH_OUTSIDE
+                        pico.draw_rectangle(*box, *color)
+            if total:
+                counts = f"확인 {checked_count}/{total} · 미확인 {total - checked_count} · 그중 가림 {blocked_count}"
+                legend = "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖"
+                self.label("map_search", f"{counts}    {legend}", 13)
                 self.text("map_search", 84, 194)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp <= 0 or (actor.team != "player" and not debug):

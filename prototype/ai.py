@@ -111,6 +111,7 @@ class Brain:
     indoor_occluded: set[tuple[float, float]] = field(default_factory=set)
     indoor_revealed: set[tuple[float, float]] = field(default_factory=set)
     indoor_sample_at: float = -math.inf
+    indoor_sample_stationary: bool = False
     indoor_observation: IndoorSweep | None = None
     indoor_speed: float = 0.0
     indoor_depart_at: float | None = None
@@ -721,6 +722,7 @@ class EnemyAI:
         if time - brain.indoor_sample_at > 1 / 30:
             brain.indoor_exposure.clear()
         brain.indoor_sample_at = time
+        brain.indoor_sample_stationary = stationary
         candidates = (point,) if visible and point in corners else (
             () if corners and (not stationary or not visible) else tuple(sample for sample in pending if sample not in corners))
         views = dict(sample_views(actor.xy, actor.facing, candidates, geometry, stationary=stationary))

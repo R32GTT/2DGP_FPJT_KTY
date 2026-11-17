@@ -51,15 +51,20 @@ class LookChoice:
     visible_count: int
 
 
-def sample_views(xy, facing, samples, geometry, *, stationary=False):
+def sample_views(xy, facing, samples, geometry, *, stationary=False, include_outside=False):
     forward_x, forward_y = math.cos(facing), math.sin(facing)
     scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
     near = 0.15 if stationary else 0.075
     for point in samples:
         dx, dy = point[0] - xy[0], point[1] - xy[1]
         distance = math.hypot(dx, dy)
-        if distance <= scan_range and (distance <= near or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS):
-            yield point, geometry.raycast(xy, point, category="sight") is None
+        if distance > scan_range:
+            continue
+        in_view = distance <= near or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS
+        if in_view or include_outside:
+            clear = geometry.raycast(xy, point, category="sight") is None
+            # 시야 밖에 있지만 장애물로 가려지지 않은 표본도 디버그에서 구별한다.
+            yield point, (True if in_view else None) if clear else False
 
 
 def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range=SCAN_RANGE_M,
@@ -196,12 +201,19 @@ class IndoorSweep:
     def entry_pose(self, actor_id):
         return next((pose for member, pose in zip(self.entry_order, self.area.entry_poses) if member == actor_id), None)
 
-    def current_view(self, observers, geometry):
-        visible, blocked = set(), set()
+    def pending_view(self, observers, geometry):
+        pending = tuple(point for point in self.area.points if point not in self.checked)
+        visible, clear_line, blocked = set(), set(), set()
         for xy, facing, stationary in observers:
-            for point, clear in sample_views(xy, facing, self.area.points, geometry, stationary=stationary):
-                (visible if clear else blocked).add(point)
-        return visible, blocked - visible
+            for point, status in sample_views(xy, facing, pending, geometry, stationary=stationary,
+                                              include_outside=True):
+                if status is False:
+                    blocked.add(point)
+                else:
+                    clear_line.add(point)
+                    if status is True:
+                        visible.add(point)
+        return visible, blocked - clear_line
 
     def pending_corners(self, room):
         if room is None:
