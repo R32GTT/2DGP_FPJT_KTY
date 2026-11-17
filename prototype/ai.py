@@ -379,6 +379,7 @@ class EnemyAI:
 
     def _has_support(self, actor, brain, actors, threat, time):
         return any(other.id != actor.id and other.hp > 0
+                   and other.position.floor == actor.position.floor
                    and (ally := self.brains[other.id]).incident == brain.incident
                    and ally.action in {"advance", "fire"} and ally.visible
                    and time - ally.fired_at < 1.5
@@ -386,6 +387,13 @@ class EnemyAI:
                    and ally.suppression < 0.55 and math.dist(other.xy, actor.xy) <= 18
                    and math.dist(other.xy, threat) <= other.weapon.spec.range_m
                    for other in actors)
+
+    def record_burst_shot(self, actor, time):
+        brain = self.brains[actor.id]
+        burst_size = 2 if brain.suppression >= 0.3 or brain.action == "peek" else 4
+        brain.burst = (brain.burst + 1) % burst_size
+        delay = 0.20 if brain.burst else 0.58
+        brain.fire_at = time + delay * (1 + brain.suppression * 2)
 
     def _combat_action(self, actor, brain, actors, threat, time):
         weapon = actor.weapon
@@ -1540,12 +1548,10 @@ class EnemyAI:
                 goal = brain.action_goal
                 if brain.action in {"cover", "retreat", "pin", "reload", "peek_return"}:
                     actor.state = "retreat"
-                elif (time >= brain.fire_at and actor.weapon and not actor.weapon.reloading
+                elif (time >= brain.fire_at and time >= actor.equip_until and actor.weapon and not actor.weapon.reloading
+                      and time >= actor.weapon.next_shot
                       and actor.weapon.chambered and brain.action in {"fire", "advance", "peek"}):
                     intent.fire = True
-                    burst_size = 2 if brain.suppression >= 0.3 or brain.action == "peek" else 4
-                    brain.burst = (brain.burst + 1) % burst_size
-                    brain.fire_at = time + (0.20 if brain.burst else 0.58) * (1 + brain.suppression * 2)
             elif brain.peek_home is not None and self._peek(actor, brain, memory.last_seen, time):
                 actor.state, goal = "retreat", brain.action_goal
                 threat = memory.last_seen or brain.cover_threat

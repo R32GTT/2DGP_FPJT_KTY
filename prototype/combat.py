@@ -1,6 +1,6 @@
 """PRD의 히트스캔·한정 관통. 궤적은 짧은 표시용이며 탄약 상태와 분리한다."""
 
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 import math
 import random
@@ -24,20 +24,23 @@ class Combat:
         self.events = events
         self.transports = transports
         self.traces = deque(maxlen=128)
-        self.actor_index = SpatialIndex()
+        self.actor_indexes = defaultdict(SpatialIndex)
         self.actors = {}
         self.shots = self.hits = 0
         self.random = random.Random(42)
 
     def clear_fire_line(self, actor, target, world):
+        floor = actor.position.floor
+        if target.position.floor != floor:
+            return False
         muzzle = weapon_pose(actor)[1]
         if world.geometry.raycast(actor.xy, muzzle, category="bullet") is not None:
             return False
         if world.geometry.raycast(muzzle, target.xy, category="bullet") is not None:
             return False
-        if self.transports is not None and self.transports.raycast(muzzle, target.xy) is not None:
+        if floor == 0 and self.transports is not None and self.transports.raycast(muzzle, target.xy) is not None:
             return False
-        hit = self.actor_index.raycast(muzzle, target.xy, category="bullet", ignore_ids={actor.id})
+        hit = self.actor_indexes[floor].raycast(muzzle, target.xy, category="bullet", ignore_ids={actor.id})
         return hit is not None and hit[1] == target.id
 
     def _pressure(self, shooter, world, start, end, time, damaged, *, impact=False):
@@ -46,7 +49,7 @@ class Combat:
                     abs(end[0] - start[0]), abs(end[1] - start[1])).expanded(reach)
         dx, dy = end[0] - start[0], end[1] - start[1]
         length_squared = dx * dx + dy * dy
-        for collider in self.actor_index.query(area, "bullet"):
+        for collider in self.actor_indexes[shooter.position.floor].query(area, "bullet"):
             actor = self.actors[collider.id]
             if actor.team == shooter.team or actor.hp <= 0:
                 continue
@@ -77,13 +80,12 @@ class Combat:
             if trace.ttl > 0:
                 remaining.append(trace)
         self.traces = remaining
-        self.actor_index.objects.clear()
-        self.actor_index.cells.clear()
+        self.actor_indexes.clear()
         self.actors = {actor.id: actor for actor in actors if actor.hp > 0}
         for actor in self.actors.values():
             radius = actor.radius
-            self.actor_index.add(Collider(actor.id, Rect(actor.position.x - radius, actor.position.y - radius,
-                                                         radius * 2, radius * 2), blocks=("bullet",)))
+            body = Rect(actor.position.x - radius, actor.position.y - radius, radius * 2, radius * 2)
+            self.actor_indexes[actor.position.floor].add(Collider(actor.id, body, blocks=("bullet",)))
 
     def _damage(self, victim, damage, time, **context):
         if victim.hp <= 0:
@@ -110,8 +112,11 @@ class Combat:
         spread *= (3 if moving else 1) * (2 if sprint else 1) * (0.55 if aiming else 1)
         angle = actor.facing + math.radians(self.random.uniform(-spread, spread))
         muzzle = weapon_pose(actor)[1]
+        floor = actor.position.floor
+        targets = self.actor_indexes[floor]
+        transports = self.transports if floor == 0 else None
         barrel_hit = world.geometry.raycast(actor.xy, muzzle, category="bullet")
-        barrel_truck = self.transports.raycast(actor.xy, muzzle) if self.transports is not None else None
+        barrel_truck = transports.raycast(actor.xy, muzzle) if transports is not None else None
         if barrel_hit is not None or barrel_truck is not None:
             fraction, surface = min((hit for hit in (barrel_hit, (barrel_truck[0], barrel_truck[1].id)
                                                      if barrel_truck else None) if hit is not None))
@@ -124,10 +129,10 @@ class Combat:
         ignored_actors, ignored_walls, endpoint = {actor.id}, set(), end
         damaged = set()
         impact = False
-        vehicle_hit = self.transports.raycast(muzzle, end) if self.transports is not None else None
+        vehicle_hit = transports.raycast(muzzle, end) if transports is not None else None
         for count in range(spec.penetration + 1):
             wall = world.geometry.raycast(muzzle, end, category="bullet", ignore_ids=ignored_walls)
-            target = self.actor_index.raycast(muzzle, end, category="bullet", ignore_ids=ignored_actors)
+            target = targets.raycast(muzzle, end, category="bullet", ignore_ids=ignored_actors)
             if vehicle_hit is not None and all(hit is None or vehicle_hit[0] < hit[0] for hit in (wall, target)):
                 hit, truck, victim = vehicle_hit
                 endpoint = (muzzle[0] + (end[0] - muzzle[0]) * hit, muzzle[1] + (end[1] - muzzle[1]) * hit)

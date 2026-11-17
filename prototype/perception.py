@@ -31,7 +31,7 @@ class Knowledge:
 def observe(actor, target, geometry, memory, time):
     sight_range = SIGHT_RANGE + SIGHT_RETENTION_MARGIN if memory.visible else SIGHT_RANGE
     memory.visible = False
-    if target.hp <= 0:
+    if target.hp <= 0 or actor.position.floor != target.position.floor:
         return
     dx, dy = target.position.x - actor.position.x, target.position.y - actor.position.y
     distance = math.hypot(dx, dy)

@@ -13,9 +13,9 @@ from prototype.geometry import Collider, Rect, SpatialIndex
 from prototype.indoor_search import IndoorSweep, SearchArea
 from prototype.movement import move_actor
 from prototype.navigation import Navigation
-from prototype.perception import Knowledge, hear
+from prototype.perception import Knowledge, hear, observe
 from prototype.simulation import PlaySimulation
-from prototype.weapons import WeaponState, load_weapons
+from prototype.weapons import WeaponState, load_weapons, weapon_pose
 
 
 DOOR_SCENE = Path(__file__).resolve().parents[1] / "prototype/scenarios/ai_door_queue.json"
@@ -35,6 +35,51 @@ def field_approach(count, y=-65, distance=15):
 
 
 class PrototypeAITests(unittest.TestCase):
+    def test_burst_advances_only_when_a_clear_shot_is_fired(self):
+        simulation, (shooter, blocker) = field_approach(2, distance=11)
+        shooter.state = "combat"
+        blocker.position = Position(-8, -65)
+        blocker.facing = math.pi
+        blocker_brain = simulation.ai.brains[blocker.id]
+        blocker_brain.patrol = [blocker.xy]
+        brain = simulation.ai.brains[shooter.id]
+
+        simulation.step()
+        self.assertEqual((simulation.combat.shots, brain.burst, brain.fire_at), (0, 0, 0))
+        blocker.position.y += 1
+        blocker_brain.patrol = [blocker.xy]
+        with patch.object(simulation.combat, "fire", return_value=False) as failed_shot:
+            simulation.step()
+        failed_shot.assert_called_once()
+        self.assertEqual((brain.burst, brain.fire_at), (0, 0))
+
+        simulation.step()
+        self.assertEqual((simulation.combat.shots, brain.burst), (1, 1))
+        self.assertGreater(brain.fire_at, simulation.time)
+
+    def test_sight_and_hitscan_only_consider_actors_on_the_same_floor(self):
+        world = SimpleNamespace(geometry=SpatialIndex())
+        player = Actor("player", Position(0, 0, 0), team="player", active_weapon="ar_a")
+        player.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])
+        shot_y = weapon_pose(player)[1][1]
+        upstairs = Actor("upstairs", Position(3, shot_y, 1))
+        downstairs = Actor("downstairs", Position(6, shot_y, 0))
+        memory = Knowledge(visible=True)
+        observe(upstairs, player, world.geometry, memory, 0)
+        self.assertFalse(memory.visible)
+
+        events = EventBus()
+        combat = Combat(events)
+        combat.prepare([player, upstairs, downstairs], 1 / 60)
+        self.assertFalse(combat.clear_fire_line(player, upstairs, world))
+        self.assertTrue(combat.clear_fire_line(player, downstairs, world))
+        with patch.object(combat.random, "uniform", return_value=0):
+            self.assertTrue(combat.fire(player, world, 1.0))
+        self.assertEqual(upstairs.hp, 50)
+        self.assertLess(downstairs.hp, 50)
+        self.assertTrue(any(event.kind == "pressure" and event.source == downstairs.id for event in events.pending))
+        self.assertFalse(any(event.kind == "pressure" and event.source == upstairs.id for event in events.pending))
+
     def test_unreachable_sound_is_only_checked_after_access_opens(self):
         for reason in ("gunshot", "footstep"):
             with self.subTest(reason=reason):
