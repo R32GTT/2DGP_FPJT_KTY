@@ -188,10 +188,9 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertTrue(sweep.complete)
                 if (left, right) == (1, 1):
                     self.assertTrue(points_finished_before_area)
+                    self.assertTrue(used_observation_point)
                 self.assertIsNotNone(at_entry_positions)
                 self.assertTrue(moving_scan)
-                if len(simulation.guards) == 2:
-                    self.assertTrue(used_observation_point)
                 first, second = passage_order[:2]
                 self.assertIn(first, first_looks)
                 self.assertIn(second, first_looks)

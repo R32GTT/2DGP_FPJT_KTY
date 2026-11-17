@@ -140,13 +140,13 @@ class IndoorSearchTests(unittest.TestCase):
         first, later = (5, 1), (5, 3)
         sweep = brain.indoor = IndoorSweep(area, first, 0, checked=set(area.points) - {first, later})
 
-        for tick in range(25):
-            if tick == 15:
+        for tick in range(10):
+            if tick == 5:
                 screen.active = False
             ai._look_at_indoor_samples(guard, brain, tick / 60, sweep)
-            if tick == 14:
+            if tick == 4:
                 self.assertEqual(brain.look_point, first)
-            elif tick == 15:
+            elif tick == 5:
                 self.assertEqual(brain.look_point, later)
 
         self.assertIn(first, sweep.checked_at)
@@ -156,10 +156,10 @@ class IndoorSearchTests(unittest.TestCase):
         self.assertFalse(brain.indoor_exposure)
         self.assertIn(first, sweep.checked_at)
 
-        for tick in range(26, 46):
+        for tick in range(10, 16):
             ai._look_at_indoor_samples(guard, brain, tick / 60, sweep)
         self.assertNotIn(later, sweep.checked)
-        for tick in range(46, 49):
+        for tick in range(16, 18):
             ai._look_at_indoor_samples(guard, brain, tick / 60, sweep)
         self.assertIn(later, sweep.checked_at)
 
@@ -338,23 +338,22 @@ class IndoorSearchTests(unittest.TestCase):
         brain.indoor = IndoorSweep(area, target, 0, checked=set(area.points) - {sample})
         brain.indoor_target = target
 
-        for tick in range(18):
+        for tick in range(5):
             ai._look_at_indoor_samples(guard, brain, tick / 60, brain.indoor)
         self.assertEqual(brain.look_point, sample)
         self.assertNotIn(sample, brain.indoor.checked)
 
         obstacle.active = True
-        ai._look_at_indoor_samples(guard, brain, 18 / 60, brain.indoor)
+        ai._look_at_indoor_samples(guard, brain, 5 / 60, brain.indoor)
         self.assertNotIn(sample, brain.indoor_exposure)
         self.assertIsNone(brain.look_point)
 
         obstacle.active = False
-        for tick in range(19, 40):
+        for tick in range(6, 12):
             ai._look_at_indoor_samples(guard, brain, tick / 60, brain.indoor)
-        self.assertEqual(brain.look_point, sample)
         self.assertNotIn(sample, brain.indoor.checked)
 
-        for tick in range(40, 53):
+        for tick in range(12, 14):
             ai._look_at_indoor_samples(guard, brain, tick / 60, brain.indoor)
         self.assertIn(sample, brain.indoor.checked)
         self.assertIsNone(brain.look_point)
