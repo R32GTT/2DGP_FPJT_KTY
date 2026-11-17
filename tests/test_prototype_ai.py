@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from campaign.models import Position
 from prototype.actors import Actor
@@ -9,15 +10,90 @@ from prototype.ai import EnemyAI, SearchCue
 from prototype.combat import Combat
 from prototype.events import EventBus
 from prototype.geometry import Collider, Rect, SpatialIndex
+from prototype.movement import move_actor
 from prototype.navigation import Navigation
 from prototype.simulation import PlaySimulation
 from prototype.weapons import WeaponState, load_weapons
 
 
 DOOR_SCENE = Path(__file__).resolve().parents[1] / "prototype/scenarios/ai_door_queue.json"
+FIELD_SCENE = DOOR_SCENE.with_name("field_proving_ground.json")
+
+
+def field_approach(count, y=-65, distance=15):
+    simulation = PlaySimulation(FIELD_SCENE)
+    guards = simulation.guards[:count]
+    for other in simulation.guards[count:]:
+        other.hp = 0
+    simulation.player.position = Position(0, y)
+    for index, guard in enumerate(guards):
+        guard.position = Position(-distance - 0.47 * (index % 3), y + 0.46 * (index // 3))
+        guard.facing = 0
+    return simulation, guards
 
 
 class PrototypeAITests(unittest.TestCase):
+    def test_visible_squad_spreads_early_and_stops_at_distinct_positions(self):
+        for count, y in ((1, -65), (2, -65), (6, -65), (2, -79.65)):
+            with self.subTest(count=count, y=y):
+                simulation, guards = field_approach(count, y)
+
+                # 사격 피해 없이 지각부터 실제 이동까지 비교한다.
+                with patch.object(simulation.combat, "fire"):
+                    for _ in range(30):
+                        simulation.step()
+                    if count == 1:
+                        self.assertEqual(simulation.ai.brains[guards[0].id].path, [simulation.player.xy])
+                        self.assertEqual(guards[0].xy[1], y)
+                        continue
+
+                    plan, = simulation.ai.approaches.values()
+                    destinations = [plan.orders[guard.id].destination for guard in guards]
+                    self.assertEqual(len(set(destinations)), count)
+                    early_width = max(guard.xy[1] for guard in guards) - min(guard.xy[1] for guard in guards)
+                    self.assertGreater(early_width, 1.0)
+                    self.assertTrue(all(math.dist(guard.xy, point) > 0.5
+                                        for guard, point in zip(guards, destinations)))
+                    for _ in range(360):
+                        simulation.step()
+
+                self.assertTrue(all(math.dist(guard.xy, point) < 0.1
+                                    for guard, point in zip(guards, destinations)))
+
+    def test_investigators_spread_before_checking_the_same_clue(self):
+        for reason in ("gunshot", "footstep", "seen"):
+            with self.subTest(reason=reason):
+                simulation, (front, following) = field_approach(2, distance=15 if reason == "seen" else 11)
+                player = simulation.player
+                clue = player.xy
+                with patch.object(simulation.combat, "fire"):
+                    if reason == "seen":
+                        for _ in range(30):
+                            simulation.step()
+                        player.position = Position(20, clue[1])
+                    else:
+                        player.hp = 0
+                        simulation.events.emit("noise", 0, player, radius=15, strength=0.8, reason=reason)
+                    for _ in range(90):
+                        simulation.step()
+
+                    self.assertGreater(abs(front.xy[1] - following.xy[1]), 2.0)
+                    for guard in (front, following):
+                        brain = simulation.ai.brains[guard.id]
+                        self.assertFalse(brain.visible)
+                        self.assertIn(guard.state, {"alert", "search"})
+                        self.assertNotEqual(brain.goal, clue)
+                        self.assertIn(clue, brain.search_points)
+                    for _ in range(360):
+                        simulation.step()
+
+                for guard in (front, following):
+                    brain = simulation.ai.brains[guard.id]
+                    if reason != "footstep":
+                        self.assertTrue(brain.priority_checked)
+                    else:
+                        self.assertNotIn(clue, brain.search_points)
+
     def test_gunshot_stays_in_focus_while_route_bends_away(self):
         simulation = PlaySimulation(DOOR_SCENE)
         guard = simulation.guards[0]
@@ -310,3 +386,56 @@ class PrototypeAITests(unittest.TestCase):
         combat.prepare([guard, player], 1 / 60)
         self.assertTrue(combat.clear_fire_line(guard, player, world))
         self.assertTrue(combat.fire(guard, world, 1.2))
+
+    def test_cover_recovery_keeps_priority_search_from_pulling_guard_out(self):
+        geometry = SpatialIndex()
+        geometry.add(Collider("wall", Rect(4, 2.5, 0.2, 1)))
+        bounds = Rect(0, 0, 12, 10)
+        world = SimpleNamespace(geometry=geometry, bounds=bounds, revision=0,
+                                navigation=Navigation({}, [], geometry, bounds=bounds),
+                                door_on_ai_path=lambda *_: None)
+        home = (2, 3.75)
+        guard = Actor("guard", Position(*home), state="retreat", active_weapon="ar_a")
+        guard.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])
+        player = Actor("player", Position(6, 3), team="player")
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        brain.action, brain.action_goal = "cover", home
+        brain.cover_threat, brain.cover_revision = player.xy, world.revision
+        brain.suppression, brain.combat_alert_until = 0.53, 60
+        brain.memory.last_seen, brain.memory.seen_at = player.xy, 0
+        brain.priority_cue = SearchCue("seen", player.xy, 0)
+
+        def step(frame):
+            intent = ai.update([guard], player, frame / 60)[guard.id]
+            move_actor(guard, intent.direction, world, intent.step_dt,
+                       speed=guard.speed * intent.move_multiplier, allow_slide=not intent.move_straight)
+            return intent
+
+        for frame in range(1, 36):
+            step(frame)
+            self.assertEqual((guard.state, brain.action, guard.xy), ("retreat", "cover", home))
+        for frame in range(36, 120):
+            intent = step(frame)
+            self.assertIn(brain.action, {"cover", "peek"})
+            if intent.fire:
+                break
+        else:
+            self.fail("제압에서 회복한 NPC가 피킹 중 시야를 되찾아 사격하지 못함")
+        self.assertTrue(brain.visible)
+        self.assertEqual(brain.action, "peek")
+
+        brain.suppression = 0.56
+        step(frame + 1)
+        self.assertEqual(brain.action, "peek_return")
+        for frame in range(frame + 2, frame + 60):
+            step(frame)
+            self.assertEqual(guard.state, "retreat")
+            if brain.action == "cover":
+                break
+        else:
+            self.fail("다시 제압된 NPC가 엄폐로 복귀하지 못함")
+        recovered_position = guard.xy
+        for frame in range(frame + 1, math.ceil(brain.peek_at * 60)):
+            step(frame)
+            self.assertEqual((guard.state, brain.action, guard.xy), ("retreat", "cover", recovered_position))

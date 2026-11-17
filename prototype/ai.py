@@ -5,6 +5,7 @@ import math
 
 from campaign.viewmodel import segment_distance
 
+from .actors import Actor
 from .cover import CoverFinder
 from .door_traffic import DoorTraffic
 from .geometry import Rect
@@ -13,6 +14,7 @@ from .indoor_search import (
     sample_views,
 )
 from .perception import SOUND_MEMORY_SECONDS, Knowledge, hear, observe
+from .squad_approach import SquadApproach, assign_approach
 
 
 COMBAT_ALERT_SECONDS = 330
@@ -39,6 +41,10 @@ COVERAGE_SCAN_PERIOD_TICKS = 3
 COVERAGE_CELL_BUDGET = 144
 COVERAGE_PROBE_BUDGET = 32
 COVERAGE_GOALS_PER_SCAN = 3
+ADVANCE_DISTANCE = 13.0
+INVESTIGATION_SPREAD_DISTANCE = 4.0
+PEEK_SUPPRESSION_LIMIT = 0.4
+PEEK_RECOVERY_SECONDS = 1.35
 
 
 @dataclass(frozen=True)
@@ -168,6 +174,16 @@ class Intent:
 
 
 @dataclass
+class ApproachMove:
+    actor: Actor
+    brain: Brain
+    intent: Intent
+    goal: tuple
+    approximate: bool = False
+    priority: bool = False
+
+
+@dataclass
 class Incident:
     updated_at: float
     heading: float
@@ -184,6 +200,7 @@ class EnemyAI:
         self.can_radio = can_radio
         self.exits = {point for key, point in world.navigation.nodes.items() if key.endswith("/outside")}
         self.incidents = {}
+        self.approaches = {}
         self.assign_at = 0.0
         self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.01)
                        for index, (actor, patrol) in enumerate(zip(actors, patrols))}
@@ -375,7 +392,8 @@ class EnemyAI:
             else:
                 brain.cover_threat = threat
                 brain.cover_revision = self.world.revision
-                if math.dist(actor.xy, brain.action_goal) > 0.3 or (needs_reload and not empty) or urgent:
+                if (math.dist(actor.xy, brain.action_goal) > 0.3 or (needs_reload and not empty) or urgent
+                        or brain.suppression >= PEEK_SUPPRESSION_LIMIT or time < brain.peek_at):
                     return
 
         elif (time < brain.action_until and not route_failed and not brain.role_changed
@@ -409,10 +427,10 @@ class EnemyAI:
 
         distance = math.dist(actor.xy, threat)
         brain.action, brain.action_until = "fire", time + 1.3
-        if distance > 13:
+        if distance > ADVANCE_DISTANCE:
             brain.action, brain.action_goal = "advance", threat
             return
-        if not 3 < distance <= 13 or brain.role not in {"intercept", "sweep"}:
+        if distance <= 3 or brain.role not in {"intercept", "sweep"}:
             return
         if not self._has_support(actor, brain, actors, time):
             return
@@ -443,16 +461,15 @@ class EnemyAI:
                     or (brain.goal == brain.peek_home and brain.route_failed)):
                 brain.action, brain.action_goal = "cover", brain.peek_home
                 brain.peek_home = None
-                brain.peek_at = time + 1.35
+                brain.peek_at = time + PEEK_RECOVERY_SECONDS
                 return False
             return True
         weapon = actor.weapon
         if (threat is None or brain.action != "cover" or brain.action_goal is None
                 or math.dist(actor.xy, brain.action_goal) > 0.3 or time < brain.peek_at
-                or brain.suppression >= 0.4 or actor.hp < 20
+                or brain.suppression >= PEEK_SUPPRESSION_LIMIT or actor.hp < 20
                 or weapon is None or not weapon.chambered or weapon.reloading):
             return False
-        brain.peek_at = time + 1.35
         point = self.cover_finder.peek(actor, threat)
         if point is None:
             return False
@@ -461,6 +478,12 @@ class EnemyAI:
         brain.peek_departed = False
         brain.action, brain.action_goal, brain.action_until = "peek", point, time + 1.65
         return True
+
+    def _continue_cover(self, actor, brain, actors, threat, time):
+        if self._peek(actor, brain, threat, time):
+            return True
+        self._combat_action(actor, brain, actors, threat, time)
+        return brain.action in {"cover", "retreat", "pin", "reload"}
 
     def start_search_drill(self, actors, point):
         key = "indoor_drill"
@@ -1270,12 +1293,49 @@ class EnemyAI:
     def reset(self):
         self.brains = {key: Brain(brain.patrol) for key, brain in self.brains.items()}
         self.incidents.clear()
+        self.approaches.clear()
         self.assign_at = 0.0
         self.door_traffic = DoorTraffic()
+
+    def _move_approaches(self, groups, time, budget):
+        active = {}
+        for key, requests in groups.items():
+            investigating = key[-1] != "advance"
+            members = [request.actor for request in requests]
+            target = requests[0].goal if investigating else max(
+                (request.brain.memory for request in requests), key=lambda memory: memory.seen_at).last_seen
+            shared_target = not investigating or all(math.dist(move.goal, target) <= 1.5 for move in requests)
+            plan = self.approaches.get(key) if shared_target else None
+            if plan is not None and (time >= plan.retry_at or not plan.matches(target, self.world.revision, members)):
+                plan = None
+            if plan is None and shared_target and len(members) > 1:
+                distance = INVESTIGATION_SPREAD_DISTANCE if investigating else ADVANCE_DISTANCE - 0.05
+                orders = assign_approach(self.world.navigation, members, target, distance,
+                                         investigating=investigating)
+                retry_at = time + 1.0 if investigating and not any(orders.values()) else math.inf
+                plan = SquadApproach(target, self.world.revision, orders, retry_at)
+            if plan is not None:
+                active[key] = plan
+            for move in requests:
+                actor, brain, intent = move.actor, move.brain, move.intent
+                order = plan.orders[actor.id] if plan is not None else None
+                goal = move.goal
+                if order is not None and not order.passed:
+                    goal = order.goal_from(actor.xy)
+                    if investigating and goal == order.destination and math.dist(actor.xy, goal) <= 0.12:
+                        order.passed = True
+                        goal = move.goal
+                budget = self._move(actor, brain, intent, goal, time, budget,
+                                    face=investigating and not move.priority,
+                                    approximate=move.approximate and goal == move.goal)
+                if move.priority:
+                    self._pace_indoor_movement(actor, brain, intent, time, independent_look=True)
+        self.approaches = active
 
     def update(self, actors, player, time):
         intents, budget = {}, 1
         approach_looks = {}
+        approaches = {}
         tick = round(time * 60)
         searching = [(i, actor.id) for i, actor in enumerate(actors) if actor.hp > 0
                      and (actor.state == "search" or self.brains[actor.id].investigating_priority)]
@@ -1425,13 +1485,15 @@ class EnemyAI:
                 threat = memory.last_seen or brain.cover_threat
             elif priority_search:
                 cue = brain.priority_cue
-                actor.state = "search"
                 threat = cue.point
-                if urgent:
+                if brain.action == "cover" and self._continue_cover(actor, brain, actors, threat, time):
+                    actor.state, goal = "retreat", brain.action_goal
+                elif urgent:
                     brain.cue = None
                     self._combat_action(actor, brain, actors, cue.point, time)
                     actor.state, goal = "retreat", brain.action_goal
                 else:
+                    actor.state = "search"
                     entering = brain.indoor_sound_cue != cue
                     sound_sweep = self._indoor_sound_sweep(actor, brain, cue, time)
                     if sound_sweep is not None:
@@ -1469,10 +1531,7 @@ class EnemyAI:
                 holding = confirmed and not investigating and not priority_search and (
                     time < brain.next_sweep_at or (brain.role == "hold" and reported))
                 cover_context = brain.peek_home is not None or (brain.action == "cover" and old_state == "retreat")
-                continuing_cover = cover_context and self._peek(actor, brain, point, time)
-                if not continuing_cover and cover_context:
-                    self._combat_action(actor, brain, actors, point, time)
-                    continuing_cover = brain.action in {"cover", "retreat", "pin", "reload"}
+                continuing_cover = cover_context and self._continue_cover(actor, brain, actors, point, time)
                 if continuing_cover:
                     actor.state, goal = "retreat", brain.action_goal
                 elif holding:
@@ -1559,16 +1618,33 @@ class EnemyAI:
                 if turn > math.radians(15):
                     brain.action_until += 1 / 60
                     goal = None
-            budget = self._move(actor, brain, intent, goal, time, budget,
-                                face=not moving_sweep and not memory.visible and actor.state not in {"retreat", "combat_guard"}
-                                and brain.action != "peek",
-                                approximate=approximate)
+            group = actor.source_unit or brain.incident
+            approach = None
+            if group and memory.visible and brain.action == "advance":
+                approach = "advance"
+            elif goal is not None and actor.state in {"search", "alert"} and not room_sweep:
+                cue = brain.priority_cue if priority_search else None
+                if group and cue is not None and cue.point == goal and cue.kind == "seen":
+                    approach = "seen"
+                elif ((cue is not None and cue.point == goal and cue.kind == "sound")
+                      or (not priority_search and goal == memory.last_sound)):
+                    approach = ("sound", memory.sound_at)
+            if approach is not None:
+                key = (actor.team, actor.position.floor, bool(actor.source_unit), group, approach)
+                approaches.setdefault(key, []).append(ApproachMove(actor, brain, intent, goal, approximate,
+                                                                    priority=moving_sweep))
+            else:
+                budget = self._move(actor, brain, intent, goal, time, budget,
+                                    face=not moving_sweep and not memory.visible
+                                    and actor.state not in {"retreat", "combat_guard"} and brain.action != "peek",
+                                    approximate=approximate)
             if starting_peek and any(intent.direction):
                 brain.peek_departed = True
             if moving_sweep:
                 approach_cue = brain.priority_cue if priority_search and not room_sweep else None
-                self._pace_indoor_movement(actor, brain, intent, time, room_sweep=room_sweep,
-                                           independent_look=approach_cue is not None)
+                if approach is None:
+                    self._pace_indoor_movement(actor, brain, intent, time, room_sweep=room_sweep,
+                                               independent_look=approach_cue is not None)
                 if approach_cue is not None:
                     approach_looks[actor.id] = approach_cue, sound_sweep
             else:
@@ -1581,6 +1657,7 @@ class EnemyAI:
                     and time >= brain.fire_at):
                 intent.retreat_fire = True
             intents[actor.id] = intent
+        self._move_approaches(approaches, time, budget)
         self._update_regroups(actors, time)
         self.door_traffic.update(self.world, actors, self.brains, intents, time, previous_facing=previous_facing)
         for actor in actors:
