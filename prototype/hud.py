@@ -58,6 +58,9 @@ class HUD:
         self.labels = {}
         self.next_update = 0.0
         self.next_debug_update = 0.0
+        self.message_simulation = None
+        self.last_message = ""
+        self.message_until = 0.0
         self.ai_rows = 0
         self.coverage_overlay = {}
 
@@ -242,9 +245,11 @@ class HUD:
         self.label("game_clock", f"{time}  ·  {int(day[1:])}일차", 16)
         self.label("game_vitals", f"HP {player.hp}   ·   방어 {player.armor}", 16)
 
-        left, bottom, width = 12, 12, 236
+        left, base, width = 12, 12, 236
+        show_reload = weapon is not None and (weapon.reloading or weapon.stage > 0)
+        bottom = base + 32 if show_reload else base
         x = left + 12
-        pico.draw_rectangle(left, bottom, left + width, bottom + 112, 15, 24, 27, 218, filled=True)
+        pico.draw_rectangle(left, base, left + width, bottom + 112, 15, 24, 27, 218, filled=True)
         self.text("game_clock", x, bottom + 94)
         self.text("game_vitals", x, bottom + 68)
         pico.draw_rectangle(x, bottom + 52, x + width - 24, bottom + 55, 57, 68, 64, filled=True)
@@ -260,10 +265,66 @@ class HUD:
             self.label("game_ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}", 24)
             self.text("game_mode", x, bottom + 15)
             self.text("game_ammo", x + 72, bottom + 25)
+        if show_reload:
+            self._draw_gameplay_reload(weapon, x, base, width - 24)
+
+    def _draw_gameplay_reload(self, weapon, x, y, width):
+        stages = weapon.spec.reload_stages
+        phase = STAGE_NAMES[stages[weapon.stage].id]
+        status = "재장전" if weapon.reloading else "R 재개"
+        active_color = (241, 196, 112)
+        self.label("game_reload", f"{phase}  ·  {status}", 13, active_color)
+        self.text("game_reload", x, y + 21)
+        gap = 4
+        segment = (width - gap * (len(stages) - 1)) / len(stages)
+        for index, stage in enumerate(stages):
+            left = x + index * (segment + gap)
+            track = (57, 68, 64)
+            if index == weapon.stage:
+                track = (108, 88, 63)
+            elif index < weapon.stage:
+                track = (118, 215, 191)
+            pico.draw_rectangle(left, y + 8, left + segment, y + 11, *track, filled=True)
+            if index == weapon.stage and weapon.stage_elapsed > 0:
+                progress = weapon.stage_elapsed / stage.duration
+                pico.draw_rectangle(left, y + 8, left + segment * progress, y + 11, *active_color, filled=True)
+
+    def _track_message(self, simulation, now):
+        if simulation is not self.message_simulation:
+            self.message_simulation = simulation
+            self.last_message = simulation.message
+            self.message_until = 0.0
+        elif simulation.message != self.last_message:
+            self.last_message = simulation.message
+            self.message_until = now + 3.0
+
+    def _draw_gameplay_notices(self, simulation, center, now, *, paused, map_open):
+        prompt = not paused and not map_open and simulation.player.hp > 0 and "prompt" in self.labels
+        if prompt:
+            self._draw_notice("prompt", center, 29)
+
+        if simulation.respawn_target is not None:
+            message = "안전가옥으로 복귀 중"
+        elif simulation.player.hp <= 0:
+            message = "전투 불능  ·  Enter로 안전가옥 복귀"
+        elif not paused and now < self.message_until:
+            message = self.last_message
+        else:
+            return
+        self.label("game_notice", message, 16)
+        if message:
+            self._draw_notice("game_notice", center, 69 if prompt else 29)
+
+    def _draw_notice(self, key, center, y):
+        half_width = self.labels[key][1].w / 2
+        pico.draw_rectangle(center - half_width - 12, y - 15, center + half_width + 12, y + 15,
+                            15, 24, 27, 218, filled=True)
+        self.text(key, center - half_width, y)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
                cache_count=0, search_counts=None):
         now = perf_counter()
+        self._track_message(simulation, now)
         if now >= self.next_update:
             self.next_update = now + 0.2
             facility_here = nearby_facility(simulation.world, simulation.player.xy)
@@ -293,13 +354,14 @@ class HUD:
             self._draw_debug(simulation, camera, search_counts)
         else:
             self._draw_gameplay(simulation)
+            self._draw_gameplay_notices(simulation, width / 2, now, paused=paused, map_open=map_open)
         if paused and (simulation.ai_scenario or simulation.world.data.get("training_facility")):
             self.panel(width / 2 - 106, height - 63, 212, 45)
             self.text("paused", width / 2 - 92, height - 40)
         elif paused:
             self.panel(width / 2 - 190, height / 2 - 27, 380, 54)
             self.text("paused", width / 2 - 160, height / 2)
-        if "prompt" in self.labels:
+        if debug and "prompt" in self.labels:
             self.panel(width / 2 - 150, 168, 300, 36)
             self.text("prompt", width / 2 - 132, 186)
         if debug or not map_open:
