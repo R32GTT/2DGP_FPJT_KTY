@@ -57,6 +57,7 @@ class HUD:
         self.fonts = {size: pico.load_font(str(path), size) for size in (13, 16, 24)}
         self.labels = {}
         self.next_update = 0.0
+        self.next_debug_update = 0.0
         self.ai_rows = 0
         self.coverage_overlay = {}
 
@@ -145,58 +146,38 @@ class HUD:
             self.label(f"ai_sound/{index}", sound or "최근 총성 반응 없음", 13, (240, 187, 104))
         self.label("ai_hint", simulation.ai_hint, 13)
 
-    def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
-               cache_count=0, search_counts=None):
+    def _update_debug(self, simulation, camera, now, update_ms, draw_ms, cache_count):
+        if now < self.next_debug_update:
+            return
+        self.next_debug_update = now + 0.2
         player, weapon = simulation.player, simulation.player.weapon
-        if perf_counter() >= self.next_update:
-            self.next_update = perf_counter() + 0.2
-            self.label("brand", "REVENANT / FIELD PROTOTYPE", 16, (118, 215, 191))
-            self.label("clock", f"{world_clock(simulation.campaign.simulation.state.world_time)}  |  {camera.magnification:.0%}", 13)
-            if simulation.world.territories:
-                territory = simulation.world.territory_at(player.xy)
-                name = simulation.world.data["territories"].get(territory, {}).get("name", "지역 사이 연결로")
-                self.label("campaign_location", name, 16, (118, 215, 191))
-            self.label("vitals", f"HP {player.hp:03d}   ARMOR {player.armor:02d}", 16)
-            self.label("weapon", weapon.spec.name if weapon else "UNARMED", 24)
-            self.label("ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}" if weapon else "-- / ---", 24)
-            mode = "AUTO" if weapon and weapon.automatic else "SEMI"
-            self.label("mode", f"{mode}  ·  1/2 교체  ·  V 모드  ·  R 재장전 / C 취소", 13)
-            self.label("message", simulation.message, 13)
-            self.label("help", "WASD 이동  Shift 달리기  Ctrl 걷기  우클릭 조준  F 문  E 사용  M 지도  P 정지  F1 정보", 13)
-            self.label("timing", f"update {update_ms:.2f}ms / draw {draw_ms:.2f}ms | cache {cache_count}/24 | 근거리 AI {getattr(simulation.ai, 'near_count', 0)}", 13)
-            self.label("stock", f"DEPOT {simulation.campaign.supplies}  /  확보 {simulation.campaign.simulation.state.player_stock['supplies']}", 13)
-            facility_here = nearby_facility(simulation.world, simulation.player.xy)
-            prompt = f"[E] {facility_here['name']} 사용" if facility_here else ""
-            control = nearby_road_control(simulation.world, simulation.player.xy)
-            if control and not prompt:
-                road = simulation.campaign.simulation.state.roads[control["road"]]
-                prompt = f"[E] {'수송로 개방' if road.blocked else '수송로 차단'}"
-            self.label("prompt", prompt, 16, (241, 211, 135))
-            map_title = simulation.stack_title or simulation.world.data.get("name", "지역 지도")
-            map_help = ("P 시작·재개 · F2 다시 보기 · F3 다음 배치 · M 닫기" if simulation.stack_drill
-                        else "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보")
-            self.label("map_title", map_title, 24, (118, 215, 191))
-            self.label("map_help", map_help, 13)
-            self.label("map_size", f"{simulation.world.bounds.w:g} × {simulation.world.bounds.h:g} m", 13)
-            if debug:
-                self._update_ai(simulation)
-            for facility in simulation.world.facilities:
-                self.label("site/" + facility["id"], facility["name"], 13)
-                campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
-                status = f"피해 {campaign.damage}%" if campaign else "복귀 거점"
-                if simulation.world.territories and campaign and facility["kind"] == "warehouse":
-                    status += f" · 보급 {campaign.inventory['supplies']}"
-                self.label("site_info/" + facility["id"], f"{facility['name']} · {status}", 13)
-            for index, (key, title) in enumerate(STAGE_NAMES.items()):
-                duration = weapon.spec.reload_stages[index].duration if weapon else 0
-                self.label(key, f"{index + 1} {title} {duration:g}s", 13)
-            if weapon and (weapon.reloading or weapon.stage > 0):
-                phase = STAGE_NAMES[weapon.spec.reload_stages[weapon.stage].id]
-                status = "진행" if weapon.reloading else "중단 / R 재개"
-                self.label("reload", f"{phase} — {status} · 남은 {weapon.remaining_reload:.2f}s", 13, (241, 196, 112))
-            else:
-                self.label("reload", "완료 단계 보존 · 취소한 단계는 처음부터 재개", 13, (136, 159, 152))
-        self.label("paused", "PAUSED — P 키로 재개" if paused else "", 24)
+        self.label("brand", "REVENANT / FIELD PROTOTYPE", 16, (118, 215, 191))
+        self.label("clock", f"{world_clock(simulation.campaign.simulation.state.world_time)}  |  {camera.magnification:.0%}", 13)
+        if simulation.world.territories:
+            territory = simulation.world.territory_at(player.xy)
+            name = simulation.world.data["territories"].get(territory, {}).get("name", "지역 사이 연결로")
+            self.label("campaign_location", name, 16, (118, 215, 191))
+        self.label("vitals", f"HP {player.hp:03d}   ARMOR {player.armor:02d}", 16)
+        self.label("weapon", weapon.spec.name if weapon else "UNARMED", 24)
+        self.label("ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}" if weapon else "-- / ---", 24)
+        mode = "AUTO" if weapon and weapon.automatic else "SEMI"
+        self.label("mode", f"{mode}  ·  1/2 교체  ·  V 모드  ·  R 재장전 / C 취소", 13)
+        self.label("message", simulation.message, 13)
+        self.label("timing", f"update {update_ms:.2f}ms / draw {draw_ms:.2f}ms | cache {cache_count}/24 | 근거리 AI {getattr(simulation.ai, 'near_count', 0)}", 13)
+        self.label("stock", f"DEPOT {simulation.campaign.supplies}  /  확보 {simulation.campaign.simulation.state.player_stock['supplies']}", 13)
+        self._update_ai(simulation)
+        for index, (key, title) in enumerate(STAGE_NAMES.items()):
+            duration = weapon.spec.reload_stages[index].duration if weapon else 0
+            self.label(key, f"{index + 1} {title} {duration:g}s", 13)
+        if weapon and (weapon.reloading or weapon.stage > 0):
+            phase = STAGE_NAMES[weapon.spec.reload_stages[weapon.stage].id]
+            status = "진행" if weapon.reloading else "중단 / R 재개"
+            self.label("reload", f"{phase} — {status} · 남은 {weapon.remaining_reload:.2f}s", 13, (241, 196, 112))
+        else:
+            self.label("reload", "완료 단계 보존 · 취소한 단계는 처음부터 재개", 13, (136, 159, 152))
+
+    def _draw_debug(self, simulation, camera, search_counts):
+        player, weapon = simulation.player, simulation.player.weapon
         width, height = camera.width, camera.height
         self.panel(12, height - 67, width - 24, 55)
         self.text("brand", 26, height - 30)
@@ -227,36 +208,91 @@ class HUD:
         self.panel(434, 12, width - 650, 70)
         self.text("message", 447, 60)
         self.text("stock", 447, 35)
+        self.panel(12, height - 120, 650, 40)
+        self.text("timing", 24, height - 100)
+        if self.ai_rows:
+            top = height - 80
+            left = width - 365
+            self.panel(left, top - self.ai_rows * 80 - 10, 350, self.ai_rows * 80 + 10)
+            for index in range(self.ai_rows):
+                y = top - 15 - index * 80
+                for row, key in enumerate(("ai_id", "ai_cue", "ai_route", "ai_sound")):
+                    self.text(f"{key}/{index}", left + 12, y - row * 18)
+        if "ai_hint" in self.labels:
+            self.text("ai_hint", 24, height - 136)
+        self.label("ai_legend", "파랑  맵 노드 · 청록  현재 경로 · 주황 +  소리 추정", 13)
+        legend_y = height - (156 if "ai_hint" in self.labels else 136)
+        self.text("ai_legend", 24, legend_y)
+        if search_counts is not None:
+            checked, total, blocked, covered_area, total_area = search_counts
+            if total_area:
+                counts = f"화면 안 면적 · 확인 {covered_area:.2f}㎡ · 미확인 {total_area - covered_area:.2f}㎡"
+                legend = "청록 확인 면적 · 노랑 미확인 면적"
+            else:
+                counts = f"화면 안 표본 · 확인 {checked}/{total} · 미확인 {total - checked} · 가림 {blocked}"
+                legend = "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖"
+            self.label("search_counts", counts, 13)
+            self.label("search_legend", legend, 13)
+            self.text("search_counts", 24, legend_y - 20)
+            self.text("search_legend", 24, legend_y - 38)
+
+    def _draw_gameplay(self, simulation):
+        player, weapon = simulation.player, simulation.player.weapon
+        day, time = world_clock(simulation.campaign.simulation.state.world_time).split()
+        self.label("game_clock", f"{time}  ·  {int(day[1:])}일차", 16)
+        self.label("game_vitals", f"HP {player.hp}   ·   방어 {player.armor}", 16)
+
+        left, bottom, width = 12, 12, 236
+        x = left + 12
+        pico.draw_rectangle(left, bottom, left + width, bottom + 112, 15, 24, 27, 218, filled=True)
+        self.text("game_clock", x, bottom + 94)
+        self.text("game_vitals", x, bottom + 68)
+        pico.draw_rectangle(x, bottom + 52, x + width - 24, bottom + 55, 57, 68, 64, filled=True)
+        if player.hp > 0:
+            health = min(1, player.hp / 100)
+            color = (227, 122, 106) if player.hp <= 25 else (118, 215, 191)
+            pico.draw_rectangle(x, bottom + 52, x + (width - 24) * health, bottom + 55, *color, filled=True)
+
+        self.label("game_weapon", weapon.spec.name if weapon else "비무장", 16)
+        self.text("game_weapon", x, bottom + 33)
+        if weapon:
+            self.label("game_mode", "AUTO" if weapon.automatic else "SEMI", 13, (168, 187, 180))
+            self.label("game_ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}", 24)
+            self.text("game_mode", x, bottom + 15)
+            self.text("game_ammo", x + 72, bottom + 25)
+
+    def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
+               cache_count=0, search_counts=None):
+        now = perf_counter()
+        if now >= self.next_update:
+            self.next_update = now + 0.2
+            facility_here = nearby_facility(simulation.world, simulation.player.xy)
+            prompt = f"[E] {facility_here['name']} 사용" if facility_here else ""
+            control = nearby_road_control(simulation.world, simulation.player.xy)
+            if control and not prompt:
+                road = simulation.campaign.simulation.state.roads[control["road"]]
+                prompt = f"[E] {'수송로 개방' if road.blocked else '수송로 차단'}"
+            self.label("prompt", prompt, 16, (241, 211, 135))
+            map_title = simulation.stack_title or simulation.world.data.get("name", "지역 지도")
+            map_help = ("P 시작·재개 · F2 다시 보기 · F3 다음 배치 · M 닫기" if simulation.stack_drill
+                        else "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보")
+            self.label("map_title", map_title, 24, (118, 215, 191))
+            self.label("map_help", map_help, 13)
+            self.label("map_size", f"{simulation.world.bounds.w:g} × {simulation.world.bounds.h:g} m", 13)
+            for facility in simulation.world.facilities:
+                self.label("site/" + facility["id"], facility["name"], 13)
+                campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
+                status = f"피해 {campaign.damage}%" if campaign else "복귀 거점"
+                if simulation.world.territories and campaign and facility["kind"] == "warehouse":
+                    status += f" · 보급 {campaign.inventory['supplies']}"
+                self.label("site_info/" + facility["id"], f"{facility['name']} · {status}", 13)
+        self.label("paused", "PAUSED — P 키로 재개" if paused else "", 24)
+        width, height = camera.width, camera.height
         if debug:
-            self.panel(12, height - 120, 650, 40)
-            self.text("timing", 24, height - 100)
-            if self.ai_rows:
-                top = height - 80
-                left = width - 365
-                self.panel(left, top - self.ai_rows * 80 - 10, 350, self.ai_rows * 80 + 10)
-                for index in range(self.ai_rows):
-                    y = top - 15 - index * 80
-                    for row, key in enumerate(("ai_id", "ai_cue", "ai_route", "ai_sound")):
-                        self.text(f"{key}/{index}", left + 12, y - row * 18)
-            if "ai_hint" in self.labels:
-                self.text("ai_hint", 24, height - 136)
-            self.label("ai_legend", "파랑  맵 노드 · 청록  현재 경로 · 주황 +  소리 추정", 13)
-            legend_y = height - (156 if "ai_hint" in self.labels else 136)
-            self.text("ai_legend", 24, legend_y)
-            if search_counts is not None:
-                checked, total, blocked, covered_area, total_area = search_counts
-                if total_area:
-                    counts = f"화면 안 면적 · 확인 {covered_area:.2f}㎡ · 미확인 {total_area - covered_area:.2f}㎡"
-                    legend = "청록 확인 면적 · 노랑 미확인 면적"
-                else:
-                    counts = f"화면 안 표본 · 확인 {checked}/{total} · 미확인 {total - checked} · 가림 {blocked}"
-                    legend = "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖"
-                self.label("search_counts", counts, 13)
-                self.label("search_legend", legend, 13)
-                self.text("search_counts", 24, legend_y - 20)
-                self.text("search_legend", 24, legend_y - 38)
+            self._update_debug(simulation, camera, now, update_ms, draw_ms, cache_count)
+            self._draw_debug(simulation, camera, search_counts)
         else:
-            self.text("help", 24, height - 88)
+            self._draw_gameplay(simulation)
         if paused and (simulation.ai_scenario or simulation.world.data.get("training_facility")):
             self.panel(width / 2 - 106, height - 63, 212, 45)
             self.text("paused", width / 2 - 92, height - 40)
@@ -266,12 +302,14 @@ class HUD:
         if "prompt" in self.labels:
             self.panel(width / 2 - 150, 168, 300, 36)
             self.text("prompt", width / 2 - 132, 186)
-        self._minimap(simulation, camera, debug)
+        if debug or not map_open:
+            self._minimap(simulation, camera, debug)
         if map_open:
             self._region_map(simulation, camera, debug)
 
     def _minimap(self, simulation, camera, debug=False):
-        x0, y0, width, height = camera.width - 196, 12, 180, 126
+        width, height = 180, 126
+        x0, y0 = (camera.width - 196, 12) if debug else (12, camera.height - height - 12)
         self.panel(x0, y0, width, height)
         bounds = simulation.world.bounds
         scale = min((width - 16) / bounds.w, (height - 16) / bounds.h)
