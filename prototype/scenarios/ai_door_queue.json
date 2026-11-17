@@ -6,7 +6,7 @@
   "search_layouts": {
     "문 안쪽 수색": {
       "corner_axis": 1,
-      "corner_glance": [10.4, 6],
+      "observation_points": [[9.0, 1.4], [11.55, 1.4]],
       "finish_poses": [
         {"position": [8.0, 10.5], "look": [11.5, 8.3]},
         {"position": [8.0, 1.4], "look": [11.5, 3.6]},
@@ -19,7 +19,7 @@
     "door": "shared_door",
     "approach_side": -1,
     "sound": [10, 6],
-    "layouts": [[1, 1], [2, 0], [3, 0], [2, 1], [1, 2], [4, 0], [3, 1], [2, 2], [1, 3]],
+    "layouts": [[1, 1], [2, 0], [3, 0], [2, 1], [1, 2], [4, 0], [3, 1], [2, 2], [1, 3], [1, 0]],
     "extra_guards": [
       {"id": "third_guard", "patrol": [[10.5, 7.5]]},
       {"id": "fourth_guard", "patrol": [[10.5, 4.5]]}

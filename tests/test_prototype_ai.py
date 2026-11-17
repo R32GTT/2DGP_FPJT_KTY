@@ -123,7 +123,7 @@ class PrototypeAITests(unittest.TestCase):
                 corners = set().union(*area.room_corners.values())
                 lead = simulation.guards[0]
                 first_looks = {}
-                first_glances = {}
+                internal_looks = set()
                 passage_order = []
                 opened_at = passed_at = None
                 all_passed = False
@@ -154,11 +154,14 @@ class PrototypeAITests(unittest.TestCase):
                     sweep = next((incident.indoor for incident in simulation.ai.incidents.values()
                                   if incident.indoor is not None), None)
                     if sweep is not None:
+                        owners = {owner for owner, _ in sweep.corner_checks.values()}
+                        pending_inside = set(area.points) - corners - sweep.checked
                         for actor in simulation.guards:
-                            if simulation.ai.brains[actor.id].look_point == area.corner_glance:
-                                first_glances.setdefault(actor.id, simulation.time)
-                    if sweep is not None and sweep.checked - corners:
-                        self.assertLessEqual(corners, sweep.checked)
+                            look = simulation.ai.brains[actor.id].look_point
+                            if actor.id in owners and pending_inside:
+                                self.assertNotIn(look, corners)
+                                if look in area.points:
+                                    internal_looks.add(actor.id)
                     if all_passed and sweep is not None and len(sweep.checked) == len(sweep.area.points):
                         break
 
@@ -168,6 +171,8 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertIsNotNone(sweep)
                 self.assertEqual(sweep.checked, set(sweep.area.points))
                 self.assertTrue(moving_scan)
+                if len(simulation.guards) == 2:
+                    self.assertTrue(any(point in sweep.observed_from for point in area.observations))
                 first, second = passage_order[:2]
                 self.assertIn(first, first_looks)
                 self.assertIn(second, first_looks)
@@ -175,9 +180,9 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertIn(first_looks[second], corners)
                 self.assertLess((first_looks[first][1] - 6) * (first_looks[second][1] - 6), 0)
                 for actor_id in (first, second):
-                    owner, confirmed_at = sweep.corner_checks[first_looks[actor_id]]
+                    owner, _ = sweep.corner_checks[first_looks[actor_id]]
                     self.assertEqual(owner, actor_id)
-                    self.assertAlmostEqual(first_glances[actor_id], confirmed_at)
+                    self.assertIn(actor_id, internal_looks)
 
                 guards = {actor.id: actor for actor in simulation.guards}
                 poses = dict(zip(passage_order, area.finish_poses))
@@ -202,6 +207,28 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertGreater(math.remainder(guards[second].facing, math.tau), 0.3)
                 for actor_id in passage_order[2:]:
                     self.assertLess(abs(math.remainder(guards[actor_id].facing, math.tau)), 0.05)
+
+    def test_solo_door_drill_moves_from_its_first_corner_to_the_room_interior(self):
+        simulation = PlaySimulation(DOOR_SCENE, stack_drill=True, stack_variant=9)
+        guard, = simulation.guards
+        brain = simulation.ai.brains[guard.id]
+        area, = simulation.world.search_areas
+        corners = set().union(*area.room_corners.values())
+        saw_inside = False
+        while simulation.time < 15:
+            simulation.step()
+            sweep = brain.indoor
+            if sweep is None:
+                continue
+            if sweep.corner_checks and set(area.points) - corners - sweep.checked:
+                self.assertNotIn(brain.look_point, corners)
+                saw_inside |= brain.look_point in area.points
+            if sweep.checked == set(area.points):
+                break
+
+        self.assertTrue(saw_inside)
+        self.assertEqual(sweep.checked, set(area.points))
+        self.assertFalse(simulation.ai.door_traffic.stacks)
 
     def test_new_gunshot_releases_stack(self):
         simulation = PlaySimulation(DOOR_SCENE, stack_drill=True)

@@ -34,7 +34,10 @@ class SearchArea:
     room_corners: dict[int, tuple[tuple[float, float], ...]]
     corner_axis: int | None = None
     finish_poses: tuple[SearchPose, ...] = ()
-    corner_glance: tuple[float, float] | None = None
+    observations: dict[tuple[float, float], int] = field(default_factory=dict)
+
+    def room_of(self, point):
+        return self.rooms.get(point, self.observations.get(point))
 
 
 @dataclass(frozen=True)
@@ -80,7 +83,7 @@ def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range
     return best[1] if best else None
 
 
-def _assign_rooms(world, points):
+def _assign_rooms(world, points, spacing):
     # 문을 열어도 이미 나눈 수색 구역의 경계는 유지한다.
     doors = [item.rect for item in world.geometry.objects.values() if item.kind == "door"]
     remaining = set(points)
@@ -93,7 +96,7 @@ def _assign_rooms(world, points):
         while pending:
             point = pending.pop()
             rooms[point] = room
-            connected = [other for other in remaining if math.dist(point, other) <= SAMPLE_M * 1.5
+            connected = [other for other in remaining if math.dist(point, other) <= spacing * 1.5
                          and world.navigation.clear(point, other, ignore_doors=True)
                          and not any(door.segment_entry(point, other) is not None for door in doors)]
             remaining.difference_update(connected)
@@ -120,10 +123,14 @@ def build_search_areas(world):
             areas[facility["id"]] = floors
     result = []
     for key, rows in areas.items():
+        layout = world.data.get("search_layouts", {}).get(key, {})
+        spacing = layout.get("sample_spacing", SAMPLE_M)
+        if not math.isfinite(spacing) or spacing <= 0:
+            raise ValueError(f"수색 표본 간격 오류: {key}")
         floors = tuple(row if isinstance(row, Rect) else Rect(*row) for row in rows)
         points = set()
         for rect in floors:
-            columns, lines = math.ceil(rect.w / SAMPLE_M), math.ceil(rect.h / SAMPLE_M)
+            columns, lines = math.ceil(rect.w / spacing), math.ceil(rect.h / spacing)
             for col in range(columns):
                 for row in range(lines):
                     point = (rect.x + (col + 0.5) * rect.w / columns,
@@ -132,19 +139,28 @@ def build_search_areas(world):
                         points.add(point)
         if points:
             ordered = tuple(sorted(points))
-            rooms = _assign_rooms(world, points)
+            rooms = _assign_rooms(world, points, spacing)
             by_room = defaultdict(list)
             for point in ordered:
                 by_room[rooms[point]].append(point)
             room_points = {room: tuple(samples) for room, samples in by_room.items()}
-            room_corners = {room: _sample_corners(samples) for room, samples in room_points.items()}
-            layout = world.data.get("search_layouts", {}).get(key, {})
+            corner_first = layout.get("corner_first", True)
+            room_corners = {room: _sample_corners(samples) if corner_first else ()
+                            for room, samples in room_points.items()}
             poses = tuple(SearchPose(tuple(row["position"]), tuple(row["look"]))
                           for row in layout.get("finish_poses", ()))
-            glance = layout.get("corner_glance")
+            observations = {}
+            for row in layout.get("observation_points", ()):
+                point = tuple(row)
+                if not world.navigation.walkable(point):
+                    continue
+                sample = min((p for p in ordered if world.navigation.clear(point, p)),
+                             key=lambda p: (math.dist(point, p), p), default=None)
+                if sample is not None:
+                    observations[point] = rooms[sample]
             result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners,
                                      corner_axis=layout.get("corner_axis"), finish_poses=poses,
-                                     corner_glance=tuple(glance) if glance is not None else None))
+                                     observations=observations))
     return tuple(result)
 
 
@@ -154,6 +170,7 @@ class IndoorSweep:
     anchor: tuple
     evidence_at: float
     checked: set = field(default_factory=set)
+    checked_at: dict[tuple[float, float], float] = field(default_factory=dict)
     claims: dict = field(default_factory=dict)
     corner_claims: dict[str, tuple[tuple[float, float], float]] = field(default_factory=dict)
     corner_checks: dict[tuple[float, float], tuple[str, float]] = field(default_factory=dict)
@@ -165,11 +182,6 @@ class IndoorSweep:
     regroup_swaps: set[tuple[str, str]] = field(default_factory=set)
     regroup_until: float | None = None
     regroup_done: bool = False
-
-    def scan_forward(self, xy, facing, room, geometry, *, stationary=False):
-        pending = (point for point in self.area.room_points[room] if point not in self.checked)
-        self.checked.update(point for point, visible in sample_views(xy, facing, pending, geometry,
-                                                                    stationary=stationary) if visible)
 
     def current_view(self, observers, geometry):
         visible, blocked = set(), set()
@@ -184,6 +196,18 @@ class IndoorSweep:
         else:
             points = self.area.room_corners[room]
         return tuple(point for point in points if point not in self.checked)
+
+    def pending_for(self, actor_id, room):
+        rooms = self.area.room_points if room is None else (room,)
+        result = []
+        for key in rooms:
+            points = self.area.room_points[key]
+            corners = self.area.room_corners[key]
+            pending = tuple(point for point in points if point not in self.checked)
+            if any(self.corner_checks.get(point, (None,))[0] == actor_id for point in corners):
+                pending = tuple(point for point in pending if point not in corners) or pending
+            result.extend(pending)
+        return tuple(result)
 
     def available_corners(self, corners, actor_id, time):
         if not corners:
@@ -219,8 +243,34 @@ class IndoorSweep:
         return tuple(point for point in corners if point in available)
 
     def confirm_corner(self, point, actor_id, time):
-        self.checked.add(point)
+        self.confirm(point, time)
         self.corner_checks[point] = actor_id, time
+
+    def confirm(self, point, time):
+        self.checked.add(point)
+        self.checked_at[point] = time
+
+    def room_near(self, point):
+        sample = min(self.area.points, key=lambda sample: (math.dist(point, sample), sample))
+        return self.area.rooms[sample]
+
+    def reopen_room(self, point):
+        room = self.room_near(point)
+        for sample in self.area.room_points[room]:
+            self.checked.discard(sample)
+            self.checked_at.pop(sample, None)
+            self.corner_checks.pop(sample, None)
+        for sample in tuple(self.observed_from):
+            if self.area.room_of(sample) == room:
+                self.observed_from.pop(sample)
+        self.reset_regroup()
+
+    def reset_regroup(self):
+        self.regroup_slots.clear()
+        self.regroup_looks.clear()
+        self.regroup_swaps.clear()
+        self.regroup_until = None
+        self.regroup_done = False
 
     def look(self, xy, facing, room, geometry, *, walking=False, continue_scan=False, points=None):
         if points is None:
