@@ -7,7 +7,7 @@
     "문 안쪽 수색": {
       "corner_axis": 1,
       "observation_points": [[9.0, 1.4], [11.55, 1.4]],
-      "finish_poses": [
+      "entry_poses": [
         {"position": [8.0, 10.5], "look": [11.5, 8.3]},
         {"position": [8.0, 1.4], "look": [11.5, 3.6]},
         {"position": [8.0, 3.8], "look": [11.5, 3.8]},

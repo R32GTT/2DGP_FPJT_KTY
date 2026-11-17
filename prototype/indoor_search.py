@@ -22,6 +22,7 @@ SEARCHER_ACTIVE_S = 0.2
 class SearchPose:
     position: tuple[float, float]
     look: tuple[float, float]
+    room: int
 
 
 @dataclass(frozen=True)
@@ -33,11 +34,14 @@ class SearchArea:
     room_points: dict[int, tuple[tuple[float, float], ...]]
     room_corners: dict[int, tuple[tuple[float, float], ...]]
     corner_axis: int | None = None
-    finish_poses: tuple[SearchPose, ...] = ()
+    entry_poses: tuple[SearchPose, ...] = ()
     observations: dict[tuple[float, float], int] = field(default_factory=dict)
 
     def room_of(self, point):
-        return self.rooms.get(point, self.observations.get(point))
+        room = self.rooms.get(point, self.observations.get(point))
+        if room is not None:
+            return room
+        return next((pose.room for pose in self.entry_poses if pose.position == point), None)
 
 
 @dataclass(frozen=True)
@@ -147,8 +151,6 @@ def build_search_areas(world):
             corner_first = layout.get("corner_first", True)
             room_corners = {room: _sample_corners(samples) if corner_first else ()
                             for room, samples in room_points.items()}
-            poses = tuple(SearchPose(tuple(row["position"]), tuple(row["look"]))
-                          for row in layout.get("finish_poses", ()))
             observations = {}
             for row in layout.get("observation_points", ()):
                 point = tuple(row)
@@ -158,8 +160,16 @@ def build_search_areas(world):
                              key=lambda p: (math.dist(point, p), p), default=None)
                 if sample is not None:
                     observations[point] = rooms[sample]
+            poses = []
+            for row in layout.get("entry_poses", ()):
+                position = tuple(row["position"])
+                nearest = min((p for p in ordered if world.navigation.clear(position, p)),
+                              key=lambda p: (math.dist(position, p), p), default=None)
+                if nearest is None or not world.navigation.walkable(position):
+                    raise ValueError(f"수색 시작 위치에 접근할 수 없음: {key} {position}")
+                poses.append(SearchPose(position, tuple(row["look"]), rooms[nearest]))
             result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners,
-                                     corner_axis=layout.get("corner_axis"), finish_poses=poses,
+                                     corner_axis=layout.get("corner_axis"), entry_poses=tuple(poses),
                                      observations=observations))
     return tuple(result)
 
@@ -176,12 +186,15 @@ class IndoorSweep:
     corner_checks: dict[tuple[float, float], tuple[str, float]] = field(default_factory=dict)
     sound_searchers: dict[str, float] = field(default_factory=dict)
     entry_order: list[str] = field(default_factory=list)
+    entry_ready: bool = False
     observed_from: dict = field(default_factory=dict)
     regroup_slots: dict[str, tuple[float, float]] = field(default_factory=dict)
-    regroup_looks: dict[str, tuple[float, float]] = field(default_factory=dict)
     regroup_swaps: set[tuple[str, str]] = field(default_factory=set)
     regroup_until: float | None = None
     regroup_done: bool = False
+
+    def entry_pose(self, actor_id):
+        return next((pose for member, pose in zip(self.entry_order, self.area.entry_poses) if member == actor_id), None)
 
     def current_view(self, observers, geometry):
         visible, blocked = set(), set()
@@ -197,7 +210,7 @@ class IndoorSweep:
             points = self.area.room_corners[room]
         return tuple(point for point in points if point not in self.checked)
 
-    def pending_for(self, actor_id, room):
+    def pending_for(self, actor_id, room, *, revisit_corners=True):
         rooms = self.area.room_points if room is None else (room,)
         result = []
         for key in rooms:
@@ -205,7 +218,8 @@ class IndoorSweep:
             corners = self.area.room_corners[key]
             pending = tuple(point for point in points if point not in self.checked)
             if any(self.corner_checks.get(point, (None,))[0] == actor_id for point in corners):
-                pending = tuple(point for point in pending if point not in corners) or pending
+                inside = tuple(point for point in pending if point not in corners)
+                pending = inside if inside or not revisit_corners else pending
             result.extend(pending)
         return tuple(result)
 
@@ -267,7 +281,6 @@ class IndoorSweep:
 
     def reset_regroup(self):
         self.regroup_slots.clear()
-        self.regroup_looks.clear()
         self.regroup_swaps.clear()
         self.regroup_until = None
         self.regroup_done = False

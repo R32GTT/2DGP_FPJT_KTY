@@ -31,7 +31,7 @@ INDOOR_YIELD_RETRY_S = 0.25
 INDOOR_SMOOTH_BEND = math.radians(55)
 REGROUP_HOLD_S = 1.0
 REGROUP_ARRIVAL_M = 0.2
-POSE_ARRIVAL_M = 0.05
+ENTRY_ARRIVAL_M = 0.10
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,7 @@ class Brain:
     look_until: float = 0.0
     checked_sound_at: float = -1000.0
     indoor: IndoorSweep | None = None
+    indoor_staging: bool = False
     indoor_target: tuple | None = None
     indoor_sound_cue: SearchCue | None = None
     indoor_blocked: dict = field(default_factory=dict)
@@ -107,6 +108,8 @@ class Brain:
     indoor_walk_look_revision: int = -1
     indoor_walk_look_started: bool = False
     indoor_exposure: dict[tuple[float, float], float] = field(default_factory=dict)
+    indoor_occluded: set[tuple[float, float]] = field(default_factory=set)
+    indoor_revealed: set[tuple[float, float]] = field(default_factory=set)
     indoor_sample_at: float = -math.inf
     indoor_observation: IndoorSweep | None = None
     indoor_speed: float = 0.0
@@ -443,6 +446,7 @@ class EnemyAI:
         if incident is not None:
             incident.claims.pop(actor.id, None)
         brain.indoor_target = brain.indoor_yield = brain.indoor_look_angle = None
+        brain.indoor_staging = False
         brain.indoor_sound_cue = None
         brain.indoor_look_until = brain.scan_until = 0.0
         brain.indoor_heading = brain.indoor_scan_origin = None
@@ -519,6 +523,42 @@ class EnemyAI:
             sweep.entry_order.append(actor.id)
         return True
 
+    def _advance_entry_poses(self, actors, time):
+        active = {actor.id: actor for actor in actors if actor.hp > 0 and not actor.transport_boarding}
+        for incident in self.incidents.values():
+            sweep = incident.indoor
+            if sweep is None or not sweep.area.entry_poses or sweep.entry_ready:
+                continue
+            participants = [actor_id for actor_id, seen_at in sweep.sound_searchers.items()
+                            if actor_id in active and time - seen_at < SEARCHER_ACTIVE_S]
+            if not participants or any(actor_id not in sweep.entry_order for actor_id in participants):
+                continue
+            for actor_id in participants:
+                pose = sweep.entry_pose(actor_id)
+                brain = self.brains[actor_id]
+                if (pose is not None and math.dist(active[actor_id].xy, pose.position) > ENTRY_ARRIVAL_M
+                        and brain.indoor_blocked.get(pose.position) != self.world.revision):
+                    break
+            else:
+                sweep.entry_ready = True
+
+    def _stage_at_entry_pose(self, actor, brain, sweep, time):
+        pose = sweep.entry_pose(actor.id)
+        goal = pose.position if pose is not None else None
+        revision = self.world.revision
+        brain.indoor_staging = True
+        if (goal is not None and brain.goal == goal and brain.route_failed
+                and brain.path_revision == revision):
+            brain.indoor_blocked[goal] = revision
+        if (goal is not None and math.dist(actor.xy, goal) > ENTRY_ARRIVAL_M
+                and brain.indoor_blocked.get(goal) != revision):
+            brain.indoor_target = goal
+            return goal, False
+        brain.indoor_target = None
+        room = pose.room if pose is not None else sweep.room_near(actor.xy)
+        self._look_at_indoor_samples(actor, brain, time, sweep, room, stationary=True)
+        return None, False
+
     def _indoor_sweep(self, actor, brain, point, evidence_at, time, *, new_contact=False, area=None, entering=False):
         if area is None:
             area = self.world.indoor_search_area(point)
@@ -547,12 +587,19 @@ class EnemyAI:
                 brain.indoor.corner_claims.pop(actor.id, None)
             brain.indoor = sweep
             brain.indoor_target = None
+            brain.indoor_staging = False
             brain.indoor_blocked.clear()
             brain.indoor_look_angle = None
             brain.indoor_look_until = 0.0
             brain.indoor_scan_origin = brain.indoor_heading = None
             if not entering:
                 self._reset_walking_look(brain)
+
+        if area.entry_poses and brain.indoor_sound_cue is not None and not sweep.entry_ready:
+            return self._stage_at_entry_pose(actor, brain, sweep, time)
+        if brain.indoor_staging:
+            brain.indoor_staging = False
+            brain.indoor_target = None
 
         revision = self.world.revision
         target = brain.indoor_target
@@ -583,17 +630,17 @@ class EnemyAI:
         reserved = {target for owner, (target, until) in sweep.claims.items()
                     if owner != actor.id and time < until}
         claimed_rooms = {area.room_of(target) for target in reserved}
-        target = min((candidate for candidate in unchecked if entering or area.rooms[candidate] not in claimed_rooms),
+        target = min((candidate for candidate in unchecked if candidate not in reserved
+                      and (entering or sweep.entry_ready or area.rooms[candidate] not in claimed_rooms)),
                      key=lambda candidate: (area.rooms[candidate] != previous_room,
                                             math.dist(actor.xy, candidate) + 0.3 * math.dist(point, candidate),
                                             candidate), default=None)
         if target is not None:
             room = area.rooms[target]
-            if not entering:
-                self._reset_walking_look(brain)
             remaining = sweep.pending_for(actor.id, room)
             heading = actor.facing if brain.indoor_heading is None else brain.indoor_heading
-            candidates = [candidate for candidate in area.room_points[room] if candidate in available]
+            candidates = [candidate for candidate in area.room_points[room]
+                          if candidate in available and candidate not in reserved]
             if entering:
                 room_claims = {point for point in reserved if area.room_of(point) == room}
                 observation = sweep.entry_observation(actor.xy, heading, candidates, remaining,
@@ -650,6 +697,8 @@ class EnemyAI:
     def _reset_walking_look(brain):
         brain.indoor_walk_look = None
         brain.indoor_exposure.clear()
+        brain.indoor_occluded.clear()
+        brain.indoor_revealed.clear()
         brain.indoor_sample_at = -math.inf
         brain.indoor_walk_look_at = 0.0
         brain.indoor_walk_look_revision = -1
@@ -660,7 +709,7 @@ class EnemyAI:
             self._reset_walking_look(brain)
             brain.indoor_observation = sweep
         geometry, revision = self.world.geometry, self.world.revision
-        pending = sweep.pending_for(actor.id, room)
+        pending = sweep.pending_for(actor.id, room, revisit_corners=not brain.indoor_staging)
         corners = set(pending) & set(sweep.pending_corners(room))
         point = brain.indoor_walk_look
         scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
@@ -674,9 +723,13 @@ class EnemyAI:
         brain.indoor_sample_at = time
         candidates = (point,) if visible and point in corners else (
             () if corners and (not stationary or not visible) else tuple(sample for sample in pending if sample not in corners))
-        seen = {sample: brain.indoor_exposure.get(sample, time)
-                for sample, clear in sample_views(actor.xy, actor.facing, candidates, geometry, stationary=stationary)
-                if clear}
+        views = dict(sample_views(actor.xy, actor.facing, candidates, geometry, stationary=stationary))
+        seen = {sample: brain.indoor_exposure.get(sample, time) for sample, clear in views.items() if clear}
+        blocked = {sample for sample, clear in views.items() if not clear}
+        revealed = brain.indoor_occluded.intersection(seen)
+        brain.indoor_occluded.intersection_update(pending)
+        brain.indoor_occluded.difference_update(seen)
+        brain.indoor_occluded.update(blocked)
         hold = SCAN_HOLD_S if stationary else INDOOR_WALK_CONFIRM_S
         for sample, since in tuple(seen.items()):
             if time - since < hold:
@@ -687,15 +740,23 @@ class EnemyAI:
                 sweep.confirm(sample, time)
             del seen[sample]
         brain.indoor_exposure = seen
+        brain.indoor_revealed.difference_update(blocked | sweep.checked)
+        brain.indoor_revealed.update(revealed.intersection(seen))
 
         confirmed = point in sweep.checked
-        if confirmed or (not visible and (point is not None or stationary or time >= brain.indoor_walk_look_at
-                                                       or revision != brain.indoor_walk_look_revision)):
-            pending = sweep.pending_for(actor.id, room)
+        newly_visible = not corners and bool(revealed.intersection(seen)) and point not in brain.indoor_revealed
+        if newly_visible or confirmed or (not visible and (point is not None or stationary
+                or time >= brain.indoor_walk_look_at or revision != brain.indoor_walk_look_revision)):
+            pending = sweep.pending_for(actor.id, room, revisit_corners=not brain.indoor_staging)
             corners = set(pending) & set(sweep.pending_corners(room))
             available = sweep.available_corners(corners, actor.id, time)
-            choice = sweep.look(actor.xy, actor.facing, room, geometry, walking=not stationary,
-                                continue_scan=confirmed, points=available if corners else pending)
+            choice = None
+            if not corners and brain.indoor_revealed:
+                choice = sweep.look(actor.xy, actor.facing, room, geometry, walking=not stationary,
+                                    points=(sample for sample in pending if sample in brain.indoor_revealed))
+            if choice is None:
+                choice = sweep.look(actor.xy, actor.facing, room, geometry, walking=not stationary,
+                                    continue_scan=confirmed, points=available if corners else pending)
             if choice is None and stationary and corners and not sweep.can_scan_here(actor.xy, corners, geometry):
                 choice = sweep.look(actor.xy, actor.facing, room, geometry, points=(
                     sample for sample in pending if sample not in corners))
@@ -719,6 +780,12 @@ class EnemyAI:
             if math.hypot(dx, dy) >= 0.15:
                 desired = math.atan2(dy, dx)
                 actor.facing = self._turn_toward(actor.facing, desired, 1 / 60, rate=INDOOR_SWEEP_TURN_RADIANS_PER_S)
+        elif brain.indoor_staging:
+            pose = sweep.entry_pose(actor.id)
+            if pose is not None:
+                self._face(actor, pose.look)
+                brain.look_point = pose.look
+                brain.look_reason = "수색 시작 위치에서 실내 주시" if stationary else "수색 시작 위치로 이동 · 실내 주시"
 
     def _pace_indoor_movement(self, actor, brain, intent, time, *, room_sweep=False, independent_look=False):
         dx, dy = intent.direction
@@ -810,28 +877,7 @@ class EnemyAI:
                                   or self.brains[actor.id].indoor_scanning(time)
                                   for actor in members):
                 continue
-            if sweep.regroup_looks:
-                if not any(self.brains[actor.id].route_failed and self.brains[actor.id].goal == sweep.regroup_slots.get(actor.id)
-                           and self.brains[actor.id].path_revision == self.world.revision for actor in members):
-                    continue
-                sweep.regroup_slots.clear()
-                sweep.regroup_looks.clear()
             if not sweep.regroup_slots:
-                poses = sweep.area.finish_poses
-                if poses and 0 < len(sweep.entry_order) <= len(poses):
-                    # 순서는 통과한 시점으로 정하고, 위치와 시선은 맵에서 지정한다.
-                    by_id = {actor.id: actor for actor in members}
-                    if any(actor.hp > 0 and actor.id not in by_id
-                           and time - sweep.sound_searchers.get(actor.id, -math.inf) < SEARCHER_ACTIVE_S
-                           for actor in actors):
-                        continue
-                    assigned = [(by_id[actor_id], pose) for actor_id, pose in zip(sweep.entry_order, poses)
-                                if actor_id in by_id]
-                    if len(assigned) == len(members) and all(nav.route(actor.xy, pose.position, allow_doors=True)
-                                                            for actor, pose in assigned):
-                        sweep.regroup_slots = {actor.id: pose.position for actor, pose in assigned}
-                        sweep.regroup_looks = {actor.id: pose.look for actor, pose in assigned}
-                        continue
                 centers = sorted(sweep.area.points, key=lambda point: (math.dist(point, sweep.anchor), point))[:10]
                 center, slots = max(((point, self._rally_slots(nav, point)) for point in centers),
                                     key=lambda entry: (min(len(entry[1]), len(members)),
@@ -1116,6 +1162,7 @@ class EnemyAI:
         intents, budget = {}, 1
         approach_looks = {}
         self._assign_roles(actors, time)
+        self._advance_entry_poses(actors, time)
         self._unblock_search(actors, time)
         self.near_count = 0
         previous_facing = {actor.id: actor.facing for actor in actors}
@@ -1199,7 +1246,10 @@ class EnemyAI:
                     brain.indoor_yield = None
                 else:
                     budget = self._move(actor, brain, intent, goal, time, budget, face=False)
-                    self._pace_indoor_movement(actor, brain, intent, time)
+                    sweep = brain.indoor if actor.state == "search" else None
+                    self._pace_indoor_movement(actor, brain, intent, time, independent_look=sweep is not None)
+                    if sweep is not None:
+                        self._look_at_indoor_samples(actor, brain, time, sweep)
                     intents[actor.id] = intent
                     continue
             incident = self.incidents.get(brain.incident)
@@ -1210,15 +1260,11 @@ class EnemyAI:
                 elif actor.id in active_sweep.regroup_slots and not actor.transport_boarding and not priority_search:
                     actor.state = "regroup"
                     goal = active_sweep.regroup_slots[actor.id]
-                    look = active_sweep.regroup_looks.get(actor.id)
                     intent.move_multiplier = INDOOR_MOVE_MULTIPLIER
-                    if math.dist(actor.xy, goal) <= (POSE_ARRIVAL_M if look is not None else REGROUP_ARRIVAL_M):
+                    if math.dist(actor.xy, goal) <= REGROUP_ARRIVAL_M:
                         goal = None
                     budget = self._move(actor, brain, intent, goal, time, budget, face=False)
-                    self._pace_indoor_movement(actor, brain, intent, time, independent_look=look is not None)
-                    if look is not None:
-                        self._face(actor, look)
-                        brain.look_point, brain.look_reason = look, "수색 완료 · 지정 방향 주시"
+                    self._pace_indoor_movement(actor, brain, intent, time)
                     intents[actor.id] = intent
                     continue
             if actor.transport_boarding and not memory.visible:
@@ -1405,7 +1451,8 @@ class EnemyAI:
                     approach_looks[actor.id] = approach_cue, sound_sweep
             else:
                 brain.indoor_speed, brain.indoor_depart_at = 0.0, None
-                brain.indoor_exposure.clear()
+                if not brain.indoor_staging:
+                    brain.indoor_exposure.clear()
             if (actor.state == "retreat" and memory.visible and any(intent.direction)
                     and brain.action in {"cover", "retreat"} and brain.suppression < 0.85
                     and weapon is not None and weapon.chambered and not weapon.reloading

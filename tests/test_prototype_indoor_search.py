@@ -59,6 +59,10 @@ class IndoorSearchTests(unittest.TestCase):
             if tick == 15:
                 screen.active = False
             ai._look_at_indoor_samples(guard, brain, tick / 60, sweep)
+            if tick == 14:
+                self.assertEqual(brain.look_point, first)
+            elif tick == 15:
+                self.assertEqual(brain.look_point, later)
 
         self.assertIn(first, sweep.checked_at)
         self.assertNotIn(later, sweep.checked)
@@ -73,6 +77,34 @@ class IndoorSearchTests(unittest.TestCase):
         for tick in range(46, 49):
             ai._look_at_indoor_samples(guard, brain, tick / 60, sweep)
         self.assertIn(later, sweep.checked_at)
+
+    def test_moving_guard_prefers_a_newly_visible_sample_while_keeping_its_route(self):
+        geometry = SpatialIndex()
+        geometry.add(Collider("screen", Rect(2.38, 1.54, 0.3, 0.36)))
+        world = SimpleNamespace(
+            data={"search_areas": {"yard": [[0, 0, 8, 6]]},
+                  "search_layouts": {"yard": {"sample_spacing": 2, "corner_first": False}}},
+            facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry),
+        )
+        area, = build_search_areas(world)
+        guard = Actor("guard", Position(1, 1))
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        far, revealed, goal = (7, 1), (5, 3), (3, 1)
+        brain.indoor = IndoorSweep(area, goal, 0, checked=set(area.points) - {far, revealed})
+        brain.indoor_target, brain.path = goal, [goal]
+
+        ai._pace_indoor_movement(guard, brain, Intent(direction=(2, 0)), 0, room_sweep=True)
+        self.assertEqual(brain.look_point, far)
+        self.assertIn(revealed, brain.indoor_occluded)
+
+        guard.position = Position(1, 0.4)
+        intent = Intent(direction=(2, 0.6))
+        ai._pace_indoor_movement(guard, brain, intent, 1 / 60, room_sweep=True)
+        self.assertEqual(brain.look_point, revealed)
+        self.assertEqual(intent.direction, (2, 0.6))
+        self.assertEqual(brain.path, [goal])
+        self.assertNotIn(revealed, brain.indoor.checked)
 
     def test_indoor_gunshot_starts_a_sweep_in_normal_play(self):
         for scene in (FACILITY_SCENE, KILLHOUSE_SCENE):
