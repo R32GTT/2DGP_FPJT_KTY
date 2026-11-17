@@ -337,6 +337,7 @@ class IndoorSweep:
     regroup_slots: dict[str, tuple[float, float]] = field(default_factory=dict)
     regroup_swaps: set[tuple[str, str]] = field(default_factory=set)
     regroup_until: float | None = None
+    regroup_retry_at: float = 0.0
     regroup_done: bool = False
     covered_cells: set[CoverageCell] = field(default_factory=set, init=False)
     pending_cells: set[CoverageCell] = field(default_factory=set, init=False)
@@ -526,6 +527,7 @@ class IndoorSweep:
         self.regroup_slots.clear()
         self.regroup_swaps.clear()
         self.regroup_until = None
+        self.regroup_retry_at = 0.0
         self.regroup_done = False
 
     def look(self, xy, facing, room, geometry, *, walking=False, continue_scan=False, points=None):

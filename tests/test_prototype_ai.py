@@ -6,10 +6,11 @@ from unittest.mock import patch
 
 from campaign.models import Position
 from prototype.actors import Actor
-from prototype.ai import EnemyAI, SearchCue
+from prototype.ai import EnemyAI, Incident, SearchCue
 from prototype.combat import Combat
 from prototype.events import EventBus
 from prototype.geometry import Collider, Rect, SpatialIndex
+from prototype.indoor_search import IndoorSweep, SearchArea
 from prototype.movement import move_actor
 from prototype.navigation import Navigation
 from prototype.simulation import PlaySimulation
@@ -33,6 +34,106 @@ def field_approach(count, y=-65, distance=15):
 
 
 class PrototypeAITests(unittest.TestCase):
+    def test_squad_updates_its_stops_when_player_steps_out_of_range(self):
+        simulation, guards = field_approach(2)
+        with patch.object(simulation.combat, "fire"):
+            for _ in range(30):
+                simulation.step()
+            simulation.player.position.x += 1
+            for _ in range(330):
+                simulation.step()
+        self.assertTrue(all(math.dist(guard.xy, simulation.player.xy) <= 13 for guard in guards))
+        self.assertGreater(abs(guards[0].xy[1] - guards[1].xy[1]), 2)
+
+    def test_squad_recovers_spread_after_leaving_a_narrow_corridor(self):
+        geometry = SpatialIndex()
+        geometry.add(Collider("north", Rect(-2, -2, 3.15, 1.55)))
+        geometry.add(Collider("south", Rect(-2, 0.45, 3.15, 1.55)))
+        bounds = Rect(-2, -10, 30, 20)
+        world = SimpleNamespace(geometry=geometry, bounds=bounds, revision=0,
+                                navigation=Navigation({}, [], geometry, bounds=bounds),
+                                door_on_ai_path=lambda *_: None)
+        spec = load_weapons()["ar_a"]
+        guards = [Actor(str(index), Position(-0.47 * index, 0), source_unit="squad", active_weapon="ar_a",
+                        loadout={"ar_a": WeaponState.ready(spec)}) for index in range(2)]
+        player = Actor("player", Position(15.5, 0), team="player")
+        ai = EnemyAI(world, guards, [[], []])
+        for frame in range(1, 140):
+            intents = ai.update(guards, player, frame / 60)
+            for guard in guards:
+                intent = intents[guard.id]
+                move_actor(guard, intent.direction, world, intent.step_dt, neighbors=guards)
+            if frame == 5:
+                plan, = ai.approaches.values()
+                self.assertFalse(any(plan.orders.values()))
+        self.assertGreater(abs(guards[0].xy[1] - guards[1].xy[1]), 1)
+
+    def test_distant_door_does_not_restart_an_investigation_approach(self):
+        simulation, guards = field_approach(2, distance=11)
+        simulation.player.hp = 0
+        simulation.events.emit("noise", 0, simulation.player, radius=15, strength=0.8, reason="gunshot")
+        for _ in range(200):
+            simulation.step()
+        plan, = simulation.ai.approaches.values()
+        self.assertTrue(all(order.passed for order in plan.orders.values()))
+        door = next(item for item in simulation.world.geometry.objects.values() if item.kind == "door")
+        center = (door.rect.x + door.rect.w / 2, door.rect.y + door.rect.h / 2)
+        self.assertGreater(math.dist(center, simulation.player.xy), 20)
+        self.assertIsNotNone(simulation.world.toggle_door(center))
+        previous = [guard.xy[0] for guard in guards]
+        for _ in range(20):
+            simulation.step()
+        self.assertTrue(all(guard.xy[0] > x for guard, x in zip(guards, previous)))
+
+    def test_regroup_provides_positions_for_every_member_of_a_large_squad(self):
+        geometry = SpatialIndex()
+        bounds = Rect(-30, -30, 60, 60)
+        world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry, bounds=bounds))
+        center = (0, 0)
+        area = SearchArea("room", (bounds,), (center,), {center: 0}, {0: (center,)}, {0: ()})
+        sweep = IndoorSweep(area, center, 0)
+        sweep.confirm(center, 0)
+        guards = [Actor(str(index), Position(15 + index * 0.5, 0)) for index in range(26)]
+        ai = EnemyAI(world, guards, [[] for _ in guards])
+        ai.incidents["search"] = Incident(0, 0, center, indoor=sweep)
+        for guard in guards:
+            ai.brains[guard.id].incident = "search"
+
+        ai._update_regroups(guards, 1)
+        self.assertEqual(len(sweep.regroup_slots), len(guards))
+        for guard in guards[:-1]:
+            guard.position = Position(*sweep.regroup_slots[guard.id])
+        ai._update_regroups(guards, 3)
+        self.assertIsNone(sweep.regroup_until)
+        guards[-1].position = Position(*sweep.regroup_slots[guards[-1].id])
+        ai._update_regroups(guards, 4)
+        ai._update_regroups(guards, 5)
+        self.assertTrue(sweep.regroup_done)
+
+    def test_navigation_rejects_a_clear_goal_outside_the_map(self):
+        nav = Navigation({}, [], SpatialIndex(), bounds=Rect(0, 0, 10, 8))
+        self.assertEqual(nav.route((9, 4), (11, 4)), [])
+        self.assertEqual(nav.route((9, 4), (9.7, 4)), [(9.7, 4)])
+
+    def test_reported_threat_can_be_used_to_check_support_without_direct_sighting(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
+        guard = Actor("guard", Position(0, 0), active_weapon="ar_a")
+        support = Actor("support", Position(1, 0), active_weapon="ar_a")
+        spec = load_weapons()["ar_a"]
+        for actor in (guard, support):
+            actor.loadout["ar_a"] = WeaponState.ready(spec)
+        ai = EnemyAI(world, [guard, support], [[], []])
+        brain, ally = ai.brains[guard.id], ai.brains[support.id]
+        brain.incident = ally.incident = "report"
+        brain.role, brain.memory.reported = "intercept", (8, 0)
+        ally.memory.visible, ally.action, ally.fired_at = True, "fire", 0.8
+
+        ai._combat_action(guard, brain, [guard, support], brain.memory.reported, 1.0)
+
+        self.assertIsNone(brain.memory.last_seen)
+        self.assertEqual(brain.action, "flank")
+
     def test_visible_squad_spreads_early_and_stops_at_distinct_positions(self):
         for count, y in ((1, -65), (2, -65), (6, -65), (2, -79.65)):
             with self.subTest(count=count, y=y):
@@ -112,21 +213,27 @@ class PrototypeAITests(unittest.TestCase):
         self.assertAlmostEqual(guard.facing, math.atan2(cue[1] - guard.xy[1], cue[0] - guard.xy[0]))
 
     def test_searchers_can_pass_an_occupied_door_in_opposite_directions(self):
-        simulation = PlaySimulation(DOOR_SCENE)
-        simulation.player.hp = 0
-        front, following = simulation.guards
-        front.position, following.position = Position(6.2, 6), Position(7.88, 6)
-        for actor, goal in ((front, (10, 6)), (following, (4, 6))):
-            brain = simulation.ai.brains[actor.id]
-            brain.incident = "door_test"
-            brain.combat_alert_until = 60
-            brain.priority_cue = SearchCue("seen", goal, 0)
+        for start, opposite in ((6.2, 7.88), (6.8, 7.48)):
+            with self.subTest(start=start, opposite=opposite):
+                simulation = PlaySimulation(DOOR_SCENE)
+                simulation.player.hp = 0
+                front, following = simulation.guards
+                front.position, following.position = Position(start, 6), Position(opposite, 6)
+                for actor, goal in ((front, (10, 6)), (following, (4, 6))):
+                    brain = simulation.ai.brains[actor.id]
+                    brain.incident = "door_test"
+                    brain.combat_alert_until = 60
+                    brain.priority_cue = SearchCue("seen", goal, 0)
 
-        while simulation.time < 5 and (front.xy[0] < 9 or following.xy[0] > 5):
-            simulation.step()
+                passed = set()
+                while simulation.time < 5 and len(passed) < 2:
+                    simulation.step()
+                    if front.xy[0] >= 9:
+                        passed.add(front.id)
+                    if following.xy[0] <= 5:
+                        passed.add(following.id)
 
-        self.assertGreaterEqual(front.xy[0], 9)
-        self.assertLessEqual(following.xy[0], 5)
+                self.assertEqual(passed, {front.id, following.id})
 
     def test_investigators_stack_along_the_wall_then_pass(self):
         simulation = PlaySimulation(DOOR_SCENE, stack_drill=True)

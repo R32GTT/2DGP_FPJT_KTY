@@ -32,6 +32,7 @@ class DoorTraffic:
         self.requested_at: dict[tuple[str, str], float] = {}
         self.stacks: dict[str, Stack] = {}
         self.staged: dict[tuple[str, str], tuple] = {}
+        self.yielding: dict[str, tuple[str, str]] = {}
 
     @staticmethod
     def _ticket(actor, brain):
@@ -144,6 +145,25 @@ class DoorTraffic:
             stack.ready_at = now + 0.25
         return set(valid)
 
+    @staticmethod
+    def _step_aside(world, actor, intent, layout, side):
+        nav = world.navigation
+        along = actor.xy[layout.along] - layout.center[layout.along]
+        setback = layout.half_depth + 2 * actor.radius + 0.2
+        slots = (layout.waiting_position(side, flank, 0, actor.radius) for flank in (-1, 1))
+        points = [*sorted(slots, key=lambda point: math.dist(actor.xy, point)), layout.point(along, side * setback)]
+        for point in points:
+            if not nav.walkable(point) or not nav.clear(actor.xy, point, clearance=actor.radius):
+                continue
+            distance = math.dist(actor.xy, point)
+            if distance > 0.06:
+                speed = min(actor.speed, 1.7)
+                intent.direction = (point[0] - actor.xy[0], point[1] - actor.xy[1])
+                intent.step_dt = min(1 / 60, distance / speed)
+                intent.move_multiplier = speed / actor.speed
+                intent.move_straight = True
+            break
+
     def update(self, world, actors, brains, intents, now, *, previous_facing):
         requests = {}
         started = {}
@@ -193,7 +213,7 @@ class DoorTraffic:
                                   for actor, distance in crossing)
                 staged[door_id] = self._update_stack(door_id, by_id, brains, intents, tickets, now,
                                                      interrupted=interrupted, previous_facing=previous_facing)
-        next_passages = {}
+        next_passages, next_yielding = {}, {}
         for door_id, contenders in requests.items():
             staged_actors = staged.get(door_id, set())
             contenders = [(actor, distance) for actor, distance in contenders if actor.id not in staged_actors]
@@ -224,10 +244,28 @@ class DoorTraffic:
                 prior = Passage(actor.id, actor.xy, now)
             next_passages[door_id] = prior
 
+            owner_brain = brains[prior.actor_id]
+            yielded = self.yielding.get(door_id)
+            waiter_id = yielded[1] if yielded is not None and yielded[0] == prior.actor_id else owner_brain.blocked_by
+            if waiter_id in owners and waiter_id != prior.actor_id:
+                layout = DoorLayout.from_rect(world.geometry.objects[door_id].rect)
+                across = layout.across
+                waiter = brains[waiter_id]
+                owner_goal = owner_brain.goal
+                destination_side = owner_goal[across] - layout.center[across] if owner_goal is not None else 0
+                crossing_opposite = (waiter.goal is not None
+                                     and destination_side * (waiter.goal[across] - layout.center[across]) < 0)
+                if destination_side and (crossing_opposite or waiter.indoor_yield is not None):
+                    next_yielding[door_id] = prior.actor_id, waiter_id
+
             for actor, _ in contenders:
                 if actor.id != prior.actor_id:
                     brain, intent = brains[actor.id], intents[actor.id]
                     brain.door_wait = door_id
                     brain.progress_point, brain.progress_at = actor.xy, now
                     intent.direction, intent.open_door = (0, 0), False
+                    if next_yielding.get(door_id) == (prior.actor_id, actor.id):
+                        side = -1 if destination_side < 0 else 1
+                        self._step_aside(world, actor, intent, layout, side)
         self.passages = next_passages
+        self.yielding = next_yielding

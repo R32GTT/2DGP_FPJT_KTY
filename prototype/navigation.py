@@ -107,6 +107,8 @@ class Navigation:
         return found
 
     def route(self, start, goal, *, allow_doors=False):
+        if not self.walkable(goal, allow_doors):
+            return []
         if self.clear(start, goal, ignore_doors=allow_doors):
             return [goal]
         if math.dist(start, goal) <= 32:

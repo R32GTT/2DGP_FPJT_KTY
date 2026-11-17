@@ -43,6 +43,7 @@ COVERAGE_PROBE_BUDGET = 32
 COVERAGE_GOALS_PER_SCAN = 3
 ADVANCE_DISTANCE = 13.0
 INVESTIGATION_SPREAD_DISTANCE = 4.0
+APPROACH_RETRY_SECONDS = 0.4
 PEEK_SUPPRESSION_LIMIT = 0.4
 PEEK_RECOVERY_SECONDS = 1.35
 
@@ -368,14 +369,14 @@ class EnemyAI:
             for actor in available:
                 self._set_role(self.brains[actor.id], "hold")
 
-    def _has_support(self, actor, brain, actors, time):
+    def _has_support(self, actor, brain, actors, threat, time):
         return any(other.id != actor.id and other.hp > 0
                    and (ally := self.brains[other.id]).incident == brain.incident
                    and ally.action in {"advance", "fire"} and ally.visible
                    and time - ally.fired_at < 1.5
                    and other.weapon is not None and other.weapon.chambered and not other.weapon.reloading
                    and ally.suppression < 0.55 and math.dist(other.xy, actor.xy) <= 18
-                   and math.dist(other.xy, brain.memory.last_seen) <= other.weapon.spec.range_m
+                   and math.dist(other.xy, threat) <= other.weapon.spec.range_m
                    for other in actors)
 
     def _combat_action(self, actor, brain, actors, threat, time):
@@ -398,7 +399,7 @@ class EnemyAI:
 
         elif (time < brain.action_until and not route_failed and not brain.role_changed
                 and (brain.action != "flank" or (math.dist(actor.xy, brain.action_goal) > 0.35
-                                                and self._has_support(actor, brain, actors, time)))
+                                                and self._has_support(actor, brain, actors, threat, time)))
                 and (not urgent or safe_action) and (not needs_reload or safe_action or brain.action == "reload")):
             return
         brain.role_changed = False
@@ -432,7 +433,7 @@ class EnemyAI:
             return
         if distance <= 3 or brain.role not in {"intercept", "sweep"}:
             return
-        if not self._has_support(actor, brain, actors, time):
+        if not self._has_support(actor, brain, actors, threat, time):
             return
         dx, dy = threat[0] - actor.position.x, threat[1] - actor.position.y
         nav = self.world.navigation
@@ -1015,21 +1016,39 @@ class EnemyAI:
                                   or self.brains[actor.id].indoor_scanning(time)
                                   for actor in members):
                 continue
-            if not sweep.regroup_slots:
+            roster = {actor.id for actor in members}
+            sweep.regroup_slots = {actor_id: point for actor_id, point in sweep.regroup_slots.items()
+                                   if actor_id in roster and nav.walkable(point)}
+            for actor in members:
+                brain = self.brains[actor.id]
+                if brain.route_failed and brain.path_revision == self.world.revision and brain.goal is not None:
+                    if sweep.regroup_slots.get(actor.id) == brain.goal:
+                        sweep.regroup_slots.pop(actor.id)
+            if len(sweep.regroup_slots) < len(members) and time >= sweep.regroup_retry_at:
+                sweep.regroup_retry_at = time + 0.5
                 centers = sorted(sweep.area.points, key=lambda point: (math.dist(point, sweep.anchor), point))[:10]
-                center, slots = max(((point, self._rally_slots(nav, point)) for point in centers),
+                floors = sweep.area.floors
+                extent = math.hypot(max(rect.right for rect in floors) - min(rect.x for rect in floors),
+                                    max(rect.bottom for rect in floors) - min(rect.y for rect in floors))
+                clearance = 2 * max(actor.radius for actor in members) + 0.1
+                spacing = max(0.9, clearance + 0.06)
+                center, slots = max(((point, self._rally_slots(nav, point, extent=extent, floors=floors,
+                                                             spacing=spacing, required=len(members))) for point in centers),
                                     key=lambda entry: (min(len(entry[1]), len(members)),
                                                        -math.dist(entry[0], sweep.anchor)))
+                slots = [slot for slot in slots if all(math.dist(slot, taken) >= clearance
+                                                       for taken in sweep.regroup_slots.values())]
                 # 같은 집결 좌표를 공유하면 몸체 충돌로 완료 판정에 도달하지 못한다.
-                for actor in sorted(members, key=lambda item: (math.dist(item.xy, center), item.id)):
+                remaining = (actor for actor in members if actor.id not in sweep.regroup_slots)
+                for actor in sorted(remaining, key=lambda item: (math.dist(item.xy, center), item.id)):
                     for slot in sorted(slots, key=lambda point: (math.dist(actor.xy, point), point)):
                         if nav.route(actor.xy, slot, allow_doors=True):
                             sweep.regroup_slots[actor.id] = slot
                             slots.remove(slot)
                             break
             self._unblock_regroup(sweep, members)
-            arrived = all(actor.id not in sweep.regroup_slots
-                          or math.dist(actor.xy, sweep.regroup_slots[actor.id]) <= REGROUP_ARRIVAL_M for actor in members)
+            arrived = all(actor.id in sweep.regroup_slots
+                          and math.dist(actor.xy, sweep.regroup_slots[actor.id]) <= REGROUP_ARRIVAL_M for actor in members)
             if not arrived:
                 sweep.regroup_until = None
             elif sweep.regroup_until is None:
@@ -1081,7 +1100,7 @@ class EnemyAI:
                 continue
             if other.investigating_priority and not brain.investigating_priority:
                 continue
-            if other.door_stack is not None:
+            if brain.door_wait or other.door_wait or other.door_stack is not None:
                 continue
             if other.path and not other.door_wait and (other.blocked_by != actor.id or actor.id > blocker.id):
                 continue
@@ -1103,14 +1122,19 @@ class EnemyAI:
                 break
 
     @staticmethod
-    def _rally_slots(nav, center):
-        slots = [center]
-        for radius in (0.9, 1.8, 2.7):
-            for index in range(8):
-                angle = index * math.tau / 8
+    def _rally_slots(nav, center, *, extent=2.7, floors=(), spacing=0.9, required=0):
+        slots = [center] if not required or nav.walkable(center) else []
+        for ring in range(1, math.floor(extent / spacing + 1e-8) + 1):
+            radius = ring * spacing
+            samples = max(8, int(math.tau * ring)) if required else 8
+            for index in range(samples):
+                angle = index * math.tau / samples
                 point = center[0] + radius * math.cos(angle), center[1] + radius * math.sin(angle)
-                if nav.walkable(point) and nav.clear(center, point):
+                if (not floors or any(rect.segment_entry(point, point) is not None for rect in floors)) and (
+                        nav.walkable(point) and nav.clear(center, point)):
                     slots.append(point)
+            if required and len(slots) >= required:
+                break
         return slots
 
     def _search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False, direct=False):
@@ -1215,7 +1239,7 @@ class EnemyAI:
             return point
         return None
 
-    def _move(self, actor, brain, intent, goal, time, budget, *, face=True, approximate=False):
+    def _move(self, actor, brain, intent, goal, time, budget, *, face=True, approximate=False, precise=False):
         brain.pending_goal = None
         if goal is None:
             brain.path.clear()
@@ -1223,7 +1247,8 @@ class EnemyAI:
             brain.progress_point = None
             return budget
         nav = self.world.navigation
-        changed = brain.goal is None or math.dist(brain.goal, goal) > (0.9 if actor.state == "combat" else 0.15)
+        tolerance = 0.045 if precise else 0.9 if actor.state == "combat" else 0.15
+        changed = brain.goal is None or math.dist(brain.goal, goal) > tolerance
         invalid = brain.path_revision != self.world.revision
         relocated = brain.route_origin is not None and math.dist(actor.xy, brain.route_origin) > 2
         if relocated:
@@ -1299,6 +1324,7 @@ class EnemyAI:
 
     def _move_approaches(self, groups, time, budget):
         active = {}
+        nav, revision = self.world.navigation, self.world.revision
         for key, requests in groups.items():
             investigating = key[-1] != "advance"
             members = [request.actor for request in requests]
@@ -1306,19 +1332,33 @@ class EnemyAI:
                 (request.brain.memory for request in requests), key=lambda memory: memory.seen_at).last_seen
             shared_target = not investigating or all(math.dist(move.goal, target) <= 1.5 for move in requests)
             plan = self.approaches.get(key) if shared_target else None
-            if plan is not None and (time >= plan.retry_at or not plan.matches(target, self.world.revision, members)):
+            if plan is not None and (not plan.matches(target) or (
+                    not investigating and math.dist(plan.target, target) > 0.045 and any(
+                        (order := plan.orders.get(actor.id)) is not None and order.waypoint is None
+                        and math.dist(actor.xy, order.destination) <= 0.12
+                        and math.dist(actor.xy, target) > ADVANCE_DISTANCE for actor in members))):
                 plan = None
-            if plan is None and shared_target and len(members) > 1:
+            if plan is not None and plan.revision != revision:
+                for actor in members:
+                    order = plan.orders.get(actor.id)
+                    if order is not None and not order.reachable(nav, actor.xy, plan.target,
+                                                                  investigating=investigating):
+                        plan.orders[actor.id] = None
+                        plan.retry_at = time
+                plan.revision = revision
+            if len(members) > 1 and shared_target and (plan is None or time >= plan.retry_at
+                                                       or any(actor.id not in plan.orders for actor in members)):
                 distance = INVESTIGATION_SPREAD_DISTANCE if investigating else ADVANCE_DISTANCE - 0.05
-                orders = assign_approach(self.world.navigation, members, target, distance,
-                                         investigating=investigating)
-                retry_at = time + 1.0 if investigating and not any(orders.values()) else math.inf
-                plan = SquadApproach(target, self.world.revision, orders, retry_at)
+                anchor = plan.target if plan is not None else target
+                orders = assign_approach(nav, members, anchor, distance, investigating=investigating,
+                                         previous=plan.orders if plan is not None else None)
+                retry_at = time + APPROACH_RETRY_SECONDS if any(order is None for order in orders.values()) else math.inf
+                plan = SquadApproach(anchor, revision, orders, retry_at)
             if plan is not None:
                 active[key] = plan
             for move in requests:
                 actor, brain, intent = move.actor, move.brain, move.intent
-                order = plan.orders[actor.id] if plan is not None else None
+                order = plan.orders.get(actor.id) if plan is not None else None
                 goal = move.goal
                 if order is not None and not order.passed:
                     goal = order.goal_from(actor.xy)
@@ -1327,7 +1367,8 @@ class EnemyAI:
                         goal = move.goal
                 budget = self._move(actor, brain, intent, goal, time, budget,
                                     face=investigating and not move.priority,
-                                    approximate=move.approximate and goal == move.goal)
+                                    approximate=move.approximate and goal == move.goal,
+                                    precise=order is not None and not order.passed)
                 if move.priority:
                     self._pace_indoor_movement(actor, brain, intent, time, independent_look=True)
         self.approaches = active
