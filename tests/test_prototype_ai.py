@@ -120,6 +120,7 @@ class PrototypeAITests(unittest.TestCase):
                 self.assertEqual(len(set(stack.slots.values())), left + right)
                 door = simulation.world.geometry.objects["shared_door"]
                 area = simulation.world.search_areas[0]
+                self.assertGreaterEqual(len(area.points), 2 * 28)
                 corners = set().union(*area.room_corners.values())
                 lead = simulation.guards[0]
                 first_looks = {}

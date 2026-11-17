@@ -146,6 +146,12 @@ def build_search_areas(world):
                              rect.y + (row + 0.5) * rect.h / lines)
                     if world.navigation.walkable(point):
                         points.add(point)
+        authored_corners = tuple(tuple(point) for point in layout.get("corner_points", ()))
+        for point in authored_corners:
+            if (not any(rect.segment_entry(point, point) is not None for rect in floors)
+                    or not world.navigation.walkable(point)):
+                raise ValueError(f"수색 코너 위치에 접근할 수 없음: {key} {point}")
+            points.add(point)
         if points:
             ordered = tuple(sorted(points))
             rooms = _assign_rooms(world, points, spacing)
@@ -154,7 +160,10 @@ def build_search_areas(world):
                 by_room[rooms[point]].append(point)
             room_points = {room: tuple(samples) for room, samples in by_room.items()}
             corner_first = layout.get("corner_first", True)
-            room_corners = {room: _sample_corners(samples) if corner_first else ()
+            corners_by_room = defaultdict(list)
+            for point in dict.fromkeys(authored_corners):
+                corners_by_room[rooms[point]].append(point)
+            room_corners = {room: (tuple(corners_by_room[room]) or _sample_corners(samples)) if corner_first else ()
                             for room, samples in room_points.items()}
             observations = {}
             for row in layout.get("observation_points", ()):
