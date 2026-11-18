@@ -11,11 +11,11 @@ from .world import DEFAULT_SCENE
 
 def run_window(simulation, *, frames=0):
     import pico2d
-    from .camera import PlayCamera
+    from .camera import CANVAS_SIZE, PlayCamera
     from .controls import Controls
     from .rendering import Renderer
 
-    pico2d.open_canvas(1280, 720, sync=True)
+    pico2d.open_canvas(*CANVAS_SIZE, sync=True)
     renderer = None
     try:
         renderer = Renderer(simulation.world)

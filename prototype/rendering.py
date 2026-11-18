@@ -8,6 +8,7 @@ from time import perf_counter
 import pico2d as pico
 
 from .geometry import Rect
+from .camera import CANVAS_SIZE
 from .hud import HUD
 from .map_images import MapImages
 from .perception import SOUND_MEMORY_SECONDS
@@ -27,6 +28,9 @@ class Renderer:
         self.backend.SDL_SetWindowTitle(self.backend.window, b"REVENANT : L.O.S.T / Field Prototype")
         self.backend.SDL_SetRenderDrawBlendMode(self.backend.renderer, self.backend.SDL_BLENDMODE_BLEND)
         self.backend.SDL_SetHint(b"SDL_RENDER_SCALE_QUALITY", b"0")
+        self.backend.SDL_SetWindowResizable(self.backend.window, self.backend.SDL_TRUE)
+        # SDL이 출력과 마우스 이벤트를 같은 논리 좌표로 변환한다.
+        self.backend.SDL_RenderSetLogicalSize(self.backend.renderer, *CANVAS_SIZE)
         self.backend.SDL_ShowCursor(self.backend.SDL_DISABLE)
         self.images, self.missing = {}, []
         self.map_images = MapImages(self.backend)
@@ -93,7 +97,8 @@ class Renderer:
         shake_x, shake_y = simulation.feedback.offset
         view.offset_x += shake_x
         view.offset_y += shake_y
-        pico.clear_canvas()
+        self.backend.SDL_SetRenderDrawColor(self.backend.renderer, 18, 28, 29, 255)
+        self.backend.SDL_RenderClear(self.backend.renderer)
         pico.draw_rectangle(0, 0, view.width - 1, view.height - 1, 18, 28, 29, filled=True)
         world = simulation.world
         visible_layers = world.visible_layers(view.viewport(1))

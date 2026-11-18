@@ -3,8 +3,12 @@
 from .geometry import Rect
 
 
+CANVAS_SIZE = (1280, 720)
+PIXELS_PER_METER = 96
+
+
 class PlayCamera:
-    def __init__(self, width=1280, height=720, zoom=1.0):
+    def __init__(self, width=CANVAS_SIZE[0], height=CANVAS_SIZE[1], zoom=1.0):
         self.width, self.height = width, height
         self.offset_x, self.offset_y = 0.0, 0.0
         self.set_zoom(zoom)
@@ -17,10 +21,10 @@ class PlayCamera:
 
     @property
     def magnification(self):
-        return self.scale / 64
+        return self.scale / PIXELS_PER_METER
 
     def set_zoom(self, zoom):
-        self.scale = 64 * max(0.5, min(4.0, zoom))
+        self.scale = PIXELS_PER_METER * max(0.5, min(4.0, zoom))
 
     def follow(self, position, mouse=None):
         ahead_x = max(-2, min(2, (mouse[0] - self.width / 2) / self.scale * 0.2)) if mouse else 0
