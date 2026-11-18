@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from py_trees.common import Status
 import math
 
 from .actors import Actor
@@ -23,12 +24,6 @@ class MoveStatus(Enum):
     WAITING = "waiting"
     ARRIVED = "arrived"
     UNREACHABLE = "unreachable"
-
-
-class ScanPhase(Enum):
-    IDLE = "idle"
-    SCANNING = "scanning"
-    FINISHED = "finished"
 
 
 @dataclass(frozen=True)
@@ -54,7 +49,6 @@ class MotionState:
     door_wait: str = ""
     door_stack: tuple[float, float] | None = None
     speed: float = 0.0
-    depart_at: float | None = None
     heading: float | None = None
     yield_point: tuple | None = None
     yield_retry_at: float = 0.0
@@ -116,6 +110,7 @@ class CombatState:
 
 @dataclass
 class LookState:
+    sample: tuple | None = None
     watch_point: tuple | None = None
     watch_cue: tuple | None = None
     watch_at: float = 0.0
@@ -127,23 +122,23 @@ class LookState:
 @dataclass
 class ScanState:
     walk_look: tuple | None = None
-    walk_look_at: float = 0.0
-    walk_look_revision: int = -1
     walk_look_started: bool = False
     exposure: dict[tuple[float, float], float] = field(default_factory=dict)
     occluded: set[tuple[float, float]] = field(default_factory=set)
-    revealed: set[tuple[float, float]] = field(default_factory=set)
+    urgent_focus: bool = False
     sample_at: float = -math.inf
 
 
 @dataclass
-class IndoorState:
+class InvestigationState:
     sweep: IndoorSweep | None = None
     staging: bool = False
     target: tuple | None = None
     sound_cue: SearchCue | None = None
     blocked: dict = field(default_factory=dict)
-    phase: ScanPhase = ScanPhase.IDLE
+    execution: object = None
+    cue: tuple | None = None
+    points: list = field(default_factory=list)
     scan_origin: tuple | None = None
     sample_stationary: bool = False
     observation: IndoorSweep | None = None
@@ -152,7 +147,7 @@ class IndoorState:
 
     @property
     def scanning(self):
-        return self.phase is ScanPhase.SCANNING
+        return self.execution is not None and self.execution.children[1].status is Status.RUNNING
 
 
 @dataclass
@@ -167,22 +162,17 @@ class SearchState:
     next_sweep_at: float = 0.0
     sweep_pass: int = 0
     cover: tuple | None = None
-    cue: tuple | None = None
     priority_cue: SearchCue | None = None
     priority_checked: bool = False
     failed_clue: FailedClue | None = None
-    points: list = field(default_factory=list)
-    target: tuple | None = None
     arrival: tuple | None = None
     reported_check: SearchCue | None = None
     checked: set = field(default_factory=set)
-    scan_until: float = 0.0
-    scan_angle: float = 0.0
     look_until: float = 0.0
     checked_sound_at: float = -1000.0
     sound_response: str = ""
     sound_response_at: float = -1000.0
-    indoor: IndoorState = field(default_factory=IndoorState)
+    task: InvestigationState = field(default_factory=InvestigationState)
 
     @property
     def investigating_priority(self):
@@ -211,8 +201,10 @@ class Brain:
         return self.memory.visible
 
     def clear_contact(self):
+        if self.search.task.execution is not None:
+            self.search.task.execution.stop(Status.INVALID)
         self.memory.last_seen = self.memory.reported = None
-        self.search.cue = self.search.target = self.search.cover = self.search.arrival = None
+        self.search.task.cue = self.search.task.target = self.search.cover = self.search.arrival = None
         self.search.priority_cue = None
         self.combat.peek_home = self.combat.incoming = self.combat.formation = self.search.reported_check = None
 
@@ -237,7 +229,7 @@ class Situation:
         memory, search, combat = brain.memory, brain.search, brain.combat
         self.investigating = (memory.last_sound is not None and memory.sound_at > search.checked_sound_at
             and (search.failed_clue is None or search.failed_clue.cue != SearchCue("sound", memory.last_sound, memory.sound_at))
-            and (search.indoor.sound_cue is not None or time - memory.sound_heard_at < SOUND_MEMORY_SECONDS)
+            and (search.task.sound_cue is not None or time - memory.sound_heard_at < SOUND_MEMORY_SECONDS)
             and (memory.suspicion >= 0.3 or actor.state in {"alert", "search", "regroup"}))
         self.confirmed = time < combat.combat_alert_until
         self.incoming = combat.incoming if time - combat.incoming_at < (12 if self.confirmed else 4) else None

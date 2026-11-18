@@ -43,7 +43,7 @@ class DoorTraffic:
                 party = ("sound", brain.search.priority_cue.at)
             elif brain.search.investigating_priority:
                 party = brain.incident or ("cue", brain.search.priority_cue)
-            elif brain.search.cue and brain.search.cue[1] == brain.memory.last_sound:
+            elif brain.search.task.cue and brain.search.task.cue[0][1] == brain.memory.last_sound:
                 party = ("sound", brain.memory.sound_at)
             else:
                 party = brain.incident
@@ -118,7 +118,7 @@ class DoorTraffic:
                 brain, intent = brains[actor_id], intents[actor_id]
                 # 대기 위치에서 원래 목적지까지 이어지는 경로를 다시 구한다.
                 brain.motion.invalidate()
-                brain.motion.speed, brain.motion.depart_at = 0.0, None
+                brain.motion.speed = 0.0
                 intent.direction, intent.open_door = (0, 0), False
             return set(valid)
 
@@ -129,8 +129,8 @@ class DoorTraffic:
             look_x, look_y = stack.looks[actor_id]
             brain.look.point, brain.look.reason = (look_x, look_y), "출입구 주시"
             x, y = actor.xy
-            actor.facing = math.atan2(look_y - y, look_x - x)
-            angle_error = abs(math.remainder(actor.facing - previous_facing[actor_id], math.tau))
+            desired = math.atan2(look_y - y, look_x - x)
+            angle_error = abs(math.remainder(desired - previous_facing[actor_id], math.tau))
             brain.motion.progress_point, brain.motion.progress_at = actor.xy, now
             brain.motion.speed = 0.0
             intent.open_door, intent.move_straight = False, True

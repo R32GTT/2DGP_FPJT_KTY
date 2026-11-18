@@ -97,7 +97,7 @@ class MotionController:
             return budget
         point = motion.path[0]
         if request.face:
-            face(actor, point)
+            brain.look.point, brain.look.reason = point, "진행 방향 확인"
             intent.face_path = True
         intent.direction = point[0] - actor.position.x, point[1] - actor.position.y
         intent.step_dt = min(intent.step_dt, math.hypot(*intent.direction) / (actor.speed * intent.move_multiplier))

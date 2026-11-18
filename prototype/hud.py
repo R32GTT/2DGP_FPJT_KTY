@@ -8,7 +8,6 @@ from time import perf_counter
 import pico2d as pico
 
 from campaign.viewmodel import world_clock
-from .indoor_search import SEARCHER_ACTIVE_S
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
 
@@ -81,10 +80,8 @@ class HUD:
             if time < brain.combat.combat_alert_until:
                 state += f" · 경계 {math.ceil(brain.combat.combat_alert_until - time)}초"
             route = "목표 없음"
-            if brain.search.indoor.scanning:
+            if brain.search.task.scanning:
                 route = "바라보는 방향 확인"
-            elif time < brain.search.scan_until:
-                route = "주변 관찰"
             elif (actor.state == "retreat" and brain.combat.action == "cover" and brain.combat.action_goal is not None
                   and math.dist(actor.xy, brain.combat.action_goal) <= 0.3):
                 x, y = brain.combat.action_goal
@@ -114,8 +111,8 @@ class HUD:
             self.label(f"ai_cue/{index}", f"{cue}   의심 {memory.suspicion:.2f} · 제압 {brain.combat.suppression:.2f}", 13)
             self.label(f"ai_route/{index}", route, 13)
             sound = SOUND_RESPONSES.get(brain.search.sound_response, "") if time - brain.search.sound_response_at < 5 else ""
-            if brain.search.indoor.sweep is not None and actor.state in {"search", "combat_guard"}:
-                sweep = brain.search.indoor.sweep
+            if brain.search.task.sweep is not None and actor.state in {"search", "combat_guard"}:
+                sweep = brain.search.task.sweep
                 sound = f"실내 수색 {len(sweep.checked)}/{len(sweep.area.points)} 지점 확인"
             if brain.look.reason:
                 focus = brain.look.point
@@ -410,11 +407,11 @@ class HUD:
                 observers = []
                 for actor in simulation.guards:
                     brain = simulation.ai.brains[actor.id]
-                    active = simulation.time - sweep.sound_searchers.get(actor.id, -math.inf) < SEARCHER_ACTIVE_S
-                    observing = brain.search.indoor.sweep is sweep and actor.state in {"search", "regroup", "combat_guard"}
+                    active = brain.look.sample is not None and brain.look.sample[0] is sweep
+                    observing = brain.search.task.sweep is sweep and actor.state in {"search", "regroup", "combat_guard"}
                     if actor.hp > 0 and (active or observing):
-                        stationary = (brain.search.indoor.sample_stationary if brain.search.indoor.scan.sample_at == simulation.time
-                                      else brain.search.indoor.scanning)
+                        stationary = (brain.search.task.sample_stationary if brain.search.task.scan.sample_at == simulation.time
+                                      else brain.search.task.scanning)
                         observers.append((actor.xy, actor.facing, stationary))
                 visible, blocked = sweep.pending_view(observers, world.geometry, samples=samples)
             checked_count += len(checked)

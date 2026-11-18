@@ -17,8 +17,6 @@ OBSERVATION_SAMPLE_LIMIT = 32
 SCAN_HOLD_S = 0.18
 SCAN_HALF_CONE = math.radians(45)
 SCAN_CONE_COS = math.cos(SCAN_HALF_CONE)
-CORNER_SHARE_WINDOW_S = 1.5
-SEARCHER_ACTIVE_S = 0.2
 
 
 @dataclass(frozen=True)
@@ -36,7 +34,6 @@ class SearchArea:
     rooms: dict[tuple[float, float], int]
     room_points: dict[int, tuple[tuple[float, float], ...]]
     room_corners: dict[int, tuple[tuple[float, float], ...]]
-    corner_axis: int | None = None
     entry_poses: tuple[SearchPose, ...] = ()
     observations: dict[tuple[float, float], int] = field(default_factory=dict)
 
@@ -189,7 +186,7 @@ def build_search_areas(world):
                     raise ValueError(f"수색 시작 위치에 접근할 수 없음: {key} {position}")
                 poses.append(SearchPose(position, tuple(row["look"]), rooms[nearest]))
             result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners,
-                                     corner_axis=layout.get("corner_axis"), entry_poses=tuple(poses),
+                                     entry_poses=tuple(poses),
                                      observations=observations))
     return tuple(result)
 
@@ -213,7 +210,6 @@ class IndoorSweep(Reservations):
     claims: dict = field(default_factory=dict)
     corner_claims: dict[str, tuple[tuple[float, float], float]] = field(default_factory=dict)
     corner_checks: dict[tuple[float, float], tuple[str, float]] = field(default_factory=dict)
-    sound_searchers: dict[str, float] = field(default_factory=dict)
     entry_order: list[str] = field(default_factory=list)
     observed_from: dict = field(default_factory=dict)
     regroup_slots: dict[str, tuple[float, float]] = field(default_factory=dict)
@@ -268,28 +264,7 @@ class IndoorSweep(Reservations):
 
     def available_corners(self, corners, actor_id, time):
         claimed = {p for owner, (p, until) in self.corner_claims.items() if owner != actor_id and time < until}
-        available = set(corners) - claimed
-        if any(owner != actor_id and time - at < SEARCHER_ACTIVE_S for owner, at in self.sound_searchers.items()):
-            for room in {self.area.rooms[p] for p in available}:
-                samples = self.area.room_corners[room]
-                checks = [(p, owner, at) for p, (owner, at) in self.corner_checks.items() if p in samples]
-                marks = checks or [(p, owner, time) for owner, (p, until) in self.corner_claims.items() if p in samples and time < until]
-                if not marks:
-                    continue
-                first, leader, at = marks[0]
-                if ((checks and (time - at >= CORNER_SHARE_WINDOW_S or any(owner != leader for _, owner, _ in checks)))
-                        or (not checks and leader == actor_id)):
-                    continue
-                axis = self.area.corner_axis
-                if axis is None:
-                    axis = max(range(2), key=lambda i: max(p[i] for p in samples) - min(p[i] for p in samples))
-                middle = (min(p[axis] for p in samples) + max(p[axis] for p in samples)) / 2
-                opposite = {p for p in samples if (p[axis] - middle) * (first[axis] - middle) < 0}
-                if actor_id == leader:
-                    available.difference_update(samples)
-                elif available & opposite:
-                    available.difference_update(set(samples) - opposite)
-        return tuple(p for p in corners if p in available)
+        return tuple(p for p in corners if p not in claimed)
 
     def confirm_corner(self, point, actor_id, time):
         self.confirm(point, time)

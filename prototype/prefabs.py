@@ -81,6 +81,4 @@ def instantiate(row, definition):
             "entry_poses": [{"position": placement.point(pose["position"]), "look": placement.point(pose["look"])}
                             for pose in layout.get("entry_poses", ())],
         }
-        if layout.get("corner_axis") is not None:
-            facility["search_layout"]["corner_axis"] = (layout["corner_axis"] + placement.turns) % 2
     return layers, colliders, nodes, edges, facility

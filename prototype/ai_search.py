@@ -2,10 +2,13 @@
 
 import math
 
-from .ai_state import SearchCue, Incident, ScanState, FailedClue, ScanPhase, IndoorState
+from py_trees.behaviour import Behaviour
+from py_trees.common import Status
+from py_trees.composites import Sequence
+
+from .ai_state import SearchCue, Incident, ScanState, FailedClue, InvestigationState
 from .geometry import Rect
 from .indoor_search import (IndoorSweep, SCAN_HOLD_S, SCAN_RANGE_M, STATIONARY_SCAN_RANGE_M, choose_look, sample_views)
-from .ai_motion import face, turn_toward
 
 from . import ai_config as config
 
@@ -18,7 +21,7 @@ class SearchController:
         failure = brain.search.failed_clue
         if failure is not None and (failure.revision != self.world.revision or math.dist(actor.xy, failure.origin) > 1):
             brain.search.failed_clue = None
-            brain.search.cue = None
+            brain.search.task.cue = None
 
     def finish_investigation(self, actor, brain, cue, time, verified):
         search = brain.search
@@ -49,18 +52,14 @@ class SearchController:
             brain.combat.combat_alert_until = config.COMBAT_ALERT_SECONDS
 
     def interrupt_search(self, actor, brain):
-        if brain.search.indoor.sweep is not None:
-            brain.search.indoor.sweep.release(actor.id)
-        incident = self.incidents.get(brain.incident)
-        if incident is not None:
-            incident.release(actor.id)
-        brain.search.indoor = IndoorState(sweep=brain.search.indoor.sweep, blocked=brain.search.indoor.blocked)
+        if brain.search.task.execution is not None:
+            brain.search.task.execution.stop(Status.INVALID)
+        brain.search.task = InvestigationState(sweep=brain.search.task.sweep, blocked=brain.search.task.blocked)
         brain.motion.yield_point = None
-        brain.search.scan_until = 0.0
         brain.motion.heading = None
         brain.look.turn_rate = 0.0
-        brain.motion.speed, brain.motion.depart_at = 0.0, None
-        brain.search.cue = brain.search.target = brain.search.cover = None
+        brain.motion.speed = 0.0
+        brain.search.task.cue = brain.search.task.target = brain.search.cover = None
         brain.search.arrival = brain.search.reported_check = None
         brain.search.next_sweep_at = 0.0
         brain.motion.cancel()
@@ -90,8 +89,8 @@ class SearchController:
                 incident.indoor.reset_regroup()
 
     def indoor_sound_sweep(self, actor, brain, cue, time):
-        if brain.search.indoor.sound_cue == cue and brain.search.indoor.sweep is not None:
-            return brain.search.indoor.sweep
+        if brain.search.task.sound_cue == cue and brain.search.task.sweep is not None:
+            return brain.search.task.sweep
         if cue.kind != "sound":
             return None
         area = self.world.indoor_search_area(cue.point)
@@ -103,7 +102,7 @@ class SearchController:
             incident = self.incidents[key] = Incident(time, cue.point)
         if incident.indoor is None:
             sweep = incident.indoor = IndoorSweep(area, cue.point, cue.at)
-            previous = brain.search.indoor.sweep
+            previous = brain.search.task.sweep
             if previous is not None and previous.area is area:
                 room = sweep.room_near(cue.point)
                 sweep.checked.update(point for point in previous.checked if area.rooms[point] != room)
@@ -112,7 +111,7 @@ class SearchController:
         return incident.indoor
 
     def enter_indoor_sound_sweep(self, actor, brain, cue, sweep):
-        if brain.search.indoor.sound_cue == cue:
+        if brain.search.task.sound_cue == cue:
             return True
         area = sweep.area
         if not any(rect.expanded(-actor.radius).segment_entry(actor.xy, actor.xy) is not None for rect in area.floors):
@@ -122,255 +121,205 @@ class SearchController:
                 or self.world.door_on_ai_path_from(actor.xy, cue.point, reach=distance,
                                                    padding=actor.radius + 0.25) is not None):
             return False
-        brain.search.indoor.sound_cue = cue
+        brain.search.task.sound_cue = cue
         brain.incident = f"sound/{area.id}/{cue.at}"
         if actor.id not in sweep.entry_order:
             sweep.entry_order.append(actor.id)
         return True
 
-    def indoor_sweep(self, actor, brain, point, evidence_at, time, *, new_contact=False, area=None, entering=False):
-        area = area or self.world.indoor_search_area(point)
-        indoor = brain.search.indoor
-        if area is None:
-            if indoor.sweep is not None:
-                indoor.sweep.release(actor.id)
-                brain.search.indoor = IndoorState()
+    def investigate(self, actor, brain, cue, time, *, area=None, entering=False, new_contact=False,
+                    sound_only=False, confirmed=False, direct=False):
+        search, revision = brain.search, self.world.revision
+        task = search.task
+        key = (cue, area.id if area else None)
+        if task.cue != key:
+            if task.execution is not None:
+                task.execution.stop(Status.INVALID)
+            search.checked.clear()
+            sweep = None
+            if area is not None:
+                brain.incident = brain.incident or actor.id
+                incident = self.incidents.setdefault(brain.incident, Incident(time, cue[1]))
+                sweep = incident.indoor
+                evidence_at = cue[2] if len(cue) > 2 else max(brain.memory.seen_at, brain.memory.reported_at)
+                if sweep is None or sweep.area is not area:
+                    sweep = incident.indoor = IndoorSweep(area, cue[1], evidence_at)
+                elif new_contact or math.dist(cue[1], sweep.anchor) > 4:
+                    sweep.reopen_room(cue[1])
+                    sweep.anchor = cue[1]
+                sweep.evidence_at = max(sweep.evidence_at, evidence_at)
+            task = search.task = InvestigationState(cue=key, sweep=sweep, sound_cue=task.sound_cue)
+            if sweep is None:
+                nav, point = self.world.navigation, cue[1]
+                radius = min(36, 18 + search.sweep_pass * 4) if confirmed else 6
+                candidates = (nav.nodes[k] for k in nav.point_index.query(Rect(point[0]-radius, point[1]-radius, 2*radius, 2*radius)))
+                heading = brain.memory.seen_heading or 0
+                candidates = sorted((p for p in candidates if math.dist(p, point) <= radius and
+                                     (not sound_only or nav.clear(point, p))), key=lambda p:
+                                    (math.dist(p, point) - .3*((p[0]-point[0])*math.cos(heading)+(p[1]-point[1])*math.sin(heading)), p))
+                task.points = list(dict.fromkeys([point, *([] if direct else candidates[:5])]))
+            elif entering and (pose := sweep.entry_pose(actor.id)) is not None:
+                task.target, task.staging = pose.position, True
+            search.cover = None
+        lease = task.sweep or (None if direct else self.incidents.get(brain.incident))
+        if task.target is None:
+            task.target = self.next_view(actor, brain, time, lease)
+        if task.target is None:
+            return None, task.sweep.complete if task.sweep else not task.points
+        if task.execution is None:
+            task.execution = Visit(self, actor, brain, confirmed)
+        visit = task.execution
+        visit.time, visit.lease = time, lease
+        if lease is not None:
+            lease.claims[actor.id] = task.target, time + 1
+        visit.tick_once()
+        if visit.status in {Status.SUCCESS, Status.FAILURE}:
+            if task.sweep is not None:
+                task.scan_origin = actor.xy, task.sweep.area.room_of(task.target), revision
+                if math.dist(actor.xy, task.target) <= .25:
+                    task.sweep.observed_from[task.target] = revision
+            elif visit.status is Status.SUCCESS:
+                search.checked.add(task.target)
+                if lease is not None:
+                    lease.checked.append((task.target, time))
+                    del lease.checked[:-32]
+            task.target, task.staging = None, False
+        return visit.goal, False
+
+    def next_view(self, actor, brain, time, lease):
+        task, revision = brain.search.task, self.world.revision
+        if task.sweep is None:
+            while task.points:
+                point = task.points.pop(0)
+                occupied = lease is not None and (any(math.dist(point, p) < 2 for p, _ in lease.checked)
+                            or any(math.dist(point, p) < 2 for p in lease.reserved(actor.id, time)))
+                if not occupied and not brain.motion.failed(point, revision):
+                    return point
             return None
-        if brain.incident not in self.incidents:
-            brain.incident = actor.id
-            self.incidents[actor.id] = Incident(time, point)
-        incident = self.incidents[brain.incident]
-        sweep = incident.indoor
-        if sweep is None or (evidence_at > sweep.evidence_at and sweep.area is not area):
-            sweep = incident.indoor = IndoorSweep(area, point, evidence_at)
-        elif evidence_at > sweep.evidence_at and (new_contact or math.dist(point, sweep.anchor) > 4):
-            sweep.reopen_room(point)
-            sweep.anchor = point
-        sweep.evidence_at = max(sweep.evidence_at, evidence_at)
-        area, revision = sweep.area, self.world.revision
-        if indoor.sweep is not sweep:
-            if indoor.sweep is not None:
-                indoor.sweep.release(actor.id)
-            indoor = brain.search.indoor = IndoorState(sweep=sweep, scan=indoor.scan if entering else ScanState(),
-                                                       observation=sweep if entering else None)
-            brain.motion.heading = None
-            if not entering:
-                brain.look.turn_rate = 0.0
-        pose = sweep.entry_pose(actor.id) if entering else None
-        if pose is not None:
-            indoor.target, indoor.staging = pose.position, True
-        target, previous_room = indoor.target, area.room_of(indoor.target)
-        if target is not None:
-            if brain.motion.failed(target, revision) and indoor.blocked.get(target) != revision:
-                indoor.blocked[target] = revision
-                indoor.scan.walk_look = None
-                self.begin_indoor_look(actor, brain)
-                brain.look.reason = "이동 불가 · 현재 위치 확인"
-                return None, False
-            pending = indoor.staging or bool(set(area.room_points[previous_room]) - sweep.checked)
-            if indoor.blocked.get(target) != revision and indoor.phase is not ScanPhase.FINISHED and pending:
-                sweep.claims[actor.id] = target, time + 1
-                if math.dist(actor.xy, target) > 0.25:
-                    return target, False
-                self.begin_indoor_look(actor, brain)
-                return None, False
-            sweep.release(actor.id)
-            indoor.target, indoor.staging, indoor.phase = None, False, ScanPhase.IDLE
-        reserved = sweep.reserved(actor.id, time)
-        available = {p for p in (*area.points, *area.observations) if p not in reserved
-                     and sweep.observed_from.get(p) != revision and indoor.blocked.get(p) != revision}
-        target = min((p for p in sweep.pending_for(actor.id, None) if p in available),
-                     key=lambda p: (area.rooms[p] != previous_room, math.dist(actor.xy, p) + 0.3 * math.dist(point, p), p),
-                     default=None)
+        sweep, area = task.sweep, task.sweep.area
+        available = {p for p in (*area.points, *area.observations) if p not in sweep.reserved(actor.id, time)
+                     and task.blocked.get(p) != revision and sweep.observed_from.get(p) != revision}
+        pending = sweep.pending_for(actor.id, None)
+        previous_room = task.scan_origin[1] if task.scan_origin else None
+        target = min((p for p in pending if p in available), key=lambda p:
+                     (area.rooms[p] != previous_room, math.dist(actor.xy, p) + .3 * math.dist(sweep.anchor, p), p), default=None)
         if target is None:
-            return None, sweep.complete
+            target = min(pending, key=lambda p: math.dist(actor.xy, p), default=None)
+        if target is None:
+            return None
         room = area.rooms[target]
         remaining = sweep.pending_for(actor.id, room)
-        if indoor.scan_origin != (actor.xy, room, revision) and sweep.can_scan_here(actor.xy, remaining, self.world.geometry):
-            self.begin_indoor_look(actor, brain)
-        else:
-            authored = (p for p in area.observations if p in available and area.observations[p] == room
-                        and sweep.can_scan_here(p, remaining, self.world.geometry))
-            target = min(authored, key=lambda p: math.dist(actor.xy, p), default=None) or sweep.observation_point(
-                actor.xy, actor.facing if brain.motion.heading is None else brain.motion.heading,
-                [p for p in area.room_points[room] if p in available], remaining, self.world.navigation)
-        indoor.target = target
-        sweep.claims[actor.id] = target, time + 1
-        return (None if indoor.scanning else target), sweep.complete
-
-    @staticmethod
-    def begin_indoor_look(actor, brain):
-        brain.search.indoor.staging = False
-        brain.motion.speed = 0.0
-        brain.search.indoor.phase = ScanPhase.SCANNING
-        brain.look.reason = "정지 후 정면 확인"
-
-    def advance_indoor_look(self, actor, brain, time):
-        sweep, target = brain.search.indoor.sweep, brain.search.indoor.target
-        room = sweep.area.room_of(target)
-        sweep.claims[actor.id] = target, time + 1
-        self.look_at_indoor_samples(actor, brain, time, sweep, room, stationary=True)
-        if brain.look.point is not None:
-            return
-        if brain.search.indoor.scan.exposure:
-            return
-        revision = self.world.revision
-        brain.search.indoor.scan_origin = (actor.xy, room, revision)
-        if math.dist(actor.xy, target) <= 0.25:
-            sweep.observed_from[target] = revision
-        brain.search.indoor.phase = ScanPhase.FINISHED
-        brain.look.reason = "현재 위치 관찰 종료"
+        if task.scan_origin != (actor.xy, room, revision) and sweep.can_scan_here(actor.xy, remaining, self.world.geometry):
+            return target
+        authored = (p for p in area.observations if p in available and area.observations[p] == room
+                    and sweep.can_scan_here(p, remaining, self.world.geometry))
+        candidates = [p for p in area.room_points[room] if p in available]
+        return min(authored, key=lambda p: math.dist(actor.xy, p), default=None) or (sweep.observation_point(
+            actor.xy, actor.facing if brain.motion.heading is None else brain.motion.heading,
+            candidates, remaining, self.world.navigation) if candidates else None)
 
     @staticmethod
     def reset_walking_look(brain):
-        brain.search.indoor.scan = ScanState()
+        brain.search.task.scan = ScanState()
         brain.look.turn_rate = 0.0
 
     def look_at_indoor_samples(self, actor, brain, time, sweep, room=None, *, stationary=False):
-        if brain.search.indoor.observation is not sweep:
+        task = brain.search.task
+        if task.observation is not sweep:
             self.reset_walking_look(brain)
-            brain.search.indoor.observation = sweep
-        scan = brain.search.indoor.scan
-        geometry, revision = self.world.geometry, self.world.revision
-        if time - scan.sample_at > 1 / 30:
-            scan.exposure.clear()
-        scan.sample_at = time
-        brain.search.indoor.sample_stationary = stationary
-        hold = SCAN_HOLD_S if stationary else config.INDOOR_WALK_CONFIRM_S
-        pending = sweep.pending_for(actor.id, room, revisit_corners=not brain.search.indoor.staging)
+            task.observation = sweep
+        scan, geometry = task.scan, self.world.geometry
+        task.sample_stationary = stationary
+        brain.look.sample = sweep, room, stationary
+        pending = sweep.pending_for(actor.id, room, revisit_corners=not task.staging)
         corners = set(pending) & set(sweep.pending_corners(room))
+        available = sweep.available_corners(corners, actor.id, time)
         point = scan.walk_look
         scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
-        visible = (point in pending and math.dist(actor.xy, point) <= scan_range
-                   and geometry.raycast(actor.xy, point, category="sight") is None)
-        if visible and point in corners:
-            visible = point in sweep.available_corners(corners, actor.id, time)
-
-        candidates = (point,) if visible and point in corners else (
-            () if corners and (not stationary or not visible) else tuple(sample for sample in pending if sample not in corners))
-        views = dict(sample_views(actor.xy, actor.facing, candidates, geometry, stationary=stationary))
-        seen = {sample: scan.exposure.get(sample, time) for sample, clear in views.items() if clear}
-        blocked = {sample for sample, clear in views.items() if not clear}
-        revealed = scan.occluded.intersection(seen)
-        scan.occluded.intersection_update(pending)
-        scan.occluded.difference_update(seen)
-        scan.occluded.update(blocked)
-        for sample, since in tuple(seen.items()):
-            if time - since < hold:
-                continue
-            if sample in corners:
-                sweep.confirm_corner(sample, actor.id, time)
-            else:
-                sweep.confirm(sample, time)
-            del seen[sample]
-        scan.exposure = seen
-        scan.revealed.difference_update(blocked | sweep.checked)
-        scan.revealed.update(revealed.intersection(seen))
-
-        confirmed = point in sweep.checked
-        settled = not visible or abs(math.remainder(
-            math.atan2(point[1] - actor.xy[1], point[0] - actor.xy[0]) - actor.facing, math.tau
-        )) <= config.INDOOR_REFOCUS_ANGLE
-        newly_visible = (settled and not corners and bool(revealed.intersection(seen))
-                         and point not in scan.revealed)
-        if newly_visible or confirmed or (not visible and (point is not None or stationary
-                or time >= scan.walk_look_at or revision != scan.walk_look_revision)):
-            pending = sweep.pending_for(actor.id, room, revisit_corners=not brain.search.indoor.staging)
-            corners = set(pending) & set(sweep.pending_corners(room))
-            available = sweep.available_corners(corners, actor.id, time)
-            choice = None
-            if not corners and scan.revealed:
-                choice = sweep.look(actor.xy, actor.facing, room, geometry, walking=not stationary,
-                                    points=(sample for sample in pending if sample in scan.revealed))
-            if choice is None:
-                choice = sweep.look(actor.xy, actor.facing, room, geometry, walking=not stationary,
-                                    continue_scan=confirmed, points=available if corners else pending)
-            if choice is None and stationary and corners and not sweep.can_scan_here(actor.xy, corners, geometry):
-                choice = sweep.look(actor.xy, actor.facing, room, geometry, points=(
-                    sample for sample in pending if sample not in corners))
-            point = choice if choice is not None else next(
-                (sample for sample in available if stationary and math.dist(actor.xy, sample) < 0.15
-                 and geometry.raycast(actor.xy, sample, category="sight") is None), None)
-            visible = point is not None
-            scan.walk_look = point
-            scan.walk_look_at = time + config.INDOOR_WALK_LOOK_INTERVAL_S
-            scan.walk_look_revision = revision
-
-        brain.look.point = point if visible else None
-        if visible and point in corners:
+        valid = (point in pending and math.dist(actor.xy, point) <= scan_range
+                 and geometry.raycast(actor.xy, point, category="sight") is None
+                 and (point not in corners or point in available))
+        revealed = {p for p, clear in sample_views(actor.xy, actor.facing, scan.occluded & set(pending), geometry,
+                                                   stationary=stationary) if clear}
+        if not valid or (not corners and revealed and not scan.urgent_focus):
+            priority = revealed if revealed and not corners else available if corners else pending
+            point = sweep.look(actor.xy, actor.facing, room, geometry, walking=not stationary, points=priority)
+            if point is None and stationary and corners and not sweep.can_scan_here(actor.xy, corners, geometry):
+                point = sweep.look(actor.xy, actor.facing, room, geometry, points=set(pending) - corners)
+            if point is None and stationary:
+                point = next((p for p in available if math.dist(actor.xy, p) < .15
+                              and geometry.raycast(actor.xy, p, category="sight") is None), None)
+            scan.walk_look, scan.urgent_focus = point, point in revealed
+        brain.look.point = point
+        brain.look.reason = ("정지 중 공간 확인" if stationary else "이동 중 공간 확인") if point else "주시 방향 유지"
+        if point in corners:
             sweep.corner_claims[actor.id] = point, time + config.INDOOR_WALK_LOOK_INTERVAL_S
         else:
             sweep.corner_claims.pop(actor.id, None)
-        brain.look.reason = ("정지 중 공간 확인" if stationary else "이동 중 공간 확인") if visible else "주시 방향 유지"
-        if visible:
+        if point is not None:
             scan.walk_look_started = True
-            dx, dy = point[0] - actor.xy[0], point[1] - actor.xy[1]
-            if math.hypot(dx, dy) >= 0.15:
-                desired = math.atan2(dy, dx)
-                actor.facing = turn_toward(actor.facing, desired, 1 / 60, rate=config.INDOOR_SWEEP_TURN_RADIANS_PER_S)
-        elif brain.search.indoor.staging:
-            pose = sweep.entry_pose(actor.id)
-            if pose is not None:
-                face(actor, pose.look)
-                brain.look.point = pose.look
-                brain.look.reason = "수색 시작 위치에서 실내 주시" if stationary else "수색 시작 위치로 이동 · 실내 주시"
+        elif task.staging and (pose := sweep.entry_pose(actor.id)) is not None:
+            brain.look.point, brain.look.reason = pose.look, "수색 시작 위치로 이동 · 실내 주시"
+
+    def confirm_view(self, actor, brain, time):
+        sweep, room, stationary = brain.look.sample
+        scan = brain.search.task.scan
+        pending = sweep.pending_for(actor.id, room, revisit_corners=not brain.search.task.staging)
+        corners = set(pending) & set(sweep.pending_corners(room))
+        candidates = (scan.walk_look,) if scan.walk_look in corners else (p for p in pending if p not in corners)
+        views = dict(sample_views(actor.xy, actor.facing, candidates, self.world.geometry, stationary=stationary))
+        if time - scan.sample_at > 1 / 30:
+            scan.exposure.clear()
+        scan.sample_at = time
+        seen = {p: scan.exposure.get(p, time) for p, clear in views.items() if clear}
+        blocked = {p for p, clear in views.items() if not clear}
+        scan.occluded.intersection_update(pending)
+        scan.occluded.difference_update(seen)
+        scan.occluded.update(blocked)
+        hold = SCAN_HOLD_S if stationary else config.INDOOR_WALK_CONFIRM_S
+        for point, since in tuple(seen.items()):
+            if time - since >= hold:
+                if point in corners:
+                    sweep.confirm_corner(point, actor.id, time)
+                else:
+                    sweep.confirm(point, time)
+                del seen[point]
+        scan.exposure = seen
 
     def pace_indoor_movement(self, actor, brain, intent, time, *, room_sweep=False, independent_look=False):
-        dx, dy = intent.direction
-        if not (dx or dy):
-            brain.motion.speed, brain.motion.depart_at = 0.0, None
-            brain.search.indoor.scan.exposure.clear()
+        motion = brain.motion
+        distance = math.hypot(*intent.direction)
+        if distance < 1e-8:
+            motion.speed = 0
+            brain.search.task.scan.exposure.clear()
             return
-
-        tick = 1 / 60
-        heading = math.atan2(dy, dx)
-        distance = math.hypot(dx, dy)
-        bend = 0.0
-        if len(brain.motion.path) > 1:
-            point, following = brain.motion.path[:2]
-            outgoing = math.atan2(following[1] - point[1], following[0] - point[0])
-            bend = math.remainder(outgoing - heading, math.tau)
+        heading = math.atan2(intent.direction[1], intent.direction[0])
         if room_sweep:
-            brain.motion.heading = heading
-            sweep = brain.search.indoor.sweep
-            self.look_at_indoor_samples(actor, brain, time, sweep, sweep.area.room_of(brain.search.indoor.target))
-        else:
-            if brain.motion.depart_at is None:
-                brain.motion.depart_at = time + config.INDOOR_START_DELAY_S
-            error = 0.0
-            if not independent_look:
-                actor.facing = turn_toward(actor.facing, heading, tick, rate=config.INDOOR_TURN_RADIANS_PER_S)
-                error = abs(math.remainder(heading - actor.facing, math.tau))
-                brain.look.point, brain.look.reason = brain.motion.path[0], "진행 방향 확인"
-            if error > 1e-6 or time < brain.motion.depart_at:
-                brain.motion.speed = 0.0
-                brain.motion.progress_at, brain.motion.progress_point = time, actor.xy
-                intent.direction, intent.open_door = (0, 0), False
-                if not independent_look:
-                    brain.look.reason = "진행 방향으로 회전 중"
-                return
-
+            motion.heading = heading
+            sweep = brain.search.task.sweep
+            self.look_at_indoor_samples(actor, brain, time, sweep, sweep.area.room_of(brain.search.task.target))
+        elif not independent_look:
+            brain.look.point, brain.look.reason = motion.path[0], "진행 방향 확인"
         speed_limit = actor.speed * config.INDOOR_MOVE_MULTIPLIER
-        exit_speed = 0.0
-        if len(brain.motion.path) > 1:
-            bend = abs(bend)
+        exit_speed = 0
+        if len(motion.path) > 1:
+            point, following = motion.path[:2]
+            bend = abs(math.remainder(math.atan2(following[1]-point[1], following[0]-point[0]) - heading, math.tau))
             if bend <= math.radians(25):
                 exit_speed = speed_limit
             elif (room_sweep or independent_look) and bend <= config.INDOOR_SMOOTH_BEND:
                 exit_speed = speed_limit * math.cos(bend)
         speed_limit = min(speed_limit, math.sqrt(exit_speed ** 2 + 2 * config.INDOOR_BRAKE_MPS2 * distance))
-        increase = config.INDOOR_ACCEL_MPS2 * tick
-        decrease = config.INDOOR_BRAKE_MPS2 * tick
-        brain.motion.speed = max(brain.motion.speed - decrease, min(speed_limit, brain.motion.speed + increase))
-        intent.move_multiplier = brain.motion.speed / actor.speed
-        intent.step_dt = min(tick, distance / brain.motion.speed)
+        motion.speed = max(motion.speed - config.INDOOR_BRAKE_MPS2 / 60,
+                           min(speed_limit, motion.speed + config.INDOOR_ACCEL_MPS2 / 60))
+        intent.move_multiplier = motion.speed / actor.speed
+        intent.step_dt = min(1 / 60, distance / motion.speed)
         intent.move_straight = True
 
     def watch_visible_space(self, actor, brain, cue, time):
         geometry = self.world.geometry
         if (math.dist(actor.xy, cue) > 0.05 and geometry.raycast(actor.xy, cue, category="sight") is None):
             brain.look.point, brain.look.reason = cue, "보고 위치가 보임"
-            face(actor, cue)
             return
 
         if (brain.look.watch_cue != cue or time >= brain.look.watch_at or (brain.look.watch_point is not None
@@ -389,81 +338,75 @@ class SearchController:
 
         if brain.look.watch_point is not None:
             brain.look.point, brain.look.reason = brain.look.watch_point, "열린 공간 경계"
-            face(actor, brain.look.watch_point)
         else:
             brain.look.reason = "보이는 경계 지점 없음"
 
-    def search(self, actor, brain, cue, time, *, sound_only=False, confirmed=False, direct=False):
-        incident = None if direct else self.incidents.get(brain.incident)
-        if cue != brain.search.cue:
-            brain.search.cue = cue
-            brain.search.target = None
-            brain.search.checked.clear()
-            brain.search.cover = None
-            nav = self.world.navigation
-            x, y = cue[1]
-            radius = min(36, 18 + brain.search.sweep_pass * 4) if confirmed else 6
-            keys = nav.point_index.query(Rect(x - radius, y - radius, radius * 2, radius * 2))
-            candidates = [nav.nodes[key] for key in keys if math.dist(nav.nodes[key], cue[1]) <= radius
-                          and (not sound_only or nav.clear(cue[1], nav.nodes[key]))]
-            heading = brain.memory.seen_heading
-            forward = (math.cos(heading), math.sin(heading)) if heading is not None else (0, 0)
-            candidates.sort(key=lambda point: (math.dist(point, cue[1]) -
-                            sum((a - b) * direction for a, b, direction in zip(point, cue[1], forward)) * 0.3,
-                            math.dist(actor.xy, point), point))
-            if brain.search.sweep_pass and candidates:
-                start = (brain.search.sweep_pass - 1) * 5 % len(candidates)
-                candidates = candidates[start:] + candidates[:start]
-            brain.search.points = list(dict.fromkeys([cue[1], *([] if direct else candidates[:5])]))
-            brain.search.scan_until = 0
-        if time < brain.search.scan_until:
-            actor.facing = brain.search.scan_angle
-            if not direct:
-                actor.facing += math.sin((brain.search.scan_until - time) * 5) * 0.95
-            if incident and brain.search.target is not None:
-                incident.claims[actor.id] = brain.search.target, time + 0.65
-            return None
-        if brain.search.target is not None:
-            point = brain.search.target
-            if self.world.geometry.raycast(actor.xy, point, category="sight") is None:
-                brain.search.checked.add(point)
-                if incident:
-                    incident.checked.append((point, time))
-                    del incident.checked[:-32]
-            if incident:
-                incident.release(actor.id)
-            brain.search.target = None
-        while brain.search.points:
-            point = brain.search.points[0]
-            if incident and (any(math.dist(point, checked) < 2 for checked, _ in incident.checked)
-                             or any(math.dist(point, reserved) < 2 for reserved in incident.reserved(actor.id, time))):
-                brain.search.points.pop(0)
-                continue
-            if brain.motion.failed(point, self.world.revision):
-                brain.search.points.pop(0)
-                continue
-            distance = math.dist(actor.xy, point)
-            ended = brain.motion.arrived(point, self.world.revision)
+
+
+class VisitStep(Behaviour):
+    def __init__(self, name, update):
+        super().__init__(name)
+        self.callback = update
+
+    def update(self):
+        return self.callback()
+
+
+class Visit(Sequence):
+    """실내·실외가 공유하는 이동→관찰 행동. 종료와 중단 때 예약을 반납한다."""
+
+    def __init__(self, controller, actor, brain, confirmed):
+        self.controller, self.actor, self.brain = controller, actor, brain
+        self.time, self.lease, self.goal, self.since = 0, None, None, None
+        self.hold = .5 if confirmed else .85
+        super().__init__("investigate", memory=True, children=[VisitStep("move", self.move), VisitStep("observe", self.observe)])
+
+    def initialise(self):
+        self.goal, self.since, self.started = None, None, None
+
+    def move(self):
+        actor, brain = self.actor, self.brain
+        task, world = brain.search.task, self.controller.world
+        point = task.target
+        self.goal = point
+        if brain.motion.failed(point, world.revision):
+            task.blocked[point] = world.revision
+            return Status.SUCCESS if task.sweep else Status.FAILURE
+        if task.sweep is not None:
+            room = task.sweep.area.room_of(point)
+            can_watch = not task.staging and task.scan_origin != (actor.xy, room, world.revision) and task.sweep.can_scan_here(
+                actor.xy, task.sweep.pending_for(actor.id, room), world.geometry)
+            arrived = math.dist(actor.xy, point) <= .25 or can_watch
+        else:
             assigned = brain.search.arrival
-            at_slot = assigned is not None and assigned[0] == point and math.dist(actor.xy, assigned[1].destination) <= 0.12
-            if at_slot:
-                assigned[1].passed = True
-                report, current = brain.search.reported_check, brain.search.priority_cue
-                if report is not None and current is not None and report.kind == current.kind and report.point == point and report.at >= current.at:
-                    brain.search.checked.add(point)
-                    brain.search.points.pop(0)
-                    return None
-            visible_at_arrival = (distance < 1 or (at_slot and distance <= STATIONARY_SCAN_RANGE_M)) and self.world.geometry.raycast(actor.xy, point, category="sight") is None
-            if ended or ((distance < 0.35 or at_slot) and visible_at_arrival):
-                brain.search.points.pop(0)
-                if not visible_at_arrival:
-                    continue
-                brain.search.target = point
-                face(actor, cue[1])
-                duration = 0.5 if confirmed else 0.85
-                brain.search.scan_until, brain.search.scan_angle = time + duration, actor.facing
-                return None
-            if incident:
-                incident.claims[actor.id] = point, time + 0.65
-            return point
-        return None
+            arrived = math.dist(actor.xy, point) < .35 or brain.motion.arrived(point, world.revision)
+            if assigned is not None and assigned[0] == point and math.dist(actor.xy, assigned[1].destination) <= .12:
+                assigned[1].passed = arrived = True
+        return Status.SUCCESS if arrived else Status.RUNNING
+
+    def observe(self):
+        actor, brain = self.actor, self.brain
+        task, world = brain.search.task, self.controller.world
+        self.goal, task.staging = None, False
+        self.started = self.time if self.started is None else self.started
+        brain.motion.speed = 0
+        if task.sweep is not None:
+            self.controller.look_at_indoor_samples(actor, brain, self.time, task.sweep,
+                                                  task.sweep.area.room_of(task.target), stationary=True)
+            return Status.RUNNING if brain.look.point is not None or task.scan.exposure else Status.SUCCESS
+        cue, report = brain.search.priority_cue, brain.search.reported_check
+        if cue is not None and report is not None and report.kind == cue.kind and report.point == task.target and report.at >= cue.at:
+            return Status.SUCCESS
+        brain.look.point, brain.look.reason = task.target, "단서 위치 확인"
+        views = dict(sample_views(actor.xy, actor.facing, (task.target,), world.geometry, stationary=True))
+        self.since = (self.time if self.since is None else self.since) if views.get(task.target) else None
+        if self.since is not None and self.time - self.since >= self.hold:
+            return Status.SUCCESS
+        return Status.FAILURE if self.since is None and self.time - self.started > 1.5 else Status.RUNNING
+
+    def terminate(self, new_status):
+        self.goal = None
+        if self.lease is not None:
+            self.lease.release(self.actor.id)
+        if new_status is Status.INVALID:
+            self.brain.search.task.scan.exposure.clear()

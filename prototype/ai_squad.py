@@ -1,6 +1,6 @@
 """분대 보고·배치·통과 대기와 수색 후 집결을 조정한다."""
 
-from .ai_state import MoveRequest, ScanPhase
+from .ai_state import MoveRequest
 import math
 
 from scipy.optimize import linear_sum_assignment
@@ -87,7 +87,7 @@ class SquadCoordinator:
                 continue
             members = [a for a in actors if a.hp > 0 and not a.transport_boarding and self.brains[a.id].incident == key]
             if not members or any(self.brains[a.id].visible or self.brains[a.id].search.investigating_priority
-                                  or self.brains[a.id].search.indoor.scanning for a in members):
+                                  or self.brains[a.id].search.task.scanning for a in members):
                 continue
             sweep.regroup_slots = {a.id: point for a in members
                 if (point := sweep.regroup_slots.get(a.id)) is not None and nav.walkable(point)
@@ -118,8 +118,8 @@ class SquadCoordinator:
                     brain = self.brains[actor.id]
                     brain.incident, brain.combat.combat_alert_until, brain.search.next_sweep_at = "", 0.0, 0.0
                     brain.clear_contact()
-                    brain.search.indoor.sweep = brain.search.indoor.target = brain.motion.yield_point = None
-                    brain.search.indoor.phase = ScanPhase.IDLE
+                    brain.search.task.sweep = brain.search.task.target = brain.motion.yield_point = None
+                    brain.search.task.execution = None
 
     def unblock_search(self, actors, time):
         living = {actor.id: actor for actor in actors if actor.hp > 0}
@@ -127,13 +127,12 @@ class SquadCoordinator:
         for actor in living.values():
             brain = self.brains[actor.id]
             blocker = living.get(brain.motion.blocked_by)
-            has_search_target = brain.search.indoor.target is not None or brain.search.investigating_priority or actor.state == "regroup"
+            has_search_target = brain.search.task.target is not None or brain.search.investigating_priority or actor.state == "regroup"
             if actor.state not in {"search", "regroup"} or not has_search_target or not brain.motion.path or blocker is None:
                 continue
             other = self.brains[blocker.id]
             if (other.incident != brain.incident or other.visible or other.motion.yield_point is not None
-                    or brain.motion.yield_point is not None or blocker.transport_boarding or other.search.indoor.scanning
-                    or time < other.search.scan_until):
+                    or brain.motion.yield_point is not None or blocker.transport_boarding or other.search.task.scanning):
                 continue
             if other.search.investigating_priority and not brain.search.investigating_priority:
                 continue
@@ -141,7 +140,7 @@ class SquadCoordinator:
                 continue
             if other.motion.path and not other.motion.door_wait and (other.motion.blocked_by != actor.id or actor.id > blocker.id):
                 continue
-            room_sweep = brain.search.indoor.target is not None and not brain.search.investigating_priority
+            room_sweep = brain.search.task.target is not None and not brain.search.investigating_priority
             if room_sweep:
                 if time < brain.motion.yield_retry_at:
                     continue

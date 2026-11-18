@@ -42,7 +42,7 @@ class CrowdMotion:
             motion = brains[actor.id].motion
             # 문 통과와 명시적 양보는 통행 조정기가 정한 경로를 그대로 실행한다.
             if (actor.id in controlled or motion.door_wait or motion.door_stack is not None or motion.yield_point is not None
-                    or brains[actor.id].search.indoor.staging):
+                    or brains[actor.id].search.task.staging):
                 continue
             if not nearby:
                 continue

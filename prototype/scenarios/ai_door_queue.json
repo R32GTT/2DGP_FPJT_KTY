@@ -6,7 +6,6 @@
   "search_layouts": {
     "문 안쪽 수색": {
       "sample_spacing": 0.9,
-      "corner_axis": 1,
       "corner_points": [[7.995, 1.114], [7.995, 10.886], [12.885, 1.114], [12.885, 10.886]],
       "observation_points": [[9.0, 1.4], [11.55, 1.4]],
       "entry_poses": [
