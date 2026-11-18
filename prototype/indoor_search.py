@@ -47,13 +47,6 @@ class SearchArea:
         return next((pose.room for pose in self.entry_poses if pose.position == point), None)
 
 
-@dataclass(frozen=True)
-class LookChoice:
-    point: tuple[float, float]
-    offset: float
-    visible_count: int
-
-
 def sample_views(xy, facing, samples, geometry, *, stationary=False, include_outside=False):
     forward_x, forward_y = math.cos(facing), math.sin(facing)
     scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
@@ -91,7 +84,7 @@ def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range
         score = (nearby_angle, sum(row[3] for row in seen), sum(row[2] for row in seen),
                  -abs(offset), distance, point)
         if best is None or score > best[0]:
-            best = score, LookChoice(point, offset, len(seen))
+            best = score, point
     return best[1] if best else None
 
 
@@ -201,13 +194,22 @@ def build_search_areas(world):
     return tuple(result)
 
 
+class Reservations:
+    """수색 대상의 예약 수명. 문 통행권과 정차 위치 배정은 별도로 유지한다."""
+
+    def release(self, actor_id):
+        self.claims.pop(actor_id, None)
+
+    def reserved(self, actor_id, time):
+        return {p for owner, (p, until) in self.claims.items() if owner != actor_id and time < until}
+
+
 @dataclass
-class IndoorSweep:
+class IndoorSweep(Reservations):
     area: SearchArea
     anchor: tuple
     evidence_at: float
     checked: set = field(default_factory=set)
-    checked_at: dict[tuple[float, float], float] = field(default_factory=dict)
     claims: dict = field(default_factory=dict)
     corner_claims: dict[str, tuple[tuple[float, float], float]] = field(default_factory=dict)
     corner_checks: dict[tuple[float, float], tuple[str, float]] = field(default_factory=dict)
@@ -218,6 +220,10 @@ class IndoorSweep:
     regroup_until: float | None = None
     regroup_retry_at: float = 0.0
     regroup_done: bool = False
+    def release(self, actor_id):
+        super().release(actor_id)
+        self.corner_claims.pop(actor_id, None)
+
     @property
     def complete(self):
         return len(self.checked) == len(self.area.points)
@@ -291,7 +297,6 @@ class IndoorSweep:
 
     def confirm(self, point, time):
         self.checked.add(point)
-        self.checked_at[point] = time
 
     def room_near(self, point):
         sample = min(self.area.points, key=lambda sample: (math.dist(point, sample), sample))
@@ -301,7 +306,6 @@ class IndoorSweep:
         room = self.room_near(point)
         for sample in self.area.room_points[room]:
             self.checked.discard(sample)
-            self.checked_at.pop(sample, None)
             self.corner_checks.pop(sample, None)
         for sample in tuple(self.observed_from):
             if self.area.room_of(sample) == room:

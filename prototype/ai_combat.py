@@ -67,12 +67,11 @@ class CombatController:
                         or combat.suppression >= config.PEEK_SUPPRESSION_LIMIT or time < combat.peek_at):
                     return
 
-        elif (time < combat.action_until and not route_failed and not brain.role_changed
+        elif (time < combat.action_until and not route_failed
                 and (combat.action != "flank" or (math.dist(actor.xy, combat.action_goal) > 0.35
                                                 and self.has_support(actor, brain, actors, threat, time)))
                 and (not urgent or safe_action) and (not needs_reload or safe_action or combat.action == "reload")):
             return
-        brain.role_changed = False
         rejected = combat.action_goal if route_failed else None
         combat.action_goal = None
         if urgent or needs_reload:
@@ -109,13 +108,13 @@ class CombatController:
         if distance > config.ADVANCE_DISTANCE:
             combat.action, combat.action_goal = "advance", threat
             return
-        if distance <= 3 or brain.role not in {"intercept", "sweep"}:
+        if distance <= 3:
             return
         if not self.has_support(actor, brain, actors, threat, time):
             return
         dx, dy = threat[0] - actor.position.x, threat[1] - actor.position.y
         nav = self.world.navigation
-        for side in ((1, -1) if brain.role == "intercept" else (-1, 1)):
+        for side in ((1, -1) if sum(actor.id.encode("utf-8")) % 2 else (-1, 1)):
             for lateral in (4, 6):
                 point = (actor.position.x + (dx - side * dy * lateral) / distance,
                          actor.position.y + (dy + side * dx * lateral) / distance)

@@ -259,7 +259,7 @@ class EnemyAI:
             actor.state = "retreat"
             return ActionPlan(combat.action_goal, point)
         holding = not priority and situation.confirmed and not situation.investigating and (
-            time < search.next_sweep_at or (brain.role == "hold" and situation.reported))
+            time < search.next_sweep_at)
         if holding:
             goal = search.cover
             if goal is None or math.dist(actor.xy, goal) <= 0.35 or brain.motion.failed(goal, self.world.revision):
@@ -420,7 +420,7 @@ class EnemyAI:
         intents, budget = {}, 1
         approach_looks = {}
         approaches = {}
-        self.squad.assign_roles(actors, time)
+        self.squad.maintain_incidents(time)
         self.squad.unblock_search(actors, time)
         self.near_count = 0
         previous_facing = {actor.id: actor.facing for actor in actors}
@@ -477,8 +477,7 @@ class DecisionTask(Behaviour):
             actor, brain, *_ = self.decision.frame
             sweep = brain.search.indoor.sweep
             if sweep is not None:
-                sweep.claims.pop(actor.id, None)
-                sweep.corner_claims.pop(actor.id, None)
+                sweep.release(actor.id)
 
 
 class ActorDecision:

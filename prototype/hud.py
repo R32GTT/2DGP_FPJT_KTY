@@ -16,7 +16,6 @@ from .interactions import nearby_facility, nearby_road_control
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
              "alert": "조사", "search": "전투 수색", "combat": "교전",
              "combat_guard": "전투 경계", "retreat": "엄폐·후퇴"}
-AI_ROLES = {"pursue": "추격", "intercept": "차단", "sweep": "수색", "hold": "경계"}
 AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reload": "재장전",
               "fire": "사격", "advance": "접근", "flank": "측면 이동",
               "peek": "피킹", "peek_return": "엄폐 복귀", "reposition": "사선 확보", "wait": "사격 대기"}
@@ -78,8 +77,7 @@ class HUD:
             stamp, kind, point = max(cues, key=lambda cue: cue[0] if cue[2] is not None else -math.inf)
             cue = f"{kind} {point[0]:.0f}, {point[1]:.0f} · {time - stamp:.1f}초 전" if point else "단서 없음"
             action = AI_ACTIONS.get(brain.combat.action, "") if actor.state in {"combat", "retreat"} else ""
-            role = AI_ROLES.get(brain.role, "")
-            state = " / ".join(part for part in (AI_STATES.get(actor.state, actor.state), role, action) if part)
+            state = " / ".join(part for part in (AI_STATES.get(actor.state, actor.state), action) if part)
             if time < brain.combat.combat_alert_until:
                 state += f" · 경계 {math.ceil(brain.combat.combat_alert_until - time)}초"
             route = "목표 없음"

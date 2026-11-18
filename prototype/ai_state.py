@@ -5,7 +5,7 @@ from enum import Enum
 import math
 
 from .actors import Actor
-from .indoor_search import IndoorSweep
+from .indoor_search import IndoorSweep, Reservations
 from .perception import Knowledge, SOUND_MEMORY_SECONDS
 
 
@@ -198,9 +198,7 @@ class Brain:
     sense_at: float = 0.0
     radio_at: float = 0.0
     contact_at: float = 0.0
-    role: str = ""
     incident: str = ""
-    role_changed: bool = False
     far_at: float = 0.0
     far_updated: float = 0.0
     motion: MotionState = field(default_factory=MotionState)
@@ -217,7 +215,6 @@ class Brain:
         self.search.cue = self.search.target = self.search.cover = self.search.arrival = None
         self.search.priority_cue = None
         self.combat.peek_home = self.combat.incoming = self.combat.formation = self.search.reported_check = None
-        set_role(self, "")
 
 
 @dataclass
@@ -276,20 +273,11 @@ class ApproachMove:
     priority: bool = False
 
 @dataclass
-class Incident:
+class Incident(Reservations):
     updated_at: float
-    heading: float
     point: tuple
     indoor: IndoorSweep | None = None
     checked: list = field(default_factory=list)
     claims: dict = field(default_factory=dict)
     sighting_at: float = -math.inf
     reporter: str = ""
-
-
-def set_role(brain, role):
-    if brain.role != role:
-        brain.role = role
-        brain.role_changed = True
-        brain.search.cue = None
-        brain.search.target = None

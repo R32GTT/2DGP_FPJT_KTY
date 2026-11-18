@@ -7,7 +7,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 
 from campaign.viewmodel import segment_distance
-from .ai_state import Incident, SearchCue, set_role
+from .ai_state import Incident, SearchCue
 from .squad_approach import SquadApproach, assign_approach
 
 from . import ai_config as config
@@ -27,26 +27,21 @@ class SquadCoordinator:
         if not receivers:
             return
         key = brain.incident if brain.incident in self.incidents else actor.id
-        heading = brain.memory.seen_heading
-        if heading is None:
-            heading = actor.facing
         incident = self.incidents.get(key)
         if incident is None:
-            incident = self.incidents[key] = Incident(time, heading, point)
+            incident = self.incidents[key] = Incident(time, point)
         if brain.memory.seen_at >= incident.sighting_at:
             if point != incident.point:
                 incident.point = point
                 incident.checked = [(checked, stamp) for checked, stamp in incident.checked
                                     if math.dist(point, checked) >= 4]
                 incident.claims.clear()
-            incident.sighting_at, incident.heading, incident.reporter = brain.memory.seen_at, heading, actor.id
+            incident.sighting_at, incident.reporter = brain.memory.seen_at, actor.id
         incident.updated_at = time
         for member in (actor, *receivers):
             ally = self.brains[member.id]
             ally.combat.combat_alert_until = time + config.COMBAT_ALERT_SECONDS
-            if ally.incident != key:
-                ally.incident = key
-                set_role(ally, "")
+            ally.incident = key
             if incident.sighting_at >= ally.memory.reported_at:
                 if ally.memory.reported != incident.point:
                     ally.memory.reported = incident.point
@@ -72,7 +67,7 @@ class SquadCoordinator:
                     and (ally.search.reported_check is None or report.at >= ally.search.reported_check.at)):
                 ally.search.reported_check = report
 
-    def assign_roles(self, actors, time):
+    def maintain_incidents(self, time):
         if time < self.assign_at:
             return
         self.assign_at = time + 0.35
@@ -83,38 +78,6 @@ class SquadCoordinator:
         for incident in self.incidents.values():
             incident.checked = [(point, stamp) for point, stamp in incident.checked
                                 if time - stamp < config.RESEARCH_INTERVAL_SECONDS * 3]
-        groups = {}
-        for actor in actors:
-            brain = self.brains[actor.id]
-            if (actor.hp > 0 and brain.incident in self.incidents
-                    and brain.memory.reported is not None and time < brain.combat.combat_alert_until):
-                groups.setdefault(brain.incident, []).append(actor)
-        for members in groups.values():
-            available = []
-            for actor in members:
-                brain = self.brains[actor.id]
-                weapon = actor.weapon
-                can_fight = weapon is not None and (weapon.chambered or weapon.reserve > 0 or weapon.stage >= 2)
-                if (actor.hp >= 20 and can_fight and brain.combat.suppression < 0.55
-                        and actor.state != "retreat"):
-                    available.append(actor)
-                else:
-                    set_role(brain, "hold")
-            for role in ("pursue", "intercept", "sweep"):
-                if not available:
-                    break
-                current = next((actor for actor in available if self.brains[actor.id].role == role), None)
-                if current is None:
-                    def priority(actor):
-                        brain = self.brains[actor.id]
-                        return (not brain.memory.visible if role == "pursue" else brain.memory.visible,
-                                math.dist(actor.xy, brain.memory.reported), actor.id)
-
-                    current = min(available, key=priority)
-                available.remove(current)
-                set_role(self.brains[current.id], role)
-            for actor in available:
-                set_role(self.brains[actor.id], "hold")
 
     def update_regroups(self, actors, time):
         nav, revision = self.world.navigation, self.world.revision
