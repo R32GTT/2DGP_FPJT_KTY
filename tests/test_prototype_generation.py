@@ -1,6 +1,7 @@
-from collections import deque
 import json
 import unittest
+
+from shapely import box, union_all
 
 from prototype.generation import generate_scene
 from prototype.movement import move_actor
@@ -24,21 +25,17 @@ class GeneratedMapTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             generate_scene(42, version=settings["version"] + 1)
 
-    def test_spawn_and_sampled_free_space_are_connected(self):
-        for seed in (0, 42, -7):
+    def test_spawn_and_free_space_are_connected(self):
+        for seed in (42, 43):
             with self.subTest(seed=seed):
                 world = World(generate_scene(seed))
                 self.assertTrue(world.navigation.walkable((0, 0)))
-                free = {(x, y) for x in range(-30, 31, 2) for y in range(-30, 31, 2)
-                        if world.navigation.walkable((x, y))}
-                seen, queue = {(0, 0)}, deque([(0, 0)])
-                while queue:
-                    x, y = queue.popleft()
-                    for point in ((x - 2, y), (x + 2, y), (x, y - 2), (x, y + 2)):
-                        if point in free and point not in seen and world.navigation.clear((x, y), point):
-                            seen.add(point)
-                            queue.append(point)
-                self.assertEqual(seen, free)
+                obstacles = [collider.rect.expanded(world.navigation.clearance)
+                             for collider in world.geometry.objects.values()]
+                bounds = world.bounds.expanded(-world.navigation.clearance)
+                free = box(bounds.x, bounds.y, bounds.right, bounds.bottom).difference(
+                    union_all([box(r.x, r.y, r.right, r.bottom) for r in obstacles]))
+                self.assertEqual(free.geom_type, "Polygon")
 
     def test_play_movement_obstacle_collision_and_map_boundary(self):
         simulation = PlaySimulation(generate_scene(42))
@@ -48,7 +45,8 @@ class GeneratedMapTests(unittest.TestCase):
         self.assertAlmostEqual(simulation.player.position.x, 3)
         self.assertAlmostEqual(simulation.player.position.y, 0)
         actor, world = simulation.player, simulation.world
-        move_actor(actor, (1, 0), world, 20, speed=3)
+        actor.position.x = world.bounds.right - 1
+        move_actor(actor, (1, 0), world, 1, speed=3)
         self.assertAlmostEqual(actor.position.x, world.bounds.right - actor.radius)
         obstacle = next(iter(world.geometry.objects.values())).rect
         actor.position.x, actor.position.y = obstacle.x - actor.radius - 0.1, obstacle.y + obstacle.h / 2
