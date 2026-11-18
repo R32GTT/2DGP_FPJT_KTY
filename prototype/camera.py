@@ -1,14 +1,19 @@
-"""기존 좌표 변환을 재사용하는 플레이어 추적 카메라."""
+"""플레이어 추적과 월드·화면 좌표 변환."""
 
-from campaign.viewmodel import Camera
 from .geometry import Rect
 
 
-class PlayCamera(Camera):
+class PlayCamera:
     def __init__(self, width=1280, height=720, zoom=1.0):
-        super().__init__()
         self.width, self.height = width, height
+        self.offset_x, self.offset_y = 0.0, 0.0
         self.set_zoom(zoom)
+
+    def screen(self, x: float, y: float) -> tuple[float, float]:
+        return x * self.scale + self.offset_x, y * self.scale + self.offset_y
+
+    def world(self, x: float, y: float) -> tuple[float, float]:
+        return (x - self.offset_x) / self.scale, (y - self.offset_y) / self.scale
 
     @property
     def magnification(self):

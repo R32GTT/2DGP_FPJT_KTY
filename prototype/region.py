@@ -4,9 +4,7 @@ import json
 import math
 import random
 
-from campaign.viewmodel import segment_distance
-
-from .geometry import Rect
+from .geometry import Rect, segment_distance
 from .prefabs import instantiate
 
 

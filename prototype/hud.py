@@ -7,7 +7,7 @@ from time import perf_counter
 
 import pico2d as pico
 
-from campaign.viewmodel import world_clock
+from campaign.clock import world_clock
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
 

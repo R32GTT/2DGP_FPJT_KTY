@@ -5,9 +5,7 @@ from dataclasses import dataclass
 import math
 import random
 
-from campaign.viewmodel import segment_distance
-
-from .geometry import Collider, Rect, SpatialIndex
+from .geometry import Collider, Rect, SpatialIndex, segment_distance
 from .weapons import weapon_pose
 
 

@@ -1,9 +1,17 @@
 """미터 좌표의 충돌 판정과 정적 공간 조회. 화면 해상도에 의존하지 않는다."""
 
 from dataclasses import dataclass, field
+import math
 from shapely import LineString, MultiPoint, Point
 
 from .spatial import BoundsIndex
+
+
+def segment_distance(x, y, ax, ay, bx, by) -> float:
+    length_squared = (bx - ax) ** 2 + (by - ay) ** 2
+    fraction = (max(0.0, min(1.0, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / length_squared))
+                if length_squared else 0.0)
+    return math.hypot(x - ax - fraction * (bx - ax), y - ay - fraction * (by - ay))
 
 
 @dataclass(frozen=True)

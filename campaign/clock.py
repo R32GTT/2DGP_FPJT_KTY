@@ -12,6 +12,13 @@ DEMAND = 30
 PLANNING = 40
 
 
+def world_clock(seconds: int) -> str:
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    return f"D{days + 1:02d}  {hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 def schedule(state: CampaignState, time: int, kind: str, *, priority: int = PLANNING,
              operation_id: str | None = None) -> Event:
     if type(time) is not int or time < state.world_time:

@@ -6,8 +6,8 @@ import math
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 
-from campaign.viewmodel import segment_distance
 from .ai_state import Incident, SearchCue
+from .geometry import segment_distance
 from .squad_approach import SquadApproach, assign_approach
 
 from . import ai_config as config

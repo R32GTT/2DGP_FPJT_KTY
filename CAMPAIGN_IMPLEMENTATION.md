@@ -89,15 +89,13 @@ v0.1의 군수 검증 완료를 PRD 1단계 전체 완료나 다이나믹 캠페
 | `campaign/__init__.py` | 패키지 진입과 필요한 공개 항목 |
 | `campaign/models.py` | 지역·시설·부대·차량·재고·작전 상태와 고유 ID |
 | `campaign/scenario.py` | 고정 시나리오 로드와 초기 회계·난수 상태 설정 |
-| `campaign/clock.py` | 세계 시간, 예정 사건, 같은 시각 사건의 처리 순서 |
+| `campaign/clock.py` | 세계 시간·시각 표시, 예정 사건, 같은 시각 사건의 처리 순서 |
 | `campaign/resources.py` | 예약·출발 차감·도착 인계·소비·탈취·손실 회계 |
 | `campaign/routes.py` | 도로 그래프, 경로 탐색, 이동 진행, 차단 처리 |
 | `campaign/logistics.py` | 수요·공급 판단, 운송 편성, 외부 출하와 귀환 |
 | `campaign/simulation.py` | 시간 진행과 규칙 실행, 외부 행동 입력 |
 | `campaign/persistence.py` | JSON 저장·복원과 저장 버전 검사 |
 | `campaign/cli.py` / `campaign/__main__.py` | 콘솔 실행·상태 조회·디버그 개입·시각별 행동 스크립트 |
-| `campaign/viewmodel.py` / `campaign/playback.py` | 보기 전용 좌표·선택·수송대 표시와 프레임 예산 기반 재생 |
-| `campaign/mapart.py` | 지도 외형 생성 보조 함수 |
 | `campaign/scenarios/rear_test.json` | 검증용 지역·도로·초기 자원·운영 수치 |
 | `tests/test_campaign_*.py` | 자원 보존·시간·수송·저장 통합 검증 |
 
