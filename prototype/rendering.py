@@ -165,12 +165,12 @@ class Renderer:
                          (177, 85, 69) if state and state.damage >= 100 else (193, 166, 83))
                 self._rect(view, marker, color)
                 self._rect(view, marker, (228, 219, 174), filled=False)
-        else:
+        elif world.data.get("interaction_markers", True):
             crate = Rect(world.crate[0] - 0.35, world.crate[1] - 0.35, 0.7, 0.7)
             self._rect(view, crate, (183, 156, 76))
             self._rect(view, crate, (228, 205, 137), filled=False)
         safe = Rect(world.safehouse[0] - 1.2, world.safehouse[1] - 1.2, 2.4, 2.4)
-        if view.visible(safe):
+        if world.data.get("interaction_markers", True) and view.visible(safe):
             self._rect(view, safe, (47, 94, 82))
             self._rect(view, safe, (124, 206, 175), filled=False)
             self._rect(view, Rect(world.safehouse[0] - 0.1, world.safehouse[1] - 0.5, 0.2, 1), (206, 225, 202))

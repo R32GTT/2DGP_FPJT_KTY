@@ -105,16 +105,24 @@ def run_window(simulation, *, frames=0):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="그림 맵·미터 좌표·기초 AI·발사·군수 연결 검증 목업")
-    parser.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
+    scene_options = parser.add_mutually_exclusive_group()
+    scene_options.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
+    scene_options.add_argument("--generate", type=int, metavar="SEED", help="시드로 시설 없는 야외 시험 맵 생성")
     parser.add_argument("--ai-scenario", choices=SCENARIOS, help="물류창고 AI 검증 장면")
     parser.add_argument("--headless", action="store_true", help="그래픽 없이 코어만 짧게 실행")
     parser.add_argument("--frames", type=int, default=0, help="지정 프레임 뒤 종료. 0이면 창을 닫을 때까지 실행")
     args = parser.parse_args(argv)
     if args.frames < 0:
         parser.error("프레임 수는 음수일 수 없음")
-    if args.ai_scenario and args.scene.resolve() != DEFAULT_SCENE.resolve():
+    if args.ai_scenario and (args.generate is not None or args.scene.resolve() != DEFAULT_SCENE.resolve()):
         parser.error("--ai-scenario는 기본 지역 장면에서 실행하세요")
-    simulation = PlaySimulation(args.scene, ai_scenario=args.ai_scenario)
+    scene = args.scene
+    if args.generate is not None:
+        from .generation import generate_scene
+        scene = generate_scene(args.generate)
+    simulation = PlaySimulation(scene, ai_scenario=args.ai_scenario)
+    if args.generate is not None:
+        simulation.message = f"야외 이동 시험 · 시드 {args.generate} · WASD 이동 / Shift 달리기 / M 지도 / Esc 종료"
     if args.headless:
         for _ in range(args.frames or 120):
             simulation.step()
