@@ -107,5 +107,3 @@ class MotionController:
     @staticmethod
     def record_step(brain, blocker, time):
         brain.motion.blocked_by = blocker.id if blocker is not None else ""
-        if blocker is not None:
-            brain.motion.progress_at = time

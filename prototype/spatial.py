@@ -1,29 +1,30 @@
-"""정적 배치의 범위 조회. 그림·열린 문·내비게이션 점에 공통으로 사용한다."""
+"""정적 지형·그림·내비게이션 점이 공유하는 지연 생성 공간 인덱스."""
 
-import math
+from shapely import STRtree, box
 
 
 class BoundsIndex:
-    def __init__(self, cell_size=32):
-        self.cell_size = cell_size
-        self.cells = {}
+    def __init__(self):
         self.items = {}
-
-    def _cells(self, rect):
-        for x in range(math.floor(rect.x / self.cell_size), math.floor(rect.right / self.cell_size) + 1):
-            for y in range(math.floor(rect.y / self.cell_size), math.floor(rect.bottom / self.cell_size) + 1):
-                yield x, y
+        self.tree = None
 
     def add(self, key, rect, value):
         if key in self.items:
             raise ValueError(f"중복 공간 항목: {key}")
         self.items[key] = rect, value
-        for cell in self._cells(rect):
-            self.cells.setdefault(cell, set()).add(key)
+        self.tree = None
+
+    def _query(self, shape, predicate=None):
+        if self.tree is None:
+            self.keys = tuple(sorted(self.items))
+            self.tree = STRtree([box(rect.x, rect.y, rect.right, rect.bottom)
+                                 for rect, _ in (self.items[key] for key in self.keys)])
+        return sorted(self.tree.query(shape, predicate=predicate))
+
+    def query_shape(self, shape):
+        return [self.items[self.keys[index]][1] for index in self._query(shape, "intersects")]
 
     def query(self, rect):
-        keys = set()
-        for cell in self._cells(rect):
-            keys.update(self.cells.get(cell, ()))
-        return [self.items[key][1] for key in sorted(keys)
-                if self.items[key][0].overlaps(rect)]
+        return [self.items[self.keys[index]][1]
+                for index in self._query(box(rect.x, rect.y, rect.right, rect.bottom))
+                if self.items[self.keys[index]][0].overlaps(rect)]

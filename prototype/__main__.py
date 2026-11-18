@@ -41,7 +41,7 @@ def run_window(simulation, *, frames=0):
                     stack_variant = simulation.stack_variant
                     if select_stack and simulation.stack_drill:
                         stack_variant = (stack_variant + 1) % len(simulation.world.data["stack_drill"]["layouts"])
-                    simulation = PlaySimulation(simulation.world.path, ai_scenario=scenario,
+                    simulation = PlaySimulation(simulation.world.source, ai_scenario=scenario,
                                                 search_drill=select_drill or simulation.search_drill,
                                                 stack_drill=select_stack or simulation.stack_drill,
                                                 stack_variant=stack_variant)

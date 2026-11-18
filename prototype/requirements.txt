@@ -1,1 +1,6 @@
 pico2d==1.5.1
+py_trees==2.6.0
+shapely==2.2.0
+numpy==2.5.5
+navground==0.7.0
+scipy==1.18.1

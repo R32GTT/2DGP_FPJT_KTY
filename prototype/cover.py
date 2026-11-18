@@ -10,7 +10,7 @@ class CoverFinder:
     def __init__(self, world):
         self.world = world
         self.points = []
-        self.index = BoundsIndex(8)
+        self.index = BoundsIndex()
         for collider in world.geometry.objects.values():
             if collider.kind == "door" or "bullet" not in collider.blocks:
                 continue

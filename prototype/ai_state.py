@@ -5,8 +5,8 @@ from enum import Enum
 import math
 
 from .actors import Actor
-from .indoor_search import CoverageScan, IndoorSweep
-from .perception import Knowledge
+from .indoor_search import IndoorSweep
+from .perception import Knowledge, SOUND_MEMORY_SECONDS
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,7 @@ class MotionState:
 class CombatState:
     fire_at: float = 0.0
     fired_at: float = -1000.0
+    blocked_fire_at: float | None = None
     burst: int = 0
     action: str = ""
     action_goal: tuple | None = None
@@ -110,6 +111,7 @@ class CombatState:
     incoming: tuple | None = None
     incoming_at: float = -1000.0
     combat_alert_until: float = 0.0
+    formation: tuple | None = None
 
 
 @dataclass
@@ -129,13 +131,6 @@ class ScanState:
     walk_look_revision: int = -1
     walk_look_started: bool = False
     exposure: dict[tuple[float, float], float] = field(default_factory=dict)
-    coverage: CoverageScan = field(default_factory=CoverageScan)
-    probe_key: tuple | None = None
-    probes: tuple = ()
-    probe_at: float = 0.0
-    probe_offset: int = 0
-    coverage_goal_cursor: int = 0
-    coverage_retry_at: float = 0.0
     occluded: set[tuple[float, float]] = field(default_factory=set)
     revealed: set[tuple[float, float]] = field(default_factory=set)
     sample_at: float = -math.inf
@@ -178,6 +173,8 @@ class SearchState:
     failed_clue: FailedClue | None = None
     points: list = field(default_factory=list)
     target: tuple | None = None
+    arrival: tuple | None = None
+    reported_check: SearchCue | None = None
     checked: set = field(default_factory=set)
     scan_until: float = 0.0
     scan_angle: float = 0.0
@@ -215,6 +212,13 @@ class Brain:
     def visible(self):
         return self.memory.visible
 
+    def clear_contact(self):
+        self.memory.last_seen = self.memory.reported = None
+        self.search.cue = self.search.target = self.search.cover = self.search.arrival = None
+        self.search.priority_cue = None
+        self.combat.peek_home = self.combat.incoming = self.combat.formation = self.search.reported_check = None
+        set_role(self, "")
+
 
 @dataclass
 class Intent:
@@ -229,19 +233,25 @@ class Intent:
     face_path: bool = False
 
 
-@dataclass(frozen=True)
 class Situation:
-    confirmed: bool
-    investigating: bool
-    incoming: tuple | None
-    tracking: bool
-    reported: bool
-    fresh_sound: bool
-    looking_for_sound: bool
-    urgent: bool
-    old_state: str
-    priority_search: bool
-    distant: bool
+    """한 번의 판단에 사용하는 관측·위험 스냅샷. 개인의 지속 상태는 Brain에 둔다."""
+
+    def __init__(self, actor, brain, player, time):
+        memory, search, combat = brain.memory, brain.search, brain.combat
+        self.investigating = (memory.last_sound is not None and memory.sound_at > search.checked_sound_at
+            and (search.failed_clue is None or search.failed_clue.cue != SearchCue("sound", memory.last_sound, memory.sound_at))
+            and (search.indoor.sound_cue is not None or time - memory.sound_heard_at < SOUND_MEMORY_SECONDS)
+            and (memory.suspicion >= 0.3 or actor.state in {"alert", "search", "regroup"}))
+        self.confirmed = time < combat.combat_alert_until
+        self.incoming = combat.incoming if time - combat.incoming_at < (12 if self.confirmed else 4) else None
+        self.tracking = self.confirmed and memory.last_seen is not None
+        self.reported = self.confirmed and memory.reported is not None
+        self.fresh_sound = time < search.look_until
+        self.looking_for_sound = not (self.tracking or self.investigating or self.reported) and self.fresh_sound
+        self.old_state = actor.state
+        self.urgent = actor.hp < 20 or actor.hurt_until > time or combat.suppression >= 0.55
+        self.distant = math.dist(actor.xy, player.xy) > 60 and not (self.investigating or self.confirmed or self.incoming is not None)
+        self.priority_search = search.investigating_priority
 
 
 @dataclass(frozen=True)
@@ -249,6 +259,12 @@ class ActionPlan:
     goal: tuple | None
     threat: tuple | None = None
     sound_sweep: IndoorSweep | None = None
+    mode: str = ""
+    face: bool = False
+    approximate: bool = False
+    room_sweep: bool = False
+    priority: bool = False
+    approach: str | tuple | None = None
 
 @dataclass
 class ApproachMove:

@@ -72,4 +72,15 @@ def instantiate(row, definition):
                 "rect": placement.rect(rect), "campaign_id": row.get("campaign_id", ""),
                 "position": list(placement.position), "terminal": list(nodes[prefix + "terminal"]),
                 "service_node": row["service_node"]}
+    layout = definition.get("search_layout")
+    if layout:
+        facility["search_layout"] = {
+            **layout,
+            "corner_points": [placement.point(point) for point in layout.get("corner_points", ())],
+            "observation_points": [placement.point(point) for point in layout.get("observation_points", ())],
+            "entry_poses": [{"position": placement.point(pose["position"]), "look": placement.point(pose["look"])}
+                            for pose in layout.get("entry_poses", ())],
+        }
+        if layout.get("corner_axis") is not None:
+            facility["search_layout"]["corner_axis"] = (layout["corner_axis"] + placement.turns) % 2
     return layers, colliders, nodes, edges, facility

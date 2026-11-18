@@ -1,6 +1,7 @@
 """이미지 레이어·미터 판정·내비게이션을 별도로 읽는 목업 월드."""
 
 from dataclasses import dataclass
+from copy import deepcopy
 import json
 import math
 from pathlib import Path
@@ -37,8 +38,10 @@ class ImageLayer:
 
 class World:
     def __init__(self, path=DEFAULT_SCENE):
-        self.path = Path(path)
-        self.data = json.loads(self.path.read_text(encoding="utf-8"))
+        # 생성기는 기존 장면 형식의 데이터를 직접 전달할 수 있다.
+        self.path = None if isinstance(path, dict) else Path(path)
+        self.source = deepcopy(path) if self.path is None else self.path
+        self.data = self.source if self.path is None else json.loads(self.path.read_text(encoding="utf-8"))
         if self.data.get("format") == "revenant.region_scene.v1":
             self.data = build_region(self.data, ROOT)
         if self.data.get("format") != "revenant.image_scene.v1":
@@ -48,7 +51,7 @@ class World:
                                   tuple(row["color"]), row.get("fallback", ""), row.get("style", ""),
                                   row.get("variant", 0), row.get("rotation", 0), tuple(row.get("image_size", ())), index)
                        for index, row in enumerate(self.data["layers"])]
-        self.layer_index, self.collider_index = BoundsIndex(64), BoundsIndex(32)
+        self.layer_index, self.collider_index = BoundsIndex(), BoundsIndex()
         for layer in self.layers:
             self.layer_index.add(layer.id, layer.rect, layer)
         self.geometry = SpatialIndex()

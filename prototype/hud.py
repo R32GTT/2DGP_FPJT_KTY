@@ -8,7 +8,6 @@ from time import perf_counter
 import pico2d as pico
 
 from campaign.viewmodel import world_clock
-from .geometry import Rect
 from .indoor_search import SEARCHER_ACTIVE_S
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
@@ -20,7 +19,7 @@ AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding
 AI_ROLES = {"pursue": "추격", "intercept": "차단", "sweep": "수색", "hold": "경계"}
 AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reload": "재장전",
               "fire": "사격", "advance": "접근", "flank": "측면 이동",
-              "peek": "피킹", "peek_return": "엄폐 복귀"}
+              "peek": "피킹", "peek_return": "엄폐 복귀", "reposition": "사선 확보", "wait": "사격 대기"}
 SOUND_RESPONSES = {"new": "총성 감지", "renewed": "총성 재조사", "same_area": "총성 감지 · 경로 유지",
                    "out_of_range": "총성 감지 범위 밖", "no_estimate": "총성 감지 · 위치 추정 실패",
                    "checked": "총성 조사 종료", "unreachable": "소리 위치에 접근할 수 없음"}
@@ -28,27 +27,6 @@ SEARCH_CONFIRMED = (96, 236, 186)
 SEARCH_VISIBLE = (255, 108, 98)
 SEARCH_OCCLUDED = (255, 215, 83)
 SEARCH_OUTSIDE = (203, 210, 206)
-
-def _merge_coverage_rows(rects):
-    rows = sorted(rects, key=lambda rect: (round(rect.y, 9), round(rect.h, 9), rect.x))
-    merged = []
-    for rect in rows:
-        if merged:
-            previous = merged[-1]
-            if (math.isclose(previous.y, rect.y, abs_tol=1e-9, rel_tol=0)
-                    and math.isclose(previous.h, rect.h, abs_tol=1e-9, rel_tol=0)
-                    and math.isclose(previous.right, rect.x, abs_tol=1e-9, rel_tol=0)):
-                merged[-1] = Rect(previous.x, previous.y, rect.right - previous.x, previous.h)
-                continue
-        merged.append(rect)
-    return merged
-
-
-def _merge_coverage_rects(cells):
-    horizontal = _merge_coverage_rows(cell.rect for cell in cells)
-    vertical = _merge_coverage_rows(Rect(rect.y, rect.x, rect.h, rect.w) for rect in horizontal)
-    return tuple(Rect(rect.y, rect.x, rect.h, rect.w) for rect in vertical)
-
 
 class HUD:
     def __init__(self, backend):
@@ -62,7 +40,6 @@ class HUD:
         self.last_message = ""
         self.message_until = 0.0
         self.ai_rows = 0
-        self.coverage_overlay = {}
 
     def label(self, key, text, size=16, color=(223, 230, 218)):
         if not text:
@@ -227,13 +204,9 @@ class HUD:
         legend_y = height - (156 if "ai_hint" in self.labels else 136)
         self.text("ai_legend", 24, legend_y)
         if search_counts is not None:
-            checked, total, blocked, covered_area, total_area = search_counts
-            if total_area:
-                counts = f"화면 안 면적 · 확인 {covered_area:.2f}㎡ · 미확인 {total_area - covered_area:.2f}㎡"
-                legend = "청록 확인 면적 · 노랑 미확인 면적"
-            else:
-                counts = f"화면 안 표본 · 확인 {checked}/{total} · 미확인 {total - checked} · 가림 {blocked}"
-                legend = "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖"
+            checked, total, blocked = search_counts
+            counts = f"화면 안 수색 지점 · 확인 {checked}/{total} · 미확인 {total - checked} · 가림 {blocked}"
+            legend = "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖"
             self.label("search_counts", counts, 13)
             self.label("search_legend", legend, 13)
             self.text("search_counts", 24, legend_y - 20)
@@ -423,34 +396,11 @@ class HUD:
                 if previous is None or sweep.evidence_at >= previous.evidence_at:
                     sweeps[sweep.area.id] = sweep
         checked_count = total = blocked_count = 0
-        covered_area = total_area = 0.0
         bounds = view.viewport()
         radius = max(5, min(10, round(view.scale * 0.18)))
         for area in world.search_areas:
             sweep = sweeps.get(area.id)
             if sweep is None and not world.data.get("training_facility"):
-                continue
-            if area.coverage_cells:
-                cached = self.coverage_overlay.get(area.id)
-                revision = sweep.coverage_revision if sweep is not None else -1
-                if cached is None or cached[0] is not area or cached[1] is not sweep or cached[2] != revision:
-                    confirmed = _merge_coverage_rects(sweep.covered_cells) if sweep is not None else ()
-                    pending = _merge_coverage_rects(sweep.pending_cells if sweep is not None else area.coverage_cells)
-                    cached = self.coverage_overlay[area.id] = area, sweep, revision, confirmed, pending
-                for rects, confirmed in ((cached[3], True), (cached[4], False)):
-                    for rect in rects:
-                        left, right = max(rect.x, bounds.x), min(rect.right, bounds.right)
-                        top, bottom = max(rect.y, bounds.y), min(rect.bottom, bounds.bottom)
-                        if right <= left or bottom <= top:
-                            continue
-                        surface = (right - left) * (bottom - top)
-                        total_area += surface
-                        if confirmed:
-                            covered_area += surface
-                        x0, y1 = view.pico(left, top)
-                        x1, y0 = view.pico(right, bottom)
-                        color = SEARCH_CONFIRMED if confirmed else SEARCH_OCCLUDED
-                        pico.draw_rectangle(x0, y0, x1, y1, *color, 75, filled=True)
                 continue
             samples = tuple((x, y) for x, y in area.points
                             if bounds.x <= x <= bounds.right and bounds.y <= y <= bounds.bottom)
@@ -485,7 +435,7 @@ class HUD:
                 else:
                     color = SEARCH_VISIBLE if sample in visible else SEARCH_OUTSIDE
                     pico.draw_rectangle(*box, *color)
-        return (checked_count, total, blocked_count, covered_area, total_area) if total or total_area else None
+        return (checked_count, total, blocked_count) if total else None
 
     def _region_map(self, simulation, camera, debug):
         self.panel(60, 166, camera.width - 120, camera.height - 246)
@@ -549,7 +499,6 @@ class HUD:
 
     def close(self):
         self.labels.clear()
-        self.coverage_overlay.clear()
         for font in self.fonts.values():
             self.backend.TTF_CloseFont(font.font)
         self.fonts.clear()

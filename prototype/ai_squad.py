@@ -3,8 +3,11 @@
 from .ai_state import MoveRequest, ScanPhase
 import math
 
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial import cKDTree
+
 from campaign.viewmodel import segment_distance
-from .ai_state import Incident, set_role
+from .ai_state import Incident, SearchCue, set_role
 from .squad_approach import SquadApproach, assign_approach
 
 from . import ai_config as config
@@ -20,15 +23,7 @@ class SquadCoordinator:
     def report_sighting(self, actor, brain, actors, time):
         brain.radio_at = time + 4
         point = tuple(round(axis / 4) * 4 for axis in brain.memory.last_seen)
-        receivers = []
-        for other in actors:
-            if other.id == actor.id or other.hp <= 0:
-                continue
-            distance = math.dist(actor.xy, other.xy)
-            local = distance <= 14 and self.world.geometry.raycast(actor.xy, other.xy) is None
-            radio = not local and distance <= 75 and self.can_radio and self.can_radio(actor, other)
-            if local or radio:
-                receivers.append(other)
+        receivers = self.receivers(actor, actors)
         if not receivers:
             return
         key = brain.incident if brain.incident in self.incidents else actor.id
@@ -59,6 +54,23 @@ class SquadCoordinator:
                     ally.sense_at = min(ally.sense_at, time)
                 ally.memory.report_source = incident.reporter
                 ally.memory.reported_at = incident.sighting_at
+
+    def receivers(self, actor, actors):
+        return [other for other in actors if other.id != actor.id and other.hp > 0 and other.team == actor.team
+            and ((other.position.floor == actor.position.floor and math.dist(actor.xy, other.xy) <= 14
+                  and self.world.geometry.raycast(actor.xy, other.xy) is None)
+                 or (math.dist(actor.xy, other.xy) <= 75 and self.can_radio and self.can_radio(actor, other)))]
+
+    def report_inspection(self, actor, brain, actors, cue, time):
+        report = brain.search.reported_check
+        if report is None or report.kind != cue.kind or report.point != cue.point or report.at < cue.at:
+            report = SearchCue(cue.kind, cue.point, time)
+        for other in self.receivers(actor, actors):
+            ally = self.brains[other.id]
+            same_squad = actor.source_unit == other.source_unit if actor.source_unit else brain.incident and brain.incident == ally.incident
+            if (same_squad and ally.search.priority_cue is not None and ally.search.priority_cue.point == cue.point
+                    and (ally.search.reported_check is None or report.at >= ally.search.reported_check.at)):
+                ally.search.reported_check = report
 
     def assign_roles(self, actors, time):
         if time < self.assign_at:
@@ -105,83 +117,46 @@ class SquadCoordinator:
                 set_role(self.brains[actor.id], "hold")
 
     def update_regroups(self, actors, time):
-        nav = self.world.navigation
+        nav, revision = self.world.navigation, self.world.revision
         for key, incident in self.incidents.items():
             sweep = incident.indoor
             if sweep is None or sweep.regroup_done or not sweep.complete:
                 continue
-            members = [actor for actor in actors if actor.hp > 0 and not actor.transport_boarding
-                       and self.brains[actor.id].incident == key]
-            if not members or any(self.brains[actor.id].visible or self.brains[actor.id].search.investigating_priority
-                                  or self.brains[actor.id].search.indoor.scanning
-                                  for actor in members):
+            members = [a for a in actors if a.hp > 0 and not a.transport_boarding and self.brains[a.id].incident == key]
+            if not members or any(self.brains[a.id].visible or self.brains[a.id].search.investigating_priority
+                                  or self.brains[a.id].search.indoor.scanning for a in members):
                 continue
-            roster = {actor.id for actor in members}
-            sweep.regroup_slots = {actor_id: point for actor_id, point in sweep.regroup_slots.items()
-                                   if actor_id in roster and nav.walkable(point)}
-            for actor in members:
-                brain = self.brains[actor.id]
-                if brain.motion.route_failed and brain.motion.path_revision == self.world.revision and brain.motion.goal is not None:
-                    if sweep.regroup_slots.get(actor.id) == brain.motion.goal:
-                        sweep.regroup_slots.pop(actor.id)
+            sweep.regroup_slots = {a.id: point for a in members
+                if (point := sweep.regroup_slots.get(a.id)) is not None and nav.walkable(point)
+                and not self.brains[a.id].motion.failed(point, revision)}
             if len(sweep.regroup_slots) < len(members) and time >= sweep.regroup_retry_at:
                 sweep.regroup_retry_at = time + 0.5
-                centers = sorted(sweep.area.points, key=lambda point: (math.dist(point, sweep.anchor), point))[:10]
-                floors = sweep.area.floors
-                extent = math.hypot(max(rect.right for rect in floors) - min(rect.x for rect in floors),
-                                    max(rect.bottom for rect in floors) - min(rect.y for rect in floors))
-                clearance = 2 * max(actor.radius for actor in members) + 0.1
-                spacing = max(0.9, clearance + 0.06)
-                center, slots = max(((point, self.rally_slots(nav, point, extent=extent, floors=floors,
-                                                             spacing=spacing, required=len(members))) for point in centers),
-                                    key=lambda entry: (min(len(entry[1]), len(members)),
-                                                       -math.dist(entry[0], sweep.anchor)))
-                slots = [slot for slot in slots if all(math.dist(slot, taken) >= clearance
-                                                       for taken in sweep.regroup_slots.values())]
-                # 같은 집결 좌표를 공유하면 몸체 충돌로 완료 판정에 도달하지 못한다.
-                remaining = (actor for actor in members if actor.id not in sweep.regroup_slots)
-                for actor in sorted(remaining, key=lambda item: (math.dist(item.xy, center), item.id)):
-                    for slot in sorted(slots, key=lambda point: (math.dist(actor.xy, point), point)):
-                        if nav.route(actor.xy, slot, allow_doors=True):
-                            sweep.regroup_slots[actor.id] = slot
-                            slots.remove(slot)
-                            break
-            self.unblock_regroup(sweep, members)
-            arrived = all(actor.id in sweep.regroup_slots
-                          and math.dist(actor.xy, sweep.regroup_slots[actor.id]) <= config.REGROUP_ARRIVAL_M for actor in members)
-            if not arrived:
-                sweep.regroup_until = None
-            elif sweep.regroup_until is None:
-                sweep.regroup_until = time + config.REGROUP_HOLD_S
-            elif time >= sweep.regroup_until:
+                positions = [a.xy for a in members]
+                spacing = max(0.9, 2 * max(a.radius for a in members) + 0.16)
+                if min(cKDTree(positions).query(positions, k=2)[0][:, 1]) >= spacing:
+                    slots = positions
+                else:
+                    center = tuple(sum(p[i] for p in positions) / len(positions) for i in range(2))
+                    if not nav.walkable(center):
+                        center = min(sweep.area.points, key=lambda p: math.dist(p, center))
+                    slots = self.rally_slots(nav, center, floors=sweep.area.floors, spacing=spacing,
+                        extent=max(math.hypot(r.w, r.h) for r in sweep.area.floors), required=len(members))
+                slots = [p for p in slots if all(math.dist(p, taken) >= spacing for taken in sweep.regroup_slots.values())]
+                remaining = [a for a in members if a.id not in sweep.regroup_slots]
+                if remaining and slots:
+                    rows, columns = linear_sum_assignment([[math.dist(a.xy, p) for p in slots] for a in remaining])
+                    sweep.regroup_slots.update((remaining[i].id, slots[j]) for i, j in zip(rows, columns)
+                                              if nav.route(remaining[i].xy, slots[j], allow_doors=True))
+            arrived = all(a.id in sweep.regroup_slots and math.dist(a.xy, sweep.regroup_slots[a.id]) <= config.REGROUP_ARRIVAL_M for a in members)
+            sweep.regroup_until = (sweep.regroup_until or time + config.REGROUP_HOLD_S) if arrived else None
+            if sweep.regroup_until is not None and time >= sweep.regroup_until:
                 sweep.regroup_done = True
                 for actor in members:
                     brain = self.brains[actor.id]
-                    brain.incident = ""
-                    brain.combat.combat_alert_until = 0.0
-                    brain.search.next_sweep_at = 0.0
-                    brain.memory.last_seen = brain.memory.reported = None
-                    brain.combat.incoming = None
-                    brain.search.indoor.sweep = brain.search.indoor.target = None
-                    brain.motion.yield_point = None
+                    brain.incident, brain.combat.combat_alert_until, brain.search.next_sweep_at = "", 0.0, 0.0
+                    brain.clear_contact()
+                    brain.search.indoor.sweep = brain.search.indoor.target = brain.motion.yield_point = None
                     brain.search.indoor.phase = ScanPhase.IDLE
-                    set_role(brain, "")
-
-    def unblock_regroup(self, sweep, members):
-        present = {actor.id: actor for actor in members}
-        for actor in members:
-            blocker = present.get(self.brains[actor.id].motion.blocked_by)
-            if blocker is None or actor.id not in sweep.regroup_slots or blocker.id not in sweep.regroup_slots:
-                continue
-            pair = tuple(sorted((actor.id, blocker.id)))
-            goal, occupied = sweep.regroup_slots[actor.id], sweep.regroup_slots[blocker.id]
-            mutual = self.brains[blocker.id].motion.blocked_by == actor.id
-            settled = (math.dist(blocker.xy, occupied) <= config.REGROUP_ARRIVAL_M
-                       and math.dist(actor.xy, occupied) + 0.25 < math.dist(actor.xy, goal))
-            if pair not in sweep.regroup_swaps and (mutual or settled):
-                # 서 있거나 정면에서 마주친 NPC 때문에 막힌 집결 자리를 맞바꾼다.
-                sweep.regroup_slots[actor.id], sweep.regroup_slots[blocker.id] = occupied, goal
-                sweep.regroup_swaps.add(pair)
 
     def unblock_search(self, actors, time):
         living = {actor.id: actor for actor in actors if actor.hp > 0}
@@ -189,8 +164,8 @@ class SquadCoordinator:
         for actor in living.values():
             brain = self.brains[actor.id]
             blocker = living.get(brain.motion.blocked_by)
-            has_search_target = brain.search.indoor.target is not None or brain.search.investigating_priority
-            if actor.state != "search" or not has_search_target or not brain.motion.path or blocker is None:
+            has_search_target = brain.search.indoor.target is not None or brain.search.investigating_priority or actor.state == "regroup"
+            if actor.state not in {"search", "regroup"} or not has_search_target or not brain.motion.path or blocker is None:
                 continue
             other = self.brains[blocker.id]
             if (other.incident != brain.incident or other.visible or other.motion.yield_point is not None
@@ -237,7 +212,7 @@ class SquadCoordinator:
         return slots
 
     def move_approaches(self, groups, time, budget, motion, search):
-        active = {}
+        active = {key: plan for key, plan in self.approaches.items() if time < plan.valid_until}
         nav, revision = self.world.navigation, self.world.revision
         for key, requests in groups.items():
             investigating = key[-1] != "advance"
@@ -260,29 +235,44 @@ class SquadCoordinator:
                         plan.orders[actor.id] = None
                         plan.retry_at = time
                 plan.revision = revision
-            if len(members) > 1 and shared_target and (plan is None or time >= plan.retry_at
-                                                       or any(actor.id not in plan.orders for actor in members)):
+            if plan is not None and any(a.id not in plan.orders for a in members):
+                plan.orders.update((a.id, None) for a in members if a.id not in plan.orders)
+                plan.retry_at = min(plan.retry_at, time + 0.1)
+            if len(members) > 1 and shared_target and (plan is None or time >= plan.retry_at):
                 distance = config.INVESTIGATION_SPREAD_DISTANCE if investigating else config.ADVANCE_DISTANCE - 0.05
                 anchor = plan.target if plan is not None else target
+                occupied = [order.destination for other_key, other_plan in (self.approaches | active).items()
+                            if other_key != key and other_key in groups and other_key[1] == key[1]
+                            for order in other_plan.orders.values() if order is not None]
+                center = tuple(sum(a.xy[i] for a in members) / len(members) for i in range(2))
+                heading = plan.heading if plan is not None else math.atan2(anchor[1] - center[1], anchor[0] - center[0])
                 orders = assign_approach(nav, members, anchor, distance, investigating=investigating,
-                                         previous=plan.orders if plan is not None else None)
+                    previous=plan.orders if plan is not None else None, occupied=occupied, heading=heading)
                 retry_at = time + config.APPROACH_RETRY_SECONDS if any(order is None for order in orders.values()) else math.inf
-                plan = SquadApproach(anchor, revision, orders, retry_at)
+                plan = SquadApproach(anchor, revision, orders, retry_at, heading=heading)
             if plan is not None:
+                plan.valid_until = time + 14
                 active[key] = plan
             for move in requests:
                 actor, brain, intent = move.actor, move.brain, move.intent
                 order = plan.orders.get(actor.id) if plan is not None else None
                 goal = move.goal
-                if order is not None and not order.passed:
-                    goal = order.goal_from(actor.xy)
-                    if investigating and goal == order.destination and math.dist(actor.xy, goal) <= 0.12:
-                        order.passed = True
-                        goal = move.goal
+                if order is not None:
+                    goal = order.goal_from(actor.xy, nav)
+                    if not investigating:
+                        brain.combat.formation = plan.target, order.destination
+                        brain.combat.action_goal = order.destination
+                    if investigating:
+                        indoor = self.world.indoor_search_area(move.goal) is not None
+                        brain.search.arrival = None if indoor else (move.goal, order)
+                        if (not indoor and order.waypoint is None) or (goal == order.destination and math.dist(actor.xy, goal) <= 0.12):
+                            order.passed = True
+                        if indoor and order.passed:
+                            goal = move.goal
                 request = MoveRequest(
                     goal, face=investigating and not move.priority,
                     approximate=move.approximate and goal == move.goal,
-                    precise=order is not None and not order.passed,
+                    precise=order is not None and (not investigating or brain.search.arrival is not None or not order.passed),
                 )
                 budget = motion.move(actor, brain, intent, request, time, budget)
                 if move.priority:

@@ -20,6 +20,19 @@ class CombatController:
                    and math.dist(other.xy, threat) <= other.weapon.spec.range_m
                    for other in actors)
 
+    def record_attempt(self, actor, threat, time, fired):
+        combat = self.brains[actor.id].combat
+        if fired:
+            combat.blocked_fire_at = None
+            self.record_shot(actor, time)
+        elif combat.blocked_fire_at is None:
+            combat.blocked_fire_at = time
+        elif time - combat.blocked_fire_at >= 0.4:
+            goal = self.cover_finder.peek(actor, threat)
+            combat.action, combat.action_goal = ("reposition", goal) if goal is not None else ("wait", None)
+            combat.action_until = time + (1.0 if goal is not None else 0.5)
+            combat.blocked_fire_at = None
+
     def record_shot(self, actor, time):
         brain = self.brains[actor.id]
         burst_size = 2 if brain.combat.suppression >= 0.3 or brain.combat.action == "peek" else 4
@@ -42,6 +55,8 @@ class CombatController:
         route_failed = combat.action_goal is not None and combat.action_goal == brain.motion.goal and brain.motion.route_failed
         safe_action = combat.action in {"cover", "retreat", "pin"}
         needs_reload = weapon is not None and (weapon.reloading or not weapon.chambered)
+        if combat.action == "reposition" and combat.action_goal is not None and math.dist(actor.xy, combat.action_goal) <= 0.15:
+            combat.action_until = time
         if combat.action == "cover" and combat.action_goal is not None and not route_failed:
             if self.cover_exposed(brain, threat):
                 route_failed = True
@@ -83,6 +98,14 @@ class CombatController:
 
         distance = math.dist(actor.xy, threat)
         combat.action, combat.action_until = "fire", time + 1.3
+        if combat.formation is not None:
+            anchor, destination = combat.formation
+            if (math.dist(anchor, threat) <= 1.5 and self.world.navigation.walkable(destination)
+                    and not brain.motion.failed(destination, self.world.revision)):
+                if math.dist(actor.xy, destination) > 0.12:
+                    combat.action, combat.action_goal = "advance", destination
+                return
+            combat.formation = None
         if distance > config.ADVANCE_DISTANCE:
             combat.action, combat.action_goal = "advance", threat
             return
@@ -117,9 +140,10 @@ class CombatController:
                                           or actor.weapon is None or not actor.weapon.chambered
                                           or (brain.motion.goal == combat.action_goal and brain.motion.route_failed)):
                 combat.action, combat.action_goal = "peek_return", combat.peek_home
-            if combat.action == "peek_return" and (
-                    math.dist(actor.xy, combat.peek_home) <= 0.3
-                    or (brain.motion.goal == combat.peek_home and brain.motion.route_failed)):
+            if (combat.action == "peek_return" and brain.motion.failed(combat.peek_home, self.world.revision)):
+                combat.peek_home = None
+                return False
+            if combat.action == "peek_return" and math.dist(actor.xy, combat.peek_home) <= 0.3:
                 combat.action, combat.action_goal = "cover", combat.peek_home
                 combat.peek_home = None
                 combat.peek_at = time + config.PEEK_RECOVERY_SECONDS

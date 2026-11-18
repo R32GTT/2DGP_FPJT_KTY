@@ -4,17 +4,18 @@ from collections import OrderedDict
 import heapq
 import math
 
+from .actors import Actor
 from .geometry import Rect
 from .spatial import BoundsIndex
 
 
 class Navigation:
-    def __init__(self, nodes, edges, geometry, clearance=0.25, bounds=None):
+    def __init__(self, nodes, edges, geometry, clearance=Actor.radius, bounds=None):
         self.nodes, self.geometry = nodes, geometry
         self.clearance = clearance
         self.bounds = bounds
         self.edges = {key: [] for key in nodes}
-        self.point_index = BoundsIndex(32)
+        self.point_index = BoundsIndex()
         self.edge_cache, self.goal_cache = {}, OrderedDict()
         for key, point in nodes.items():
             if key.startswith("@"):
