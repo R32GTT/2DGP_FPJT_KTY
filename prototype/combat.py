@@ -88,7 +88,7 @@ class Combat:
             self.actor_indexes[actor.position.floor].add(Collider(actor.id, body, blocks=("bullet",)))
 
     def _damage(self, victim, damage, time, **context):
-        if victim.hp <= 0:
+        if victim.hp <= 0 or damage <= 0:
             return False
         absorbed = min(victim.armor, int(damage * 0.6))
         victim.armor -= absorbed
@@ -100,7 +100,7 @@ class Combat:
             self.events.emit("killed", time, victim, **context)
         return True
 
-    def fire(self, actor, world, time, *, aiming=False, moving=False, sprint=False):
+    def fire(self, actor, world, time):
         weapon = actor.weapon
         if actor.hp <= 0 or weapon is None or time < actor.equip_until or not weapon.fire(time):
             return False
@@ -108,8 +108,7 @@ class Combat:
         self.shots += 1
         self.events.emit("weapon_fired", time, actor, weapon=spec.id)
         self.events.emit("noise", time, actor, radius=spec.noise_radius, strength=0.8, reason="gunshot")
-        spread = spec.spread_degrees * (8 if actor.team == "enemy" else 1)
-        spread *= (3 if moving else 1) * (2 if sprint else 1) * (0.55 if aiming else 1)
+        spread = weapon.shot_spread_deg * (spec.enemy_spread_multiplier if actor.team == "enemy" else 1)
         angle = actor.facing + math.radians(self.random.uniform(-spread, spread))
         muzzle = weapon_pose(actor)[1]
         floor = actor.position.floor
@@ -138,7 +137,8 @@ class Combat:
                 endpoint = (muzzle[0] + (end[0] - muzzle[0]) * hit, muzzle[1] + (end[1] - muzzle[1]) * hit)
                 impact = True
                 if victim is not None and victim.team != actor.team:
-                    self._damage(victim, spec.damage, time, vehicle_id=truck.id, incoming=angle + math.pi)
+                    damage = spec.damage_at(math.dist(muzzle, endpoint))
+                    self._damage(victim, damage, time, vehicle_id=truck.id, incoming=angle + math.pi)
                 break
             if target is not None and (wall is None or target[0] < wall[0]):
                 impact = False
@@ -147,7 +147,7 @@ class Combat:
                 endpoint = (muzzle[0] + (end[0] - muzzle[0]) * hit, muzzle[1] + (end[1] - muzzle[1]) * hit)
                 if victim.team == actor.team:
                     break
-                if self._damage(victim, spec.damage, time):
+                if self._damage(victim, spec.damage_at(math.dist(muzzle, endpoint)), time):
                     damaged.add(key)
                 ignored_actors.add(key)
             elif wall is not None:

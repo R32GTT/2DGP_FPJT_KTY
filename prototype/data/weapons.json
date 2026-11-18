@@ -1,8 +1,14 @@
 [
   {
     "id":"ar_a", "name":"AR-01", "capacity":30, "reserve":90,
+    "ammo_type":"", "automatic":true,
     "fire_interval":0.17, "damage":18, "range_m":60, "noise_radius":30,
+    "damage_curve":[[0,18],[40,18],[60,0]],
     "spread_degrees":0.7, "penetration":1, "reload_move_multiplier":0.45, "image":"assets/prototype/rifle_a.png",
+    "spread_per_shot_deg":0.25, "spread_max_deg":3.0,
+    "spread_recovery_delay_s":0.25, "spread_recovery_deg_per_s":2.0,
+    "aim_spread_multiplier":0.6, "aim_settle_s":0.25,
+    "move_spread_deg_per_mps":0.15, "sprint_spread_multiplier":3.0, "enemy_spread_multiplier":8.0,
     "size_m":[0.9,0.225], "mount":[0.08,0.1], "grip":[0.2,0.5], "muzzle":[0.98,0.5],
     "reload_stages":[
       {"id":"remove_magazine","duration":0.5,"noise_radius":2},
@@ -12,13 +18,36 @@
   },
   {
     "id":"ar_b", "name":"AR-02", "capacity":20, "reserve":60,
+    "ammo_type":"", "automatic":true,
     "fire_interval":0.23, "damage":25, "range_m":70, "noise_radius":36,
+    "damage_curve":[[0,25],[50,25],[70,0]],
     "spread_degrees":0.5, "penetration":1, "reload_move_multiplier":0.35, "image":"assets/prototype/rifle_b.png",
+    "spread_per_shot_deg":0.25, "spread_max_deg":3.0,
+    "spread_recovery_delay_s":0.25, "spread_recovery_deg_per_s":2.0,
+    "aim_spread_multiplier":0.6, "aim_settle_s":0.25,
+    "move_spread_deg_per_mps":0.15, "sprint_spread_multiplier":3.0, "enemy_spread_multiplier":8.0,
     "size_m":[1.0,0.225], "mount":[0.08,0.1], "grip":[0.18,0.5], "muzzle":[0.98,0.5],
     "reload_stages":[
       {"id":"remove_magazine","duration":0.65,"noise_radius":2},
       {"id":"insert_magazine","duration":1.25,"noise_radius":2},
       {"id":"bolt_catch","duration":0.7,"noise_radius":4}
+    ]
+  },
+  {
+    "id":"pistol_45", "name":".45 Pistol", "capacity":12, "reserve":48,
+    "ammo_type":".45 ACP", "automatic":false,
+    "fire_interval":0.2, "damage":70, "range_m":75, "noise_radius":30,
+    "damage_curve":[[0,70],[25,65],[50,50],[75,0]],
+    "spread_degrees":1.0, "penetration":0, "reload_move_multiplier":0.4,
+    "spread_per_shot_deg":0.25, "spread_max_deg":3.0,
+    "spread_recovery_delay_s":0.25, "spread_recovery_deg_per_s":2.0,
+    "aim_spread_multiplier":0.6, "aim_settle_s":0.25,
+    "move_spread_deg_per_mps":0.15, "sprint_spread_multiplier":3.0, "enemy_spread_multiplier":8.0,
+    "image":"", "size_m":[0.25,0.12], "mount":[0.08,0.1], "grip":[0.2,0.5], "muzzle":[0.98,0.5],
+    "reload_stages":[
+      {"id":"remove_magazine","duration":0.3,"noise_radius":2},
+      {"id":"insert_magazine","duration":1.0,"noise_radius":2},
+      {"id":"bolt_catch","duration":0.4,"noise_radius":4}
     ]
   }
 ]

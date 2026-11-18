@@ -132,7 +132,7 @@ class HUD:
             territory = simulation.world.territory_at(player.xy)
             name = simulation.world.data["territories"].get(territory, {}).get("name", "지역 사이 연결로")
             self.label("campaign_location", name, 16, (118, 215, 191))
-        self.label("vitals", f"HP {player.hp:03d}   ARMOR {player.armor:02d}", 16)
+        self.label("vitals", f"HP {player.hp:03.0f}   ARMOR {player.armor:02d}", 16)
         self.label("weapon", weapon.spec.name if weapon else "UNARMED", 24)
         self.label("ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}" if weapon else "-- / ---", 24)
         mode = "AUTO" if weapon and weapon.automatic else "SEMI"
@@ -211,7 +211,7 @@ class HUD:
         player, weapon = simulation.player, simulation.player.weapon
         day, time = world_clock(simulation.campaign.simulation.state.world_time).split()
         self.label("game_clock", f"{time}  ·  {int(day[1:])}일차", 16)
-        self.label("game_vitals", f"HP {player.hp}   ·   방어 {player.armor}", 16)
+        self.label("game_vitals", f"HP {player.hp:.0f}   ·   방어 {player.armor}", 16)
 
         left, base, width = 12, 12, 236
         show_reload = weapon is not None and (weapon.reloading or weapon.stage > 0)

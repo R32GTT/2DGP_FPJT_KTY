@@ -244,9 +244,14 @@ class Renderer:
             pico.draw_line(*view.pico(*trace.start), *view.pico(*trace.end), *color)
         if mouse is not None and simulation.player.hp > 0:
             # 흔들리는 화면에서도 실제 조준한 월드 지점에 조준점을 함께 그린다.
-            x, y = view.pico(*camera.world(*mouse))
-            for dx, dy in ((-9, 0), (9, 0), (0, -9), (0, 9)):
-                pico.draw_line(x + dx * 0.5, y + dy * 0.5, x + dx, y + dy, 226, 230, 202)
+            aim = camera.world(*mouse)
+            x, y = view.pico(*aim)
+            weapon = simulation.player.weapon
+            spread = weapon.spread_deg if weapon is not None else 0
+            gap = max(4, math.dist(simulation.player.xy, aim) * view.scale * math.tan(math.radians(spread)))
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                pico.draw_line(x + dx * gap, y + dy * gap, x + dx * (gap + 5), y + dy * (gap + 5),
+                               226, 230, 202)
         if simulation.feedback.alpha > 0.001:
             self.vignette.opacify(simulation.feedback.alpha)
             self.vignette.draw(camera.width / 2, camera.height / 2, camera.width, camera.height)

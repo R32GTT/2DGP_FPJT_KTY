@@ -214,6 +214,10 @@ class PlaySimulation:
                 self.events.emit("noise", self.time, self.player, radius=12 if sprint else 5,
                                  strength=0.45 if sprint else 0.25, reason="footstep")
                 self.footstep_at = self.time + (0.35 if sprint else 0.5)
+            if self.player.weapon is not None:
+                self.player.weapon.update_accuracy(
+                    FIXED_DT, aiming=aiming, movement_speed_mps=math.dist(previous, self.player.xy) / FIXED_DT,
+                    sprinting=sprint and not walking)
         self._dispatch()
         intents = self.ai.update(self.guards, self.player, self.time)
         active_guards = [actor for actor in self.guards if actor.hp > 0]
@@ -231,8 +235,12 @@ class PlaySimulation:
                         self.events.emit("noise", self.time, actor, radius=4, strength=0.25, reason="door")
                 speed = actor.speed * intent.move_multiplier * (actor.weapon.spec.reload_move_multiplier
                                        if actor.weapon and actor.weapon.reloading else 1)
+                guard_previous = actor.xy
                 blocker = move_actor(actor, intent.direction, self.world, intent.step_dt, speed=speed,
                                      neighbors=self.ai.crowd.neighbors.get(actor.id, ()), allow_slide=not intent.move_straight)
+                if actor.weapon is not None:
+                    movement_speed = math.dist(guard_previous, actor.xy) / max(FIXED_DT, intent.step_dt)
+                    actor.weapon.update_accuracy(FIXED_DT, movement_speed_mps=movement_speed)
                 blocker = blocker or self.ai.crowd.blockers.get(actor.id)
                 self.ai.motion.record_step(brain, blocker, self.time)
                 if intent.reload:
@@ -240,19 +248,18 @@ class PlaySimulation:
         self.combat.prepare([self.player, *self.guards], FIXED_DT)
         weapon = self.player.weapon
         if firing and weapon is not None and (weapon.automatic or trigger_pressed):
-            self.combat.fire(self.player, self.world, self.time, aiming=aiming,
-                             moving=math.dist(previous, self.player.xy) > 0.001, sprint=sprint and not walking)
+            self.combat.fire(self.player, self.world, self.time)
         for actor in self.guards:
             intent = intents.get(actor.id)
             if actor.hp <= 0 or self.player.hp <= 0 or intent is None:
                 continue
             if intent.retreat_fire:
                 if (self.combat.clear_fire_line(actor, self.player, self.world)
-                        and self.combat.fire(actor, self.world, self.time, moving=True)):
+                        and self.combat.fire(actor, self.world, self.time)):
                     self.ai.brains[actor.id].combat.fire_at = self.time + 0.7
             elif intent.fire:
                 fired = (self.combat.clear_fire_line(actor, self.player, self.world)
-                         and self.combat.fire(actor, self.world, self.time, moving=any(intent.direction)))
+                         and self.combat.fire(actor, self.world, self.time))
                 self.ai.combat.record_attempt(actor, self.player.xy, self.time, fired)
         self._dispatch()
         if self.transports.try_resume(self.time) and self.player.hp > 0:
