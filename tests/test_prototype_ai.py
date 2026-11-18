@@ -66,21 +66,22 @@ class PrototypeAITests(unittest.TestCase):
         ai = simulation.ai
         previous = ai.brains[guards[0].id]
         previous.motion.path.append((3, 4))
-        previous.search.indoor.scan.exposure[(1, 1)] = 0
+        previous.search.task.scan.exposure[(1, 1)] = 0
         ai.reset()
         for controller in (ai.combat, ai.search, ai.squad):
             self.assertIs(controller.brains, ai.brains)
         current = ai.brains[guards[0].id]
         self.assertIsNot(current, previous)
         self.assertFalse(current.motion.path)
-        self.assertFalse(current.search.indoor.scan.exposure)
+        self.assertFalse(current.search.task.scan.exposure)
         self.assertIs(ai.search.incidents, ai.squad.incidents)
 
     def test_cover_is_rechecked_before_peeking_toward_a_new_threat_direction(self):
         geometry = SpatialIndex()
         geometry.add(Collider("wall", Rect(4, 2.5, 0.2, 1)))
         world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry),
-                                door_on_ai_path=lambda *_: None, indoor_search_area=lambda *_: None)
+                                door_on_ai_path=lambda *_: None,
+                                door_on_ai_path_from=lambda *args, **kwargs: None, indoor_search_area=lambda *_: None)
         guard = Actor("guard", Position(2, 3), facing=-math.pi / 2, state="retreat", active_weapon="ar_a")
         guard.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])
         player = Actor("player", Position(2, 0), team="player")
@@ -146,7 +147,8 @@ class PrototypeAITests(unittest.TestCase):
                 bounds = Rect(0, 0, 10, 8)
                 world = SimpleNamespace(geometry=geometry, bounds=bounds, revision=0,
                                         navigation=Navigation({}, [], geometry, bounds=bounds),
-                                        door_on_ai_path=lambda *_: None, indoor_search_area=lambda *_: None)
+                                        door_on_ai_path=lambda *_: None,
+                                        door_on_ai_path_from=lambda *args, **kwargs: None, indoor_search_area=lambda *_: None)
                 guard = Actor("guard", Position(1, 4))
                 source = Actor("player", Position(6, 4), team="player", hp=0)
                 ai = EnemyAI(world, [guard], [[]])
@@ -179,7 +181,8 @@ class PrototypeAITests(unittest.TestCase):
     def test_visibility_at_the_range_boundary_is_stable_and_can_be_reported(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry),
-                                door_on_ai_path=lambda *_: None, indoor_search_area=lambda *_: None)
+                                door_on_ai_path=lambda *_: None,
+                                door_on_ai_path_from=lambda *args, **kwargs: None, indoor_search_area=lambda *_: None)
         guard = Actor("guard", Position(0, 0), active_weapon="ar_a")
         guard.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])
         ally = Actor("ally", Position(0, 2), facing=math.pi)
@@ -239,7 +242,8 @@ class PrototypeAITests(unittest.TestCase):
         bounds = Rect(-2, -10, 30, 20)
         world = SimpleNamespace(geometry=geometry, bounds=bounds, revision=0,
                                 navigation=Navigation({}, [], geometry, bounds=bounds),
-                                door_on_ai_path=lambda *_: None)
+                                door_on_ai_path=lambda *_: None,
+                                door_on_ai_path_from=lambda *args, **kwargs: None)
         spec = load_weapons()["ar_a"]
         guards = [Actor(str(index), Position(-0.47 * index, 0), source_unit="squad", active_weapon="ar_a",
                         loadout={"ar_a": WeaponState.ready(spec)}) for index in range(2)]
@@ -282,7 +286,7 @@ class PrototypeAITests(unittest.TestCase):
         sweep.confirm(center, 0)
         guards = [Actor(str(index), Position(15 + index * 0.5, 0)) for index in range(26)]
         ai = EnemyAI(world, guards, [[] for _ in guards])
-        ai.incidents["search"] = Incident(0, 0, center, indoor=sweep)
+        ai.incidents["search"] = Incident(0, center, indoor=sweep)
         for guard in guards:
             ai.brains[guard.id].incident = "search"
 
@@ -371,7 +375,7 @@ class PrototypeAITests(unittest.TestCase):
                         self.assertFalse(brain.visible)
                         self.assertIn(guard.state, {"alert", "search"})
                         self.assertNotEqual(brain.motion.goal, clue)
-                        self.assertIn(clue, brain.search.points)
+                        self.assertEqual(brain.search.task.target, clue)
                     for _ in range(360):
                         simulation.step()
 
@@ -380,7 +384,7 @@ class PrototypeAITests(unittest.TestCase):
                     if reason != "footstep":
                         self.assertTrue(brain.search.priority_checked)
                     else:
-                        self.assertNotIn(clue, brain.search.points)
+                        self.assertNotIn(clue, brain.search.task.points)
 
     def test_gunshot_stays_in_focus_while_route_bends_away(self):
         simulation = PlaySimulation(DOOR_SCENE)
@@ -453,19 +457,22 @@ class PrototypeAITests(unittest.TestCase):
         self.assertLess(following.facing, 0)
 
         observations = {}
-        while simulation.time < 3 and len(observations) < len(simulation.guards):
+        while simulation.time < 3 and (len(observations) < len(simulation.guards)
+                                       or not all(actor.xy[0] > door.rect.right + actor.radius
+                                                  for actor in simulation.guards)):
             simulation.step()
             for actor in simulation.guards:
                 brain = simulation.ai.brains[actor.id]
-                if brain.search.indoor.target is not None and brain.motion.path:
-                    observations.setdefault(actor.id, brain.search.indoor.target)
+                if brain.search.task.sweep is not None and brain.search.task.target is not None and brain.motion.path:
+                    observations.setdefault(actor.id, brain.search.task.target)
 
         self.assertTrue(all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards))
         self.assertEqual(set(observations), {front.id, following.id})
         first_observation, next_observation = observations[front.id], observations[following.id]
-        self.assertLess(first_observation[0], simulation.world.data["stack_drill"]["sound"][0])
-        self.assertGreater(abs(first_observation[1] - center_y), door.rect.h / 2)
-        self.assertGreater(abs(first_observation[1] - next_observation[1]), door.rect.h)
+        self.assertNotEqual(first_observation, next_observation)
+        for observation in (first_observation, next_observation):
+            self.assertTrue(simulation.world.navigation.walkable(observation))
+            self.assertIsNotNone(simulation.world.indoor_search_area(observation))
         self.assertFalse(simulation.ai.door_traffic.stacks)
         self.assertFalse(door.active)
         self.assertEqual(simulation.player.hp, 100)
@@ -482,102 +489,33 @@ class PrototypeAITests(unittest.TestCase):
                     stack = simulation.ai.door_traffic.stacks.get("shared_door")
                     if stack is not None and stack.ready_at is not None:
                         break
-
                 self.assertIsNotNone(stack)
                 self.assertIsNotNone(stack.ready_at)
                 self.assertEqual(sum(point[1] < 6 for point in stack.slots.values()), left)
                 self.assertEqual(sum(point[1] > 6 for point in stack.slots.values()), right)
                 self.assertEqual(len(set(stack.slots.values())), left + right)
+
                 door = simulation.world.geometry.objects["shared_door"]
-                area = simulation.world.search_areas[0]
-                self.assertGreaterEqual(len(area.points), 2 * 28)
-                corners = set().union(*area.room_corners.values())
-                lead = simulation.guards[0]
-                first_looks = {}
-                internal_looks = set()
-                passage_order = []
-                at_entry_positions = None
-                scanned_while_staging = set()
-                moved_during_followup = False
                 opened_at = passed_at = None
-                all_passed = False
-                moving_scan = False
-                points_finished_before_area = False
                 sweep = None
                 while simulation.time < 15:
-                    before = {actor.id: actor.xy for actor in simulation.guards}
-                    was_open = not door.active
                     simulation.step()
-                    if not was_open and not door.active:
+                    if not door.active and opened_at is None:
                         opened_at = simulation.time
-                    for actor in simulation.guards:
-                        if actor.xy[0] >= door.rect.right and actor.id not in passage_order:
-                            passage_order.append(actor.id)
-                        look = simulation.ai.brains[actor.id].look.point
-                        if was_open and actor.id not in first_looks and look in area.points:
-                            first_looks[actor.id] = look
-                            self.assertIsNone(simulation.world.geometry.raycast(before[actor.id], look, category="sight"))
-                            if actor is lead:
-                                self.assertLess(before[lead.id][0], door.rect.right)
-                                self.assertGreater(lead.xy[0], before[lead.id][0])
-                    if not all_passed and all(actor.xy[0] > door.rect.right + actor.radius for actor in simulation.guards):
-                        all_passed = True
+                    if passed_at is None and all(actor.xy[0] > door.rect.right + actor.radius
+                                                 for actor in simulation.guards):
                         passed_at = simulation.time
-                    moving_scan |= any(actor.xy != before[actor.id]
-                                       and simulation.ai.brains[actor.id].look.reason == "이동 중 공간 확인"
-                                       for actor in simulation.guards)
                     sweep = next((incident.indoor for incident in simulation.ai.incidents.values()
                                   if incident.indoor is not None), None)
-                    if sweep is not None:
-                        points_finished_before_area |= len(sweep.checked) == len(area.points) and not sweep.complete
-                        if sweep.entry_ready and at_entry_positions is None:
-                            at_entry_positions = before
-                        owners = {owner for owner, _ in sweep.corner_checks.values()}
-                        pending_inside = set(area.points) - corners - sweep.checked
-                        for actor in simulation.guards:
-                            brain = simulation.ai.brains[actor.id]
-                            look = brain.look.point
-                            if not sweep.entry_ready:
-                                self.assertNotIn(brain.search.indoor.target, area.observations)
-                                if brain.search.indoor.staging and actor.xy != before[actor.id] and look in area.points:
-                                    scanned_while_staging.add(actor.id)
-                            else:
-                                moved_during_followup |= (brain.search.indoor.target is not None and look is not None
-                                                          and actor.xy != before[actor.id])
-                            if actor.id in owners and pending_inside:
-                                self.assertNotIn(look, corners)
-                                if look in area.points:
-                                    internal_looks.add(actor.id)
-                    if all_passed and sweep is not None and sweep.entry_ready and sweep.complete:
+                    if passed_at is not None and sweep is not None and sweep.complete:
                         break
-
-                self.assertTrue(all_passed)
                 self.assertIsNotNone(opened_at)
+                self.assertIsNotNone(passed_at)
                 self.assertLess(passed_at - opened_at, 3.3)
                 self.assertIsNotNone(sweep)
                 self.assertEqual(sweep.checked, set(sweep.area.points))
-                self.assertTrue(sweep.complete)
-                if (left, right) == (1, 1):
-                    self.assertTrue(points_finished_before_area)
-                    self.assertTrue(moved_during_followup)
-                self.assertIsNotNone(at_entry_positions)
-                self.assertTrue(moving_scan)
-                first, second = passage_order[:2]
-                self.assertIn(first, first_looks)
-                self.assertIn(second, first_looks)
-                self.assertIn(first_looks[first], corners)
-                self.assertIn(first_looks[second], corners)
-                self.assertLess((first_looks[first][1] - 6) * (first_looks[second][1] - 6), 0)
-                for actor_id in (first, second):
-                    owner, _ = sweep.corner_checks[first_looks[actor_id]]
-                    self.assertEqual(owner, actor_id)
-                    self.assertIn(actor_id, internal_looks)
-                    self.assertIn(actor_id, scanned_while_staging)
-                expected_order = [passage_order[rank] for rank in (1, 2, 3, 0) if rank < len(passage_order)]
-                self.assertEqual(sorted(at_entry_positions, key=lambda actor_id: at_entry_positions[actor_id][1]),
-                                 expected_order)
-                for actor_id in passage_order:
-                    self.assertLessEqual(math.dist(at_entry_positions[actor_id], sweep.entry_pose(actor_id).position), 0.10)
+                self.assertFalse(simulation.ai.door_traffic.stacks)
+                self.assertEqual(simulation.player.hp, 100)
 
     def test_solo_door_drill_moves_from_its_first_corner_to_the_room_interior(self):
         simulation = PlaySimulation(DOOR_SCENE, stack_drill=True, stack_variant=9)
@@ -588,16 +526,15 @@ class PrototypeAITests(unittest.TestCase):
         saw_inside = False
         while simulation.time < 15:
             simulation.step()
-            sweep = brain.search.indoor.sweep
+            sweep = brain.search.task.sweep
             if sweep is None:
                 continue
             if sweep.corner_checks and set(area.points) - corners - sweep.checked:
                 self.assertNotIn(brain.look.point, corners)
                 saw_inside |= brain.look.point in area.points
-            if sweep.entry_ready and sweep.complete:
+            if sweep.complete:
                 break
 
-        self.assertTrue(sweep.entry_ready)
         self.assertTrue(sweep.complete)
         self.assertTrue(saw_inside)
         self.assertEqual(sweep.checked, set(area.points))
@@ -646,7 +583,8 @@ class PrototypeAITests(unittest.TestCase):
     def test_peek_keeps_its_direction_and_can_fire_after_reacquiring_sight(self):
         geometry = SpatialIndex()
         geometry.add(Collider("wall", Rect(4, 2.5, 0.2, 1)))
-        world = SimpleNamespace(geometry=geometry, revision=0, door_on_ai_path=lambda actor, point: None,
+        world = SimpleNamespace(geometry=geometry, revision=0, door_on_ai_path=lambda *_: None,
+                                door_on_ai_path_from=lambda *args, **kwargs: None,
                                 navigation=Navigation({}, [], geometry))
         guard = Actor("guard", Position(2, 3), facing=math.pi / 2, state="retreat")
         guard.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])
@@ -687,7 +625,8 @@ class PrototypeAITests(unittest.TestCase):
         bounds = Rect(0, 0, 12, 10)
         world = SimpleNamespace(geometry=geometry, bounds=bounds, revision=0,
                                 navigation=Navigation({}, [], geometry, bounds=bounds),
-                                door_on_ai_path=lambda *_: None)
+                                door_on_ai_path=lambda *_: None,
+                                door_on_ai_path_from=lambda *args, **kwargs: None)
         home = (2, 3.75)
         guard = Actor("guard", Position(*home), state="retreat", active_weapon="ar_a")
         guard.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])

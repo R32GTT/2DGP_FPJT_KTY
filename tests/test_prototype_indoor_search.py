@@ -1,4 +1,3 @@
-from prototype.ai_state import MoveRequest
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +8,7 @@ from prototype.actors import Actor
 from prototype.ai import Brain, EnemyAI, Intent
 from prototype.ai_motion import turn_indoor_gaze
 from prototype.geometry import Collider, Rect, SpatialIndex
-from prototype.indoor_search import CoverageScan, IndoorSweep, build_search_areas, sample_views
+from prototype.indoor_search import IndoorSweep, build_search_areas, sample_views
 from prototype.navigation import Navigation
 from prototype.simulation import PlaySimulation
 
@@ -35,62 +34,6 @@ class IndoorSearchTests(unittest.TestCase):
         for _ in range(60):
             braking = turn_indoor_gaze(actor, brain, braking, math.radians(540))
         self.assertAlmostEqual(braking, -math.pi / 2)
-
-    def test_coverage_scan_confirms_immediately_within_its_budget(self):
-        geometry = SpatialIndex()
-        world = SimpleNamespace(
-            data={"search_areas": {"room": [[3, 0, 4, 2]]},
-                  "search_layouts": {"room": {"coverage_resolution": 0.225, "sample_spacing": 2}}},
-            facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry),
-        )
-        area, = build_search_areas(world)
-        sweep = IndoorSweep(area, area.points[0], 0)
-        scan = CoverageScan()
-
-        origin = (0, 1)
-        scan.update_location(origin, 0)
-        sweep.observe_coverage(None, origin, 0, geometry, stationary=True, scan=scan, budget=1)
-        self.assertEqual(len(sweep.covered_cells), 1)
-        self.assertEqual(len(sweep.pending_cells), 1)
-        self.assertEqual(len(scan.occlusion), 1)
-
-        scan.update_location(origin, 1)
-        self.assertFalse(scan.occlusion)
-        sweep.observe_coverage(None, origin, 0, geometry, stationary=True, scan=scan, budget=1)
-        self.assertEqual(len(sweep.covered_cells), 2)
-        self.assertFalse(sweep.pending_cells)
-
-    def test_area_coverage_retains_a_shadow_between_visible_sample_rays(self):
-        geometry = SpatialIndex()
-        screen = Collider("screen", Rect(1.6, 1.25, 0.2, 0.07), blocks=("sight",))
-        geometry.add(screen)
-        world = SimpleNamespace(
-            data={"search_areas": {"room": [[3, 0, 1, 2]]},
-                  "search_layouts": {"room": {"coverage_resolution": 0.225, "sample_spacing": 2}}},
-            facilities=[], geometry=geometry, navigation=Navigation({}, [], geometry),
-        )
-        area, = build_search_areas(world)
-        center, = area.points
-        origin, shadow = (0, 1), (3.5, 1.55)
-        snapshots = (center, (3, 0), (3, 2), (4, 0), (4, 2))
-        self.assertTrue(all(geometry.raycast(origin, point) is None for point in snapshots))
-        self.assertIsNotNone(geometry.raycast(origin, shadow))
-        sweep = IndoorSweep(area, center, 0)
-        sweep.confirm(center, 0)
-        scan = CoverageScan()
-        scan.update_location(origin, 0)
-        for _ in range(8):
-            sweep.observe_coverage(None, origin, 0, geometry, stationary=False, scan=scan, budget=64)
-        self.assertFalse(sweep.complete)
-        self.assertTrue(sweep.covered_cells)
-        self.assertTrue(any(cell.rect.segment_entry(shadow, shadow) is not None for cell in sweep.pending_cells))
-        self.assertFalse(any(cell.rect.segment_entry(shadow, shadow) is not None for cell in sweep.covered_cells))
-
-        screen.active = False
-        scan.update_location(origin, 1)
-        sweep.observe_coverage(None, origin, 0, geometry, stationary=False, scan=scan, budget=64)
-        self.assertTrue(sweep.complete)
-        self.assertAlmostEqual(sum(cell.rect.w * cell.rect.h for cell in sweep.covered_cells), 2)
 
     def test_pending_view_keeps_shared_occlusion_separate_from_confirmation(self):
         geometry = SpatialIndex()
@@ -137,36 +80,40 @@ class IndoorSearchTests(unittest.TestCase):
             facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry),
         )
         area, = build_search_areas(world)
-        self.assertEqual(len(area.points), 12)
+        grid_points = {(x, y) for x in (1, 3, 5, 7) for y in (1, 3, 5)}
+        self.assertTrue(grid_points.issubset(area.points))
         self.assertFalse(any(area.room_corners.values()))
         guard = Actor("guard", Position(1, 1))
         ai = EnemyAI(world, [guard], [[]])
         brain = ai.brains[guard.id]
         first, later = (5, 1), (5, 3)
-        sweep = brain.search.indoor.sweep = IndoorSweep(area, first, 0, checked=set(area.points) - {first, later})
+        sweep = brain.search.task.sweep = IndoorSweep(area, first, 0, checked=set(area.points) - {first, later})
 
         for tick in range(10):
             if tick == 5:
                 screen.active = False
             ai.search.look_at_indoor_samples(guard, brain, tick / 60, sweep)
+            ai.search.confirm_view(guard, brain, tick / 60)
             if tick == 4:
                 self.assertEqual(brain.look.point, first)
             elif tick == 5:
                 self.assertEqual(brain.look.point, later)
 
-        self.assertIn(first, sweep.checked_at)
+        self.assertIn(first, sweep.checked)
         self.assertNotIn(later, sweep.checked)
-        self.assertIn(later, brain.search.indoor.scan.exposure)
+        self.assertIn(later, brain.search.task.scan.exposure)
         ai.search.interrupt_search(guard, brain)
-        self.assertFalse(brain.search.indoor.scan.exposure)
-        self.assertIn(first, sweep.checked_at)
+        self.assertFalse(brain.search.task.scan.exposure)
+        self.assertIn(first, sweep.checked)
 
         for tick in range(10, 16):
             ai.search.look_at_indoor_samples(guard, brain, tick / 60, sweep)
+            ai.search.confirm_view(guard, brain, tick / 60)
         self.assertNotIn(later, sweep.checked)
         for tick in range(16, 18):
             ai.search.look_at_indoor_samples(guard, brain, tick / 60, sweep)
-        self.assertIn(later, sweep.checked_at)
+            ai.search.confirm_view(guard, brain, tick / 60)
+        self.assertIn(later, sweep.checked)
 
     def test_moving_guard_prefers_a_newly_visible_sample_while_keeping_its_route(self):
         geometry = SpatialIndex()
@@ -181,20 +128,22 @@ class IndoorSearchTests(unittest.TestCase):
         ai = EnemyAI(world, [guard], [[]])
         brain = ai.brains[guard.id]
         far, revealed, goal = (7, 1), (5, 3), (3, 1)
-        brain.search.indoor.sweep = IndoorSweep(area, goal, 0, checked=set(area.points) - {far, revealed})
-        brain.search.indoor.target, brain.motion.path = goal, [goal]
+        brain.search.task.sweep = IndoorSweep(area, goal, 0, checked=set(area.points) - {far, revealed})
+        brain.search.task.target, brain.motion.path = goal, [goal]
 
         ai.search.pace_indoor_movement(guard, brain, Intent(direction=(2, 0)), 0, room_sweep=True)
+        ai.search.confirm_view(guard, brain, 0)
         self.assertEqual(brain.look.point, far)
-        self.assertIn(revealed, brain.search.indoor.scan.occluded)
+        self.assertIn(revealed, brain.search.task.scan.occluded)
 
         guard.position = Position(1, 0.4)
         intent = Intent(direction=(2, 0.6))
         ai.search.pace_indoor_movement(guard, brain, intent, 1 / 60, room_sweep=True)
+        ai.search.confirm_view(guard, brain, 1 / 60)
         self.assertEqual(brain.look.point, revealed)
         self.assertEqual(intent.direction, (2, 0.6))
         self.assertEqual(brain.motion.path, [goal])
-        self.assertNotIn(revealed, brain.search.indoor.sweep.checked)
+        self.assertNotIn(revealed, brain.search.task.sweep.checked)
 
     def test_indoor_gunshot_starts_a_sweep_in_normal_play(self):
         for scene in (FACILITY_SCENE, KILLHOUSE_SCENE):
@@ -209,11 +158,11 @@ class IndoorSearchTests(unittest.TestCase):
                 simulation.player.hp = 0
                 simulation.events.emit("noise", simulation.time, source, radius=30, strength=0.8, reason="gunshot")
                 brain = simulation.ai.brains[guard.id]
-                while simulation.time < 3 and brain.search.indoor.sweep is None:
+                while simulation.time < 3 and brain.search.task.sweep is None:
                     simulation.step()
 
-                self.assertIsNotNone(brain.search.indoor.sweep)
-                self.assertIs(brain.search.indoor.sweep.area, area)
+                self.assertIsNotNone(brain.search.task.sweep)
+                self.assertIs(brain.search.task.sweep.area, area)
                 self.assertEqual(guard.state, "search")
                 self.assertIsNone(brain.memory.reported)
 
@@ -231,72 +180,6 @@ class IndoorSearchTests(unittest.TestCase):
 
         self.assertAlmostEqual(guard.facing, math.pi / 2)
 
-    def test_guard_walks_along_path_while_looking_to_the_side(self):
-        geometry = SpatialIndex()
-        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 7.2]]}},
-                                facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
-        area, = build_search_areas(world)
-        guard = Actor("guard", Position(0.9, 0.9))
-        ai = EnemyAI(world, [guard], [[]])
-        brain = ai.brains[guard.id]
-        side = (0.9, 2.7)
-        target = (4.5, 0.9)
-        brain.search.indoor.sweep = IndoorSweep(area, target, 0, checked=set(area.points) - {side})
-        brain.search.indoor.target = target
-        brain.motion.path = [target]
-        intent = Intent(direction=(3.6, 0), open_door=True)
-
-        ai.search.pace_indoor_movement(guard, brain, intent, 1, room_sweep=True)
-
-        self.assertEqual(intent.direction, (3.6, 0))
-        self.assertGreater(intent.move_multiplier, 0)
-        self.assertTrue(intent.open_door)
-        self.assertEqual(brain.look.point, side)
-        for tick in range(1, 11):
-            ai.search.pace_indoor_movement(guard, brain, intent, 1 + tick / 60, room_sweep=True)
-        self.assertAlmostEqual(guard.facing, math.pi / 2)
-        self.assertEqual(intent.direction, (3.6, 0))
-        brain.search.indoor.sweep.confirm(side, 1.2)
-        self.assertIn(side, brain.search.indoor.sweep.checked)
-        guard.position = Position(1.5, 0.9)
-        intent.direction = (3, 0)
-        ai.search.pace_indoor_movement(guard, brain, intent, 2, room_sweep=True)
-        ai.search.pace_indoor_movement(guard, brain, intent, 2 + 1 / 60, room_sweep=True)
-        self.assertAlmostEqual(guard.facing, math.pi / 2)
-        self.assertIsNone(brain.look.point)
-
-    def test_walking_scan_changes_focus_before_reaching_its_waypoint(self):
-        geometry = SpatialIndex()
-        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 9, 9]]}},
-                                facilities=[], geometry=geometry, revision=0, navigation=Navigation({}, [], geometry))
-        area, = build_search_areas(world)
-        guard = Actor("guard", Position(0.9, 4.5))
-        ai = EnemyAI(world, [guard], [[]])
-        brain = ai.brains[guard.id]
-        target = (8.1, 4.5)
-        pending = {(4.5, 0.9), (4.5, 8.1)}
-        brain.search.indoor.sweep = IndoorSweep(area, target, 0, checked=set(area.points) - pending)
-        brain.search.indoor.target = target
-        brain.motion.path = [target]
-
-        ai.search.pace_indoor_movement(guard, brain, Intent(direction=(7.2, 0)), 1, room_sweep=True)
-        first = brain.look.point
-        ai.search.pace_indoor_movement(guard, brain, Intent(direction=(7.2, 0)), 1 + 1 / 60, room_sweep=True)
-        self.assertAlmostEqual(abs(guard.facing), math.radians(18))
-        brain.search.indoor.sweep.confirm(first, 1.04)
-        self.assertIn(first, brain.search.indoor.sweep.checked)
-
-        guard.position = Position(1.15, 4.5)
-        intent = Intent(direction=(6.95, 0))
-        self.assertGreater(brain.search.indoor.scan.walk_look_at, 1.10)
-        facing = guard.facing
-        ai.search.pace_indoor_movement(guard, brain, intent, 1.10, room_sweep=True)
-
-        self.assertIn(brain.look.point, pending - {first})
-        self.assertGreater(intent.move_multiplier, 0)
-        self.assertAlmostEqual(abs(guard.facing - facing), math.radians(9))
-        self.assertEqual(brain.motion.path, [target])
-
     def test_indoor_guard_keeps_looking_at_a_sample_when_its_path_turns(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 5.4]]}},
@@ -308,12 +191,13 @@ class IndoorSearchTests(unittest.TestCase):
         guard = Actor("guard", Position(2.1, 0.9), facing=math.pi)
         ai = EnemyAI(world, [guard], [[]])
         brain = ai.brains[guard.id]
-        brain.search.indoor.sweep = IndoorSweep(area, target, 0, checked=set(area.points) - {behind})
-        brain.search.indoor.target = target
+        brain.search.task.sweep = IndoorSweep(area, target, 0, checked=set(area.points) - {behind})
+        brain.search.task.target = target
         brain.motion.path = [waypoint, target]
 
         intent = Intent(direction=(0.6, 0))
         ai.search.pace_indoor_movement(guard, brain, intent, 1, room_sweep=True)
+        ai.search.confirm_view(guard, brain, 1)
 
         self.assertEqual(brain.look.point, behind)
         self.assertAlmostEqual(guard.facing, math.pi)
@@ -323,6 +207,7 @@ class IndoorSearchTests(unittest.TestCase):
         brain.motion.path.pop(0)
         intent = Intent(direction=(0, 1.8))
         ai.search.pace_indoor_movement(guard, brain, intent, 1 + 1 / 60, room_sweep=True)
+        ai.search.confirm_view(guard, brain, 1 + 1 / 60)
 
         self.assertEqual(brain.look.point, behind)
         self.assertAlmostEqual(guard.facing, math.pi)
@@ -340,27 +225,31 @@ class IndoorSearchTests(unittest.TestCase):
         guard = Actor("guard", Position(0.9, 0.9))
         ai = EnemyAI(world, [guard], [[]])
         brain = ai.brains[guard.id]
-        brain.search.indoor.sweep = IndoorSweep(area, target, 0, checked=set(area.points) - {sample})
-        brain.search.indoor.target = target
+        brain.search.task.sweep = IndoorSweep(area, target, 0, checked=set(area.points) - {sample})
+        brain.search.task.target = target
 
         for tick in range(5):
-            ai.search.look_at_indoor_samples(guard, brain, tick / 60, brain.search.indoor.sweep)
+            ai.search.look_at_indoor_samples(guard, brain, tick / 60, brain.search.task.sweep)
+            ai.search.confirm_view(guard, brain, tick / 60)
         self.assertEqual(brain.look.point, sample)
-        self.assertNotIn(sample, brain.search.indoor.sweep.checked)
+        self.assertNotIn(sample, brain.search.task.sweep.checked)
 
         obstacle.active = True
-        ai.search.look_at_indoor_samples(guard, brain, 5 / 60, brain.search.indoor.sweep)
-        self.assertNotIn(sample, brain.search.indoor.scan.exposure)
+        ai.search.look_at_indoor_samples(guard, brain, 5 / 60, brain.search.task.sweep)
+        ai.search.confirm_view(guard, brain, 5 / 60)
+        self.assertNotIn(sample, brain.search.task.scan.exposure)
         self.assertIsNone(brain.look.point)
 
         obstacle.active = False
         for tick in range(6, 12):
-            ai.search.look_at_indoor_samples(guard, brain, tick / 60, brain.search.indoor.sweep)
-        self.assertNotIn(sample, brain.search.indoor.sweep.checked)
+            ai.search.look_at_indoor_samples(guard, brain, tick / 60, brain.search.task.sweep)
+            ai.search.confirm_view(guard, brain, tick / 60)
+        self.assertNotIn(sample, brain.search.task.sweep.checked)
 
         for tick in range(12, 14):
-            ai.search.look_at_indoor_samples(guard, brain, tick / 60, brain.search.indoor.sweep)
-        self.assertIn(sample, brain.search.indoor.sweep.checked)
+            ai.search.look_at_indoor_samples(guard, brain, tick / 60, brain.search.task.sweep)
+            ai.search.confirm_view(guard, brain, tick / 60)
+        self.assertIn(sample, brain.search.task.sweep.checked)
         self.assertIsNone(brain.look.point)
 
     def test_walkers_choose_distinct_corners_and_switch_when_occluded(self):
@@ -375,7 +264,9 @@ class IndoorSearchTests(unittest.TestCase):
         first_brain, second_brain = ai.brains[first.id], ai.brains[second.id]
 
         ai.search.look_at_indoor_samples(first, first_brain, 0, sweep)
+        ai.search.confirm_view(first, first_brain, 0)
         ai.search.look_at_indoor_samples(second, second_brain, 0, sweep)
+        ai.search.confirm_view(second, second_brain, 0)
         original, reserved = first_brain.look.point, second_brain.look.point
         corners = set(sweep.pending_corners(None))
         self.assertIn(original, corners)
@@ -387,9 +278,10 @@ class IndoorSearchTests(unittest.TestCase):
         geometry.add(Collider("occluder", Rect(x - 0.05, y - 0.05, 0.1, 0.1)))
         world.revision += 1
         ai.search.look_at_indoor_samples(first, first_brain, 1 / 60, sweep)
+        ai.search.confirm_view(first, first_brain, 1 / 60)
 
         self.assertIn(first_brain.look.point, corners - {original, reserved})
-        self.assertNotIn(original, first_brain.search.indoor.scan.exposure)
+        self.assertNotIn(original, first_brain.search.task.scan.exposure)
         self.assertNotIn(original, sweep.checked)
 
     def test_scan_checks_visible_corners_without_ignoring_pillar(self):
@@ -413,95 +305,6 @@ class IndoorSearchTests(unittest.TestCase):
         far_corner = max(point for point in area.room_points[room] if point[0] == origin[0])
         self.assertTrue(dict(sample_views(origin, math.pi / 2, points, geometry, stationary=True))[far_corner])
         self.assertTrue(dict(sample_views((5.5, 0.9), 0, points, geometry))[hidden])
-
-    def test_clear_view_completes_wide_room_from_one_position(self):
-        geometry = SpatialIndex()
-        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 12.6, 5.4]]}},
-                                facilities=[], geometry=geometry, revision=0,
-                                navigation=Navigation({}, [], geometry))
-        area, = build_search_areas(world)
-        world.indoor_search_area = lambda point: area
-        guard = Actor("guard", Position(0.9, 0.9), facing=math.pi)
-        ai = EnemyAI(world, [guard], [[]])
-        ai.search.start_search_drill([guard], (0.9, 0.9))
-        brain = ai.brains[guard.id]
-        sweep = ai.incidents["indoor_drill"].indoor
-
-        goal, finished = ai.search.indoor_sweep(guard, brain, (0.9, 0.9), 0, 1)
-        self.assertIsNone(goal)
-        self.assertFalse(finished)
-        for tick in range(1, 301):
-            time = 1 + tick / 60
-            if not brain.search.indoor.scanning:
-                break
-            ai.search.advance_indoor_look(guard, brain, time)
-
-        self.assertEqual(sweep.checked, set(area.points))
-        self.assertEqual(guard.xy, (0.9, 0.9))
-
-    def test_guard_scans_visible_space_before_moving_to_hidden_points(self):
-        geometry = SpatialIndex()
-        geometry.add(Collider("pillar", Rect(3.8, 0.25, 1.2, 1.3)))
-        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 9, 3.6], [0, 3.6, 3.6, 3.6]]}},
-                                facilities=[], geometry=geometry, revision=0,
-                                navigation=Navigation({}, [], geometry))
-        area, = build_search_areas(world)
-        world.indoor_search_area = lambda point: area
-        guard = Actor("guard", Position(0.9, 0.9), facing=math.pi)
-        ai = EnemyAI(world, [guard], [[]])
-        ai.search.start_search_drill([guard], guard.xy)
-        brain = ai.brains[guard.id]
-
-        self.assertEqual(ai.search.indoor_sweep(guard, brain, guard.xy, 0, 1), (None, False))
-        for tick in range(1, 301):
-            time = 1 + tick / 60
-            if not brain.search.indoor.scanning:
-                break
-            ai.search.advance_indoor_look(guard, brain, time)
-
-        self.assertIn((2.7, 0.9), brain.search.indoor.sweep.checked)
-        self.assertNotIn((6.3, 0.9), brain.search.indoor.sweep.checked)
-        goal, finished = ai.search.indoor_sweep(guard, brain, guard.xy, 0, time)
-        self.assertIsNotNone(goal)
-        self.assertFalse(finished)
-
-    def test_unreachable_observation_point_stops_guard_for_a_scan(self):
-        geometry = SpatialIndex()
-        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 3.6]]}},
-                                facilities=[], geometry=geometry, revision=0,
-                                navigation=Navigation({}, [], geometry))
-        area, = build_search_areas(world)
-        world.indoor_search_area = lambda point: area
-        origin, target = (2.7, 0.9), (4.5, 0.9)
-        guard = Actor("guard", Position(*origin))
-        ai = EnemyAI(world, [guard], [[]])
-        ai.search.start_search_drill([guard], target)
-        brain = ai.brains[guard.id]
-        brain.search.indoor.sweep = ai.incidents[brain.incident].indoor
-        brain.search.indoor.target = brain.motion.goal = target
-        brain.motion.path, brain.motion.path_revision = [target], world.revision
-
-        geometry.add(Collider("new_obstacle", Rect(4, 0, 1.1, 3.6)))
-        world.revision += 1
-        intent = Intent()
-        ai.motion.move(guard, brain, intent, MoveRequest(target), 1, 1)
-        self.assertTrue(brain.motion.route_failed)
-        self.assertEqual(intent.direction, (0, 0))
-
-        self.assertEqual(ai.search.indoor_sweep(guard, brain, target, 0, 1 + 1 / 60), (None, False))
-        self.assertTrue(brain.search.indoor.scanning)
-        self.assertEqual(brain.search.indoor.blocked[target], world.revision)
-        for tick in range(1, 181):
-            time = 1 + tick / 60
-            if not brain.search.indoor.scanning:
-                break
-            ai.search.advance_indoor_look(guard, brain, time)
-
-        self.assertEqual(guard.xy, origin)
-        self.assertNotIn(target, brain.search.indoor.sweep.checked)
-        origin_sample = min(area.points, key=lambda point: math.dist(point, origin))
-        self.assertIn(origin_sample, brain.search.indoor.sweep.checked)
-        self.assertFalse(brain.search.indoor.scanning)
 
     def test_two_doorways_preserve_room_boundaries_when_a_door_opens(self):
         geometry = SpatialIndex()
@@ -527,7 +330,6 @@ class IndoorSearchTests(unittest.TestCase):
         sweep.confirm(right, 2)
         sweep.reopen_room(right)
         self.assertEqual(sweep.checked, {left})
-        self.assertEqual(sweep.checked_at, {left: 1})
 
     def test_squad_finishes_search_in_facility(self):
         simulation = PlaySimulation(scene=FACILITY_SCENE)

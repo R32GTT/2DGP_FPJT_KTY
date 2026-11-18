@@ -97,8 +97,7 @@ v0.1의 군수 검증 완료를 PRD 1단계 전체 완료나 다이나믹 캠페
 | `campaign/persistence.py` | JSON 저장·복원과 저장 버전 검사 |
 | `campaign/cli.py` / `campaign/__main__.py` | 콘솔 실행·상태 조회·디버그 개입·시각별 행동 스크립트 |
 | `campaign/viewmodel.py` / `campaign/playback.py` | 보기 전용 좌표·선택·수송대 표시와 프레임 예산 기반 재생 |
-| `campaign/mapview.py` / `campaign/mapart.py` | 탑다운 지형·시설·차량·미니맵 표시 |
-| `campaign/visualizer.py` / `campaign/viewer_actions.py` | GUI·선택 정보·디버그 개입·저장 복원 |
+| `campaign/mapart.py` | 지도 외형 생성 보조 함수 |
 | `campaign/scenarios/rear_test.json` | 검증용 지역·도로·초기 자원·운영 수치 |
 | `tests/test_campaign_*.py` | 자원 보존·시간·수송·저장 통합 검증 |
 
@@ -236,12 +235,11 @@ v0.1의 군수 검증 완료를 PRD 1단계 전체 완료나 다이나믹 캠페
 
 작은 함수의 구현을 그대로 재현하는 테스트보다 위 불변 조건과 통합 시나리오를 검증한다. 기능 단위 검증을 통과한 뒤 다음 작업으로 진행한다.
 
-아래 명령으로 구현된 코어를 실행·검증한다. 2026-11-13 기준 캠페인·뷰어 테스트 63개가 통과했다. GUI 6개를 포함하려면 `CAMPAIGN_GUI_TEST=1`을 지정한다.
+아래 명령으로 구현된 코어를 실행·검증한다. 실제 플레이 연결은 `PlayFieldProvingGround.bat`에서 확인한다.
 
 ```powershell
 py -3.13 -m campaign --scenario campaign/scenarios/rear_test.json --hours 24 --support finite --seed 42
 py -3.13 -m unittest discover -s tests -p "test_campaign_*.py"
-py -3.13 -m campaign.visualizer
 ```
 
 ## 13. 최초 구현 커밋 계획과 최신 작업 원칙

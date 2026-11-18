@@ -1,2 +1,2 @@
 @echo off
-call "%~dp0PlayPrototype.bat" --scene prototype/scenarios/ai_facility.json
+call "%~dp0PlayPrototype.bat" --scene prototype/scenarios/ai_facility.json %*
