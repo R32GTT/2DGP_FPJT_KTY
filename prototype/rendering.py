@@ -12,7 +12,7 @@ from .camera import CANVAS_SIZE
 from .hud import HUD
 from .map_images import MapImages
 from .perception import SOUND_MEMORY_SECONDS
-from .visual_assets import actor_image, prop_image, tree_image, truck_image, vignette_image, weapon_image
+from .visual_assets import actor_image, draw_polygon, prop_image, tree_image, truck_image, vignette_image, weapon_image
 from .weapons import load_weapons, weapon_pose
 from .world import ROOT
 
@@ -109,6 +109,8 @@ class Renderer:
                 x, y = view.pico(layer.rect.x + layer.rect.w / 2, layer.rect.y + layer.rect.h / 2)
                 size = layer.image_size or (layer.rect.w, layer.rect.h)
                 image.rotate_draw(-math.radians(layer.rotation), x, y, size[0] * view.scale, size[1] * view.scale)
+            elif layer.polygon:
+                draw_polygon(self.backend, [view.pico(*point) for point in layer.polygon], layer.color)
             elif layer.role != "walls" and not layer.rotation % 90:
                 self._rect(view, layer.rect, layer.color)
         for collider in world.visible_colliders(view.viewport(4)):

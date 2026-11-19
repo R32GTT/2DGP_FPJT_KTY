@@ -11,6 +11,7 @@ from campaign.clock import world_clock
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
 from .road_visuals import ROAD_STYLES
+from .visual_assets import draw_polygon
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -384,18 +385,11 @@ class HUD:
             x, y = -dy / length * half, dx / length * half
             corners = ((a[0] + x, a[1] + y), (b[0] + x, b[1] + y),
                        (b[0] - x, b[1] - y), (a[0] - x, a[1] - y))
-            vertices = (self.backend.SDL_Vertex * 6)(*(
-                self.backend.SDL_Vertex((corners[i][0], pico.get_canvas_height() - corners[i][1]), color)
-                for i in (0, 1, 2, 0, 2, 3)))
-            self.backend.SDL_RenderGeometry(self.backend.renderer, None, vertices, 6, None, 0)
+            draw_polygon(self.backend, corners, color)
         network = world.data.get("road_network", {})
         for junction in network.get("junctions", ()):
-            x, y = point(*network["nodes"][junction["node"]])
-            half = junction["radius"] * scale
             color = ROAD_STYLES[junction["material"]]["map_color"]
-            for row in range(math.ceil(y - half), math.floor(y + half) + 1):
-                radius = math.sqrt(max(0, half * half - (row - y) ** 2))
-                pico.draw_line(x - radius, row, x + radius, row, *color)
+            draw_polygon(self.backend, [point(*vertex) for vertex in junction["polygon"]], color)
 
     @staticmethod
     def _draw_field_terrain(world, point):

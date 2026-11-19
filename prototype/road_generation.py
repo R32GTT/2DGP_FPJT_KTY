@@ -6,20 +6,68 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra, minimum_spanning_tree
-from shapely import LineString, Point, box, union_all
+from shapely import LineString, MultiPoint, Point, Polygon, box, union_all
 
 
-ROAD_WIDTHS = {"main": 6.0, "access": 4.5, "service": 3.5}
+DIRT_WIDTH = 3.0
+ROAD_WIDTHS = {"main": 6.0, "access": 4.5, "service": DIRT_WIDTH}
 ROAD_GAP = 6
 VEHICLE_SIZE = (5.6, 2.4)
-VEHICLE_MARGIN = 0.35
-TURN_SPACE = math.hypot(*VEHICLE_SIZE) / 2 + VEHICLE_MARGIN
+VEHICLE_MARGIN = 0.3
 
 
 def facility_road(kind):
     role = "service" if kind in {"safehouse", "comms"} else "access"
-    return {"kind": role, "width": ROAD_WIDTHS[role],
-            "material": "asphalt" if kind in {"hq", "garrison"} else "dirt"}
+    material = "asphalt" if kind in {"hq", "garrison"} else "dirt"
+    return {"kind": role, "width": DIRT_WIDTH if material == "dirt" else ROAD_WIDTHS[role], "material": material}
+
+
+def build_junctions(nodes, segments, bounds=None):
+    incident = {}
+    for segment in segments:
+        for key in segment["nodes"]:
+            incident.setdefault(key, []).append(segment)
+    junctions = []
+    rank = {kind: index for index, kind in enumerate(ROAD_WIDTHS)}
+    half_length = VEHICLE_SIZE[0] / 2 + VEHICLE_MARGIN
+    for key, adjacent in sorted(incident.items()):
+        if len(adjacent) < 2:
+            continue
+        center = np.array(nodes[key])
+        arms, road_points, vehicle_points = [], [], []
+        for segment in adjacent:
+            other = next(other for other in segment["nodes"] if other != key)
+            vector = np.subtract(nodes[other], center)
+            length = np.linalg.norm(vector)
+            setback = min(half_length, max(0, length - half_length))
+            direction = vector / length
+            start = center + direction * setback
+            normal = np.array([-direction[1], direction[0]])
+            road_points.extend((point + normal * side * segment["width"] / 2).tolist()
+                               for point in (center, start) for side in (-1, 1))
+            arms.append((start, direction))
+        for index, (start, start_direction) in enumerate(arms):
+            for end, end_direction in arms[index + 1:]:
+                # 진입 방향 사이의 차량 자세를 연결해 대각선·직각 합류부를 만든다.
+                for t in np.linspace(0, 1, 5):
+                    position = (1 - t) ** 2 * start + 2 * t * (1 - t) * center + t ** 2 * end
+                    tangent = (1 - t) * (center - start) + t * (end - center)
+                    if np.linalg.norm(tangent) < 1e-8:
+                        tangent = -(1 - t) * start_direction + t * end_direction
+                    if np.linalg.norm(tangent) < 1e-8:
+                        tangent = end_direction
+                    tangent = tangent / np.linalg.norm(tangent)
+                    normal = np.array([-tangent[1], tangent[0]])
+                    half_width = VEHICLE_SIZE[1] / 2 + VEHICLE_MARGIN
+                    vehicle_points.extend((position + tangent * along * half_length + normal * side * half_width).tolist()
+                                          for along in (-1, 1) for side in (-1, 1))
+        spec = min(adjacent, key=lambda segment: (rank[segment["kind"]], segment["material"] != "asphalt"))
+        shapes = [MultiPoint(road_points + vehicle_points).convex_hull, MultiPoint(vehicle_points).convex_hull]
+        if bounds:
+            shapes[0] = shapes[0].intersection(box(bounds.x, bounds.y, bounds.right, bounds.bottom))
+        polygons = [list(map(list, shape.exterior.coords))[:-1] for shape in shapes]
+        junctions.append({"node": key, "polygon": polygons[0], "vehicle_polygon": polygons[1], "material": spec["material"]})
+    return junctions
 
 
 def _grid_graph(cost, free):
@@ -57,11 +105,7 @@ def road_surface(network, *, vehicle=False):
         line = LineString([network["nodes"][key] for key in segment["nodes"]])
         parts.append(line.buffer(radius, cap_style="flat"))
     for junction in network["junctions"]:
-        x, y = network["nodes"][junction["node"]]
-        radius = junction["radius"]
-        if vehicle:
-            radius = TURN_SPACE if junction["turn"] else VEHICLE_SIZE[1] / 2 + VEHICLE_MARGIN
-        parts.append(Point(x, y).buffer(radius))
+        parts.append(Polygon(junction["vehicle_polygon" if vehicle else "polygon"]))
     return union_all(parts)
 
 
@@ -73,7 +117,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
     free[:, :2] = free[:, -2:] = False
     for site in sites:
         x, y, width, height = site["rect"]
-        margin = max(max(ROAD_WIDTHS.values()) / 2, TURN_SPACE) + 1
+        margin = math.hypot(VEHICLE_SIZE[0] / 2 + VEHICLE_MARGIN, max(ROAD_WIDTHS.values()) / 2) + 1
         free[np.ix_((axis >= y - margin) & (axis <= y + height + margin),
                     (axis >= x - margin) & (axis <= x + width + margin))] = False
     keys = sorted(points)
@@ -138,7 +182,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
     rng.shuffle(candidates)
     loops = 0
     for a, b in candidates[:8]:
-        spec = {"kind": "service", "width": ROAD_WIDTHS["service"], "material": "dirt"}
+        spec = {"kind": "service", "width": DIRT_WIDTH, "material": "dirt"}
         if math.dist(points[keys[a]], points[keys[b]]) < (spec["width"] + ROAD_GAP) * 3:
             continue
         path = spaced_path(indices[a], indices[b], (indices[a], indices[b]), spec["width"])
@@ -181,21 +225,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
             segments[edge] = {"nodes": list(edge), **owner(LineString([a, b]), routes)}
     terminals = {key: node(point) for key, point in sorted(gates.items())}
     spawn_node = node(points["spawn"])
-    junctions = []
-    incident = {}
-    for edge, segment in sorted(segments.items()):
-        for key in edge:
-            incident.setdefault(key, []).append(segment)
-    for key, adjacent in sorted(incident.items()):
-        if len(adjacent) < 2:
-            continue
-        vectors = [np.subtract(nodes[next(other for other in segment["nodes"] if other != key)], nodes[key])
-                   for segment in adjacent]
-        a, b = vectors[:2]
-        turn = len(adjacent) > 2 or abs(a[0] * b[1] - a[1] * b[0]) > 1e-6 or np.dot(a, b) >= 0
-        spec = min(adjacent, key=lambda segment: (rank[segment["kind"]], segment["material"] != "asphalt"))
-        radius = max(max(segment["width"] for segment in adjacent) / 2, TURN_SPACE if turn else 0)
-        junctions.append({"node": key, "radius": radius, "turn": bool(turn), "material": spec["material"]})
+    junctions = build_junctions(nodes, [segments[edge] for edge in sorted(segments)], bounds)
     return {"nodes": dict(sorted(nodes.items())), "edges": sorted(segments),
             "segments": [segments[edge] for edge in sorted(segments)], "junctions": junctions,
             "terminals": terminals, "spawn_node": spawn_node}
@@ -213,6 +243,24 @@ def validate_roads(network, sites, bounds, colliders):
     graph = csr_matrix(([1] * len(pairs), tuple(zip(*pairs))), shape=(len(keys), len(keys)))
     if connected_components(graph, directed=False, return_labels=False) != 1:
         raise ValueError("끊어진 도로 연결")
+    lines = [(segment, LineString([network["nodes"][key] for key in segment["nodes"]]))
+             for segment in network["segments"]]
+    for index, (segment, line) in enumerate(lines):
+        a, b = line.coords
+        direction = np.subtract(b, a) / line.length
+        for other_segment, other in lines[index + 1:]:
+            gap = (segment["width"] + other_segment["width"]) / 2 + ROAD_GAP
+            if (set(segment["nodes"]) & set(other_segment["nodes"])
+                    or line.distance(other) >= gap or line.intersects(other)):
+                continue
+            p, q = other.coords
+            other_direction = np.subtract(q, p) / other.length
+            if abs(direction[0] * other_direction[1] - direction[1] * other_direction[0]) >= 0.2:
+                continue
+            projections = [np.dot(np.subtract(point, a), direction) for point in other.coords]
+            overlap = min(line.length, max(projections)) - max(0, min(projections))
+            if overlap >= min(segment["width"], other_segment["width"]):
+                raise ValueError("평행 도로 간격 부족")
     surface = road_surface(network)
     if not box(bounds.x, bounds.y, bounds.right, bounds.bottom).buffer(1e-6).covers(surface):
         raise ValueError("월드 경계를 벗어난 도로 폭")

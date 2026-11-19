@@ -18,8 +18,9 @@ def road_layers(network):
         for layer in strip_layers(f"road/{index}", start, end, segment["width"], style["style"], style["color"]):
             yield {**layer, "image": style["image"], "variant": int(segment["kind"] != "main")}
     for junction in network["junctions"]:
-        x, y = network["nodes"][junction["node"]]
-        radius = junction["radius"]
+        points = junction["polygon"]
+        x, y = map(min, zip(*points))
+        right, bottom = map(max, zip(*points))
         style = ROAD_STYLES[junction["material"]]
-        yield {"id": f"junction/{junction['node']}", "rect": [x - radius, y - radius, radius * 2, radius * 2],
+        yield {"id": f"junction/{junction['node']}", "rect": [x, y, right - x, bottom - y], "polygon": points,
                "style": "road_junction", "image": style["junction_image"], "color": style["color"]}

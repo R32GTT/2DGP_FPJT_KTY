@@ -4,11 +4,11 @@ import unittest
 from collections import Counter
 from copy import deepcopy
 
-from shapely import LineString, box, union_all
+from shapely import LineString, Polygon, box, union_all
 
 from prototype.generation import generate_scene
 from prototype.movement import move_actor
-from prototype.road_generation import ROAD_GAP, TURN_SPACE, validate_roads
+from prototype.road_generation import ROAD_GAP, build_junctions, validate_roads
 from prototype.road_visuals import ROAD_STYLES, road_layers
 from prototype.simulation import PlaySimulation
 from prototype.world import World
@@ -120,8 +120,9 @@ class GeneratedMapTests(unittest.TestCase):
 
     def test_road_roles_materials_and_replaceable_art_preserve_geometry(self):
         scene = self.scene
-        self.assertEqual({row["kind"]: row["width"] for row in scene["roads"]},
-                         {"main": 6, "access": 4.5, "service": 3.5})
+        self.assertEqual({(row["kind"], row["width"], row["material"]) for row in scene["roads"]},
+                         {("main", 6, "asphalt"), ("access", 4.5, "asphalt"),
+                          ("access", 3, "dirt"), ("service", 3, "dirt")})
         routes = {}
         for road in scene["roads"]:
             routes.setdefault(road["route"], set()).add((road["kind"], road["width"], road["material"]))
@@ -133,6 +134,9 @@ class GeneratedMapTests(unittest.TestCase):
             self.assertEqual({key: approach[key] for key in ("kind", "width", "material")}, site["road"])
             self.assertLessEqual(approach["width"], site["connector"]["width_m"])
         original = list(road_layers(scene["road_network"]))
+        junction_layers = {row["id"]: row for row in original if row["style"] == "road_junction"}
+        for junction in scene["road_network"]["junctions"]:
+            self.assertEqual(junction_layers["junction/" + junction["node"]]["polygon"], junction["polygon"])
         style = ROAD_STYLES["dirt"]
         old_path = style["image"]
         try:
@@ -148,16 +152,24 @@ class GeneratedMapTests(unittest.TestCase):
 
         network = {"nodes": {"a": [-10, 0], "b": [0, 0], "c": [0, 10]},
                    "edges": [("a", "b"), ("b", "c")], "terminals": {},
-                   "segments": [{"nodes": [a, b], "width": 3.5} for a, b in (("a", "b"), ("b", "c"))],
-                   "junctions": [{"node": "b", "radius": TURN_SPACE, "turn": True}]}
+                   "segments": [{"nodes": [a, b], "width": 3, "kind": "service", "material": "dirt"}
+                                for a, b in (("a", "b"), ("b", "c"))]}
+        network["junctions"] = build_junctions(network["nodes"], network["segments"])
         bounds = Rect(-20, -20, 40, 40)
         validate_roads(network, [], bounds, [])
         narrow = deepcopy(network)
-        narrow["segments"][0]["width"] = 3
+        narrow["segments"][0]["width"] = 2.9
         with self.assertRaisesRegex(ValueError, "폭"):
             validate_roads(narrow, [], bounds, [])
         with self.assertRaisesRegex(ValueError, "통행 공간"):
-            validate_roads(network, [], bounds, [{"rect": [2, -3, 0.4, 0.4]}])
+            validate_roads(network, [], bounds, [{"rect": [1, -1, 0.2, 0.2]}])
+
+        network["nodes"]["c"] = [10, 10]
+        network["junctions"] = build_junctions(network["nodes"], network["segments"])
+        validate_roads(network, [], bounds, [])
+        shape = Polygon(network["junctions"][0]["polygon"])
+        self.assertTrue(shape.is_valid)
+        self.assertGreater(shape.bounds[1], -2.5)
 
     def test_generated_road_connects_real_hq_and_player_can_walk_inside(self):
         simulation = PlaySimulation(self.scene)

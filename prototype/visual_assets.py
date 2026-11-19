@@ -7,6 +7,14 @@ import random
 import pico2d
 
 
+def draw_polygon(backend, points, color):
+    indices = [index for end in range(1, len(points) - 1) for index in (0, end, end + 1)]
+    vertices = (backend.SDL_Vertex * len(indices))(*(
+        backend.SDL_Vertex((points[index][0], pico2d.get_canvas_height() - points[index][1]), color)
+        for index in indices))
+    backend.SDL_RenderGeometry(backend.renderer, None, vertices, len(indices), None, 0)
+
+
 class Painter:
     def __init__(self, backend):
         self.backend = backend
@@ -135,9 +143,7 @@ def layer_image(backend, layer):
         return None
     road = role.startswith("road") and role != "road_junction"
     vertical = role == "road_v"
-    if role == "road_junction":
-        width, height = 64, 64
-    elif road or role in {"trail", "footbridge"}:
+    if road or role in {"trail", "footbridge"}:
         width, height = (64, 512) if vertical else (512, 64)
     else:
         width, height = 768, 512
@@ -150,10 +156,6 @@ def layer_image(backend, layer):
                 p.rect(0, y, width, height * 0.08, (108, 94, 66))
             for _ in range(200):
                 p.rect(rng.randrange(width), rng.randrange(height), 2, 1, (142, 125, 89))
-        elif role == "road_junction":
-            for y in range(height):
-                half = math.sqrt(max(0, (width / 2) ** 2 - (y + 0.5 - height / 2) ** 2))
-                p.rect(width / 2 - half, y, half * 2, 1, layer.color)
         elif role == "road_asphalt":
             p.rect(0, 0, width, height, layer.color)
             if not layer.variant:

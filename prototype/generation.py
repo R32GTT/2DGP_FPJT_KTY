@@ -15,7 +15,7 @@ from .road_visuals import road_layers
 from .site_planning import IMPORTANCE, REGION_PROFILES, plan_sites
 
 
-GENERATION_VERSION = 6
+GENERATION_VERSION = 7
 
 
 def _density(seed, kind, extent):

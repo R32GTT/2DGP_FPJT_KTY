@@ -32,7 +32,7 @@ class MapImages:
             if key in self.cache:
                 self.cache.move_to_end(key)
                 result[layer.id] = self.cache[key]
-            elif layer.role == "walls" and path is None:
+            elif (layer.role == "walls" or layer.polygon) and path is None:
                 result[layer.id] = None
             elif budget > 0:
                 image = pico2d.load_image(str(path)) if path else layer_image(self.backend, layer)
