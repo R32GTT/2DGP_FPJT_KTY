@@ -15,10 +15,11 @@ from .territory import evaluate_regions
 
 
 class Simulation:
-    def __init__(self, state: CampaignState, *, departure_ready=None, repair_ready=None):
+    def __init__(self, state: CampaignState, *, departure_ready=None, repair_ready=None, movement_ready=None):
         self.state = state
         self.departure_ready = departure_ready
         self.repair_ready = repair_ready
+        self.movement_ready = movement_ready
         self._moving = {op.id for op in state.operations.values()
                         if op.phase in {"outbound", "returning"}}
 
@@ -40,6 +41,9 @@ class Simulation:
         state = self.state
         for operation_id in sorted(self._moving):
             operation = state.operations[operation_id]
+            if (operation.kind in FOOT_OPERATIONS and operation.phase in {"outbound", "returning"}
+                    and self.movement_ready is not None and not self.movement_ready(operation)):
+                continue
             if move_one_second(state, operation):
                 if operation.phase == "returning":
                     origin = owner(state, operation.origin_id)
@@ -164,8 +168,9 @@ class Simulation:
                 state.record("shortage", operation_id=operation.id,
                              missing=soldiers * rate - consumed["supplies"])
 
-    def apply_action(self, action: dict) -> None:
+    def apply_action(self, action: dict):
         state = self.state
+        result = None
         kind = action["type"]
         if kind == "block_road":
             if type(action["blocked"]) is not bool:
@@ -214,6 +219,7 @@ class Simulation:
                     raise ValueError("보고 병력이 해당 시설에 배치되어 있지 않음")
             position_report = list(point) if point is not None else None
             status, operation_id = dispatch_response(state, facility_id, report_xy=position_report, sighting=sighting)
+            result = status, operation_id
             state.record("qrf_report", facility_id=facility_id, status=status,
                          operation_id=operation_id, position=position_report)
         elif kind == "damage_facility":
@@ -244,6 +250,7 @@ class Simulation:
             raise ValueError(f"지원하지 않는 행동: {kind}")
         state.record("action", action=deepcopy(action))
         assert_invariants(state)
+        return result
 
     def _damage_asset(self, action: dict) -> None:
         state = self.state

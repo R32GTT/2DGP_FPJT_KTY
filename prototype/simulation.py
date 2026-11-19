@@ -74,7 +74,8 @@ class PlaySimulation:
         self.roster.track_player(self.player.xy)
         self.guards = self.roster.sync()
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],
-                          can_radio=self.campaign.can_radio)
+                          can_radio=self.campaign.can_radio,
+                          report_contact=self._report_contact if self.world.data.get("generation") else None)
         self.presence = (CampaignPresence(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"])
                          if self.world.data.get("generation") else None)
         self.events, self.feedback = EventBus(), Feedback()
@@ -174,6 +175,14 @@ class PlaySimulation:
             self.presence.prepare(self.time, self.player.xy)
         self.transports.sync(self.time)
         self.guards = self.roster.sync(restore=restore) + self.transports.dismounted
+        if self.presence:
+            self.presence.receive_orders(self.time)
+
+    def _report_contact(self, actor, point, seconds):
+        result = self.campaign.report_contact(actor, point, seconds)
+        if result and result[0] == "ordered":
+            self.message = "목격 보고 전달 · 다른 지역에서 지원 병력 출발 준비"
+            self.events.emit("support_ordered", seconds, actor, operation_id=result[1], position=point)
 
     def _drop_equipment(self):
         self.cancel_reload()

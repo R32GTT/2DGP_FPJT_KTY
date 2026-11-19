@@ -2,14 +2,19 @@
 
 import math
 
-from campaign.models import Position
-from .ai_state import Brain
+from campaign.models import FOOT_OPERATIONS, Position
+from campaign.routes import position
+from .ai_state import Brain, Incident
+from .ai_config import COMBAT_ALERT_SECONDS
 
 
 class CampaignPresence:
     def __init__(self, world, bridge, roster, ai, weapon):
         self.world, self.bridge, self.roster, self.ai, self.weapon = world, bridge, roster, ai, weapon
         self.sites = {site["service_node"]: site for site in world.facilities if site["campaign_id"]}
+        self.marches, self.received = {}, set()
+        self._orders_at, self.completed = -1, []
+        bridge.simulation.movement_ready = self.can_advance
 
     def _place(self, actor, node):
         site = self.sites[node]
@@ -32,6 +37,8 @@ class CampaignPresence:
         raise ValueError(f"시설 주둔 병력 배치 공간 부족: {site['id']}")
 
     def prepare(self, seconds, player):
+        self.marches = {}
+        self.roster.in_transit.clear()
         if not self.roster.materialized:
             return
         state = self.bridge.simulation.state
@@ -42,3 +49,68 @@ class CampaignPresence:
                 if actor.id not in self.ai.brains:
                     self._place(actor, unit.node_id)
                     self.ai.brains[actor.id] = Brain([actor.xy])
+        for view in self.bridge.convoys(seconds):
+            operation = state.operations[view.id]
+            if operation.kind not in FOOT_OPERATIONS or operation.phase not in {"outbound", "returning"}:
+                continue
+            if math.dist((view.x, view.y), player) > 60:
+                continue
+            members = self.roster.transport_members(operation, self.weapon)
+            self.marches[operation.id] = members
+            held = operation.waiting_reason.startswith("local_") or self._in_contact(members)
+            for index, actor in enumerate(members):
+                brain = self.ai.brains.setdefault(actor.id, Brain([actor.xy]))
+                self.roster.in_transit.add(actor.id)
+                if not held:
+                    distance = index * 0.7
+                    point = view.x - math.cos(view.heading) * distance, view.y - math.sin(view.heading) * distance
+                    point = next(self.world.navigation.nearby_goals(point, False), (view.x, view.y))
+                    actor.position = Position(*point)
+                    actor.facing = view.heading
+                    brain.patrol = [point]
+                actor.last_node = ""
+
+    def _in_contact(self, members):
+        return any(actor.hp > 0 and (self.ai.brains.get(actor.id) and self.ai.brains[actor.id].visible
+                                    or actor.state in {"combat", "combat_guard", "retreat", "search", "alert", "regroup"})
+                   for actor in members)
+
+    def can_advance(self, operation):
+        members = [actor for actor in self.marches.get(operation.id, ()) if actor.hp > 0]
+        if not self.roster.materialized or not members:
+            if operation.waiting_reason.startswith("local_"):
+                operation.waiting_reason = ""
+            return True
+        point = position(self.bridge.simulation.state, operation)
+        ready = not self._in_contact(members) and all(math.dist(actor.xy, (point.x, point.y)) <= 3.5 for actor in members)
+        if not ready:
+            operation.waiting_reason = "local_engagement"
+            for actor in members:
+                self.ai.brains[actor.id].patrol = [(point.x, point.y)]
+        elif operation.waiting_reason.startswith("local_"):
+            operation.waiting_reason = ""
+        return ready
+
+    def receive_orders(self, seconds):
+        state = self.bridge.simulation.state
+        if self._orders_at != state.world_time:
+            self._orders_at = state.world_time
+            self.completed = [operation for operation in state.operations.values()
+                              if operation.kind == "qrf" and operation.phase == "completed" and operation.report_xy is not None
+                              and seconds - operation.completed_at <= COMBAT_ALERT_SECONDS]
+            active = {operation.id for operation in self.completed}
+            self.received = {key for key in self.received if key[0] in active}
+        for operation in self.completed:
+            point = tuple(operation.report_xy)
+            for unit_id in operation.unit_ids:
+                for actor in self.roster.actors:
+                    if actor.source_unit != unit_id or not actor.present or actor.hp <= 0 or (operation.id, actor.id) in self.received:
+                        continue
+                    brain = self.ai.brains[actor.id]
+                    self.ai.incidents.setdefault(operation.id, Incident(seconds, point))
+                    brain.incident = operation.id
+                    brain.memory.reported, brain.memory.reported_at = point, float(operation.created_at)
+                    brain.memory.report_source = operation.id
+                    brain.combat.combat_alert_until = operation.completed_at + COMBAT_ALERT_SECONDS
+                    brain.patrol = [actor.xy]
+                    self.received.add((operation.id, actor.id))

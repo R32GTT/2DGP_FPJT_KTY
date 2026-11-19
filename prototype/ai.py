@@ -22,7 +22,7 @@ from . import ai_config as config
 
 
 class EnemyAI:
-    def __init__(self, world, actors, patrols, *, can_radio=None):
+    def __init__(self, world, actors, patrols, *, can_radio=None, report_contact=None):
         self.world = world
         self.cover_finder = CoverFinder(world)
         self.can_radio = can_radio
@@ -36,7 +36,7 @@ class EnemyAI:
         self.crowd = CrowdMotion(world)
         self.search = SearchController(world, self.brains, self.incidents)
         self.combat = CombatController(world, self.brains, self.cover_finder)
-        self.squad = SquadCoordinator(world, self.brains, self.incidents, self.can_radio)
+        self.squad = SquadCoordinator(world, self.brains, self.incidents, self.can_radio, report_contact)
 
     def start_search_drill(self, actors, point):
         self.search.start_search_drill(actors, point)

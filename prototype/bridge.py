@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 import math
 
-from campaign.models import Node, Position, Road
-from campaign.routes import position, road_between
+from campaign.models import FOOT_OPERATIONS, Node, Position, Road
+from campaign.routes import FOOT_SPEED_MPS, position, road_between
 from campaign.scenario import load_scenario
 from campaign.simulation import Simulation
 
@@ -51,6 +51,7 @@ class CampaignBridge:
         self._convoy_time = -1
         self._convoy_ids = []
         self._resumed_at = {}
+        self._reports = {}
 
     @property
     def supplies(self):
@@ -72,6 +73,18 @@ class CampaignBridge:
         target = int(seconds + 1e-8)
         if target > self.simulation.state.world_time:
             self.simulation.advance_to(target)
+
+    def report_contact(self, actor, point, seconds):
+        state = self.simulation.state
+        unit = state.units.get(actor.source_unit)
+        facility = self.node_facilities.get(unit.node_id) if unit else None
+        if actor.hp <= 0 or not actor.present or facility is None:
+            return None
+        if seconds < self._reports.get(facility.region_id, -math.inf) + 4:
+            return None
+        self._reports[facility.region_id] = seconds
+        return self.simulation.apply_action({"type": "report_contact", "facility_id": facility.id,
+                                             "unit_id": unit.id, "position": list(point)})
 
     def take_supplies(self, facility_id=None):
         facility_id = facility_id or self.facility_id
@@ -131,11 +144,11 @@ class CampaignBridge:
                     heading += math.pi
                 road = road_between(state, start, end)
                 vehicles = [state.vehicles[vid] for vid in op.vehicle_ids if state.vehicles[vid].status != "destroyed"]
-                if (vehicles and op.edge_paid and not op.waiting_reason
+                if ((vehicles or op.kind in FOOT_OPERATIONS) and op.edge_paid and not op.waiting_reason
                         and op.phase in {"outbound", "returning"} and (not road.blocked or op.reversing)):
                     since = max(state.world_time, self._resumed_at.get(key, 0.0))
                     fraction = max(0, min(1, seconds - since))
-                    speed = min(vehicle.speed_mps for vehicle in vehicles)
+                    speed = FOOT_SPEED_MPS if op.kind in FOOT_OPERATIONS else min(vehicle.speed_mps for vehicle in vehicles)
                     progress = (max(0, op.progress_m - speed * fraction) if op.reversing
                                 else min(math.nextafter(road.length_m, 0), op.progress_m + speed * fraction))
                     point = Position(a.x + (b.x - a.x) * progress / road.length_m,

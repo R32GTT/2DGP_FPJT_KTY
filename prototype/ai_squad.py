@@ -14,15 +14,18 @@ from . import ai_config as config
 
 
 class SquadCoordinator:
-    def __init__(self, world, brains, incidents, can_radio=None):
+    def __init__(self, world, brains, incidents, can_radio=None, report_contact=None):
         self.world, self.brains, self.incidents = world, brains, incidents
         self.can_radio = can_radio
+        self.report_contact = report_contact
         self.approaches = {}
         self.assign_at = 0.0
 
     def report_sighting(self, actor, brain, actors, time):
         brain.radio_at = time + 4
         point = tuple(round(axis / 4) * 4 for axis in brain.memory.last_seen)
+        if self.report_contact:
+            self.report_contact(actor, point, time)
         receivers = self.receivers(actor, actors)
         if not receivers:
             return

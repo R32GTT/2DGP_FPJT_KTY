@@ -1,4 +1,4 @@
-"""로컬 목업 개체. 군수 부대의 실제 병력과는 별도인 훈련용 상태다."""
+"""전술 현장의 개별 병사. 캠페인 병력은 source_unit과 member로 연결한다."""
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
