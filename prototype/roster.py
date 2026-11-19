@@ -38,6 +38,8 @@ class CampaignRoster:
         state = self.bridge.simulation.state
         point = state.nodes[operation.home_node].position
         for unit_id in operation.unit_ids:
+            if unit_id not in self.unit_ids:
+                continue
             members = [actor for actor in self.actors if actor.source_unit == unit_id and actor.hp > 0]
             if len(members) != state.units[unit_id].soldiers:
                 return False

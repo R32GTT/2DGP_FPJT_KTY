@@ -1,6 +1,7 @@
 """도로 거리 기반 이동. 차단은 현장에서 발견하며 진행 위치를 보존한다."""
 
 import heapq
+import math
 
 from .models import FOOT_OPERATIONS, CampaignState, Operation, Position, Road
 from .resources import consume
@@ -96,6 +97,23 @@ def _replan(state: CampaignState, operation: Operation) -> bool:
     return False
 
 
+def _pay_distance(state, operation, distance, vehicle_count):
+    quantum = state.rules.get("road_cost_distance_m")
+    if quantum is None or not vehicle_count:
+        return True
+    before = operation.operating_distance_m
+    after = round(before + distance, 9)
+    cost = (math.ceil(after / quantum) - math.ceil(before / quantum)) * vehicle_count * state.rules["road_cost_per_vehicle"]
+    if operation.provisions["supplies"] < cost:
+        operation.waiting_reason = "no_provisions"
+        return False
+    if cost:
+        consume(state, operation.provisions, {"supplies": cost}, reason="vehicle_operation")
+    operation.operating_distance_m = after
+    operation.waiting_reason = ""
+    return True
+
+
 def move_one_second(state: CampaignState, operation: Operation) -> bool:
     """현재 이동 구간의 끝에 도달하면 True. 작업·인계는 호출자가 처리한다."""
     if operation.phase not in {"outbound", "returning"} or operation.waiting_reason == "driver_down":
@@ -132,6 +150,8 @@ def move_one_second(state: CampaignState, operation: Operation) -> bool:
                 continue
         if operation.reversing:
             distance = min(budget, operation.progress_m)
+            if not _pay_distance(state, operation, distance, len(vehicles)):
+                return False
             operation.progress_m -= distance
             budget -= distance
             if operation.progress_m == 0:
@@ -143,7 +163,7 @@ def move_one_second(state: CampaignState, operation: Operation) -> bool:
                     return True
             continue
         if not operation.edge_paid:
-            cost = len(vehicles) * state.rules["road_cost_per_vehicle"]
+            cost = 0 if "road_cost_distance_m" in state.rules else len(vehicles) * state.rules["road_cost_per_vehicle"]
             if operation.provisions["supplies"] < cost:
                 operation.waiting_reason = "no_provisions"
                 return False
@@ -152,6 +172,8 @@ def move_one_second(state: CampaignState, operation: Operation) -> bool:
             operation.edge_paid = True
         operation.waiting_reason = ""
         distance = min(budget, road.length_m - operation.progress_m)
+        if not _pay_distance(state, operation, distance, len(vehicles)):
+            return False
         operation.progress_m += distance
         budget -= distance
         if operation.progress_m >= road.length_m:

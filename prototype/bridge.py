@@ -24,7 +24,11 @@ class ConvoyView:
 
 class CampaignBridge:
     def __init__(self, facility_id="depot_a", world=None):
-        state = load_scenario()
+        if world is not None and world.data.get("generation"):
+            from .generated_campaign import build_generated_state
+            state = build_generated_state(world.data)
+        else:
+            state = load_scenario()
         if world is not None and world.region_layout:
             layout = world.region_layout
             for key, xy in layout["road_nodes"].items():
@@ -37,6 +41,7 @@ class CampaignBridge:
         self.simulation = Simulation(state)
         self.simulation.advance_to(0)
         self.facility_id = facility_id
+        self.node_facilities = {facility.node_id: facility for facility in state.facilities.values()}
         self._convoy_time = -1
         self._convoy_ids = []
         self._resumed_at = {}
@@ -50,8 +55,8 @@ class CampaignBridge:
 
     def can_radio(self, sender, receiver):
         state = self.simulation.state
-        sender_home = state.facilities.get(sender.last_node or sender.home_node)
-        receiver_home = state.facilities.get(receiver.last_node or receiver.home_node)
+        sender_home = self.node_facilities.get(sender.last_node or sender.home_node)
+        receiver_home = self.node_facilities.get(receiver.last_node or receiver.home_node)
         if sender_home is None or receiver_home is None or sender_home.region_id != receiver_home.region_id:
             return False
         return any("communication" in state.facilities[key].capabilities and state.facilities[key].damage < 100

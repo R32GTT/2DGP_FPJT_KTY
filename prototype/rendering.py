@@ -179,7 +179,7 @@ class Renderer:
             self._rect(view, Rect(world.safehouse[0] - 0.5, world.safehouse[1] - 0.1, 1, 0.2), (206, 225, 202))
         for point, _ in simulation.dropped:
             self._rect(view, Rect(point[0] - 0.25, point[1] - 0.15, 0.5, 0.3), (218, 181, 106))
-        if world.region_layout:
+        if world.campaign_map:
             for x, y, _ in simulation.campaign.parked(simulation.roster.nodes):
                 if view.visible(Rect(x - 2.8, y - 1.2, 5.6, 2.4)):
                     self.truck.draw(*view.pico(x, y), 5.6 * view.scale, 2.4 * view.scale)

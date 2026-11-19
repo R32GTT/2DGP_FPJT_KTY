@@ -50,6 +50,9 @@ class World:
             raise ValueError("지원하지 않는 그림 맵 형식")
         if self.data.get("prefab_instances"):
             self.data = expand_instances(self.data, ROOT)
+        if self.data.get("generation"):
+            from .generated_campaign import bind_sites
+            self.data = bind_sites(self.data)
         self.bounds = Rect(*self.data["bounds"])
         self.layers = [ImageLayer(row["id"], Rect(*row["rect"]), row["image"],
                                   tuple(row["color"]), row.get("fallback", ""), row.get("style", ""),
@@ -79,6 +82,7 @@ class World:
         self.facilities = self.data.get("facilities", [])
         self.roads = self.data.get("roads", [])
         self.region_layout = self.data.get("region_layout")
+        self.campaign_map = bool(self.region_layout or self.data.get("generation"))
         self.territories = {key: Rect(*area["bounds"]) for key, area in self.data.get("territories", {}).items()}
         self.road_controls = self.data.get("road_controls", [])
         if self.data.get("road_network") and self.data.get("prefab_instances"):

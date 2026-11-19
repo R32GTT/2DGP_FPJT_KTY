@@ -1,11 +1,15 @@
 import json
 import math
 import unittest
+from dataclasses import asdict
 from collections import Counter
 from copy import deepcopy
 
 from shapely import LineString, Polygon, box, union_all
 
+from campaign.persistence import deserialize_campaign, serialize_campaign
+from campaign.resources import assert_invariants
+from campaign.simulation import Simulation
 from prototype.generation import generate_scene
 from prototype.movement import move_actor
 from prototype.road_generation import ROAD_GAP, build_junctions, validate_roads
@@ -198,3 +202,40 @@ class GeneratedMapTests(unittest.TestCase):
         self.assertEqual(world.indoor_search_area(actor.xy).id, instance["id"])
         self.assertTrue(any(not collider.active for collider in world.geometry.objects.values()
                             if collider.kind == "door" and collider.id.startswith(instance["id"] + "/")))
+
+    def test_generated_campaign_uses_real_sites_and_delivers_with_the_player_away(self):
+        play = PlaySimulation(self.scene)
+        state, network = play.campaign.simulation.state, self.scene["road_network"]
+        self.assertEqual(state.seed, self.scene["generation"]["seed"])
+        self.assertEqual(set(state.nodes), set(network["nodes"]))
+        self.assertEqual(set(state.facilities), {site["id"] for site in self.scene["planned_facilities"]
+                                               if site["kind"] != "safehouse"})
+        self.assertEqual(len(state.roads), len(self.scene["roads"]))
+        for road in state.roads.values():
+            self.assertAlmostEqual(road.length_m, math.dist(network["nodes"][road.start], network["nodes"][road.end]))
+        hq = next(facility for facility in state.facilities.values() if "command" in facility.capabilities)
+        operation, = [op for op in state.operations.values() if op.destination_id == hq.id]
+        initial = hq.inventory["supplies"]
+        amount = state.reservations[operation.id].cargo["supplies"]
+        original_player = play.player.xy
+        seen_trucks = False
+        snapshot = None
+        for second in range(1, 121):
+            play.time = float(second)
+            play.campaign.advance_to(second)
+            play._sync_guards()
+            seen_trucks |= bool(play.transports.trucks)
+            if operation.delivered_at is None:
+                self.assertEqual(hq.inventory["supplies"], initial)
+            if second == 45:
+                self.assertTrue(play.transports.trucks)
+                snapshot = deserialize_campaign(serialize_campaign(state))
+        self.assertTrue(seen_trucks)
+        self.assertIsNotNone(operation.delivered_at)
+        self.assertEqual(hq.inventory["supplies"], initial + amount)
+        self.assertEqual(play.player.xy, original_player)
+        self.assertEqual(sum(row["kind"] == "handed_over" and row["operation_id"] == operation.id
+                             for row in state.history), 1)
+        Simulation(snapshot).advance_to(120)
+        self.assertEqual(asdict(snapshot), asdict(state))
+        assert_invariants(state)

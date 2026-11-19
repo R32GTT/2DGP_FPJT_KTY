@@ -314,7 +314,8 @@ class HUD:
                 self.label("site/" + facility["id"], facility["name"], 13)
                 campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
                 status = f"피해 {campaign.damage}%" if campaign else "복귀 거점"
-                if simulation.world.territories and campaign and facility["kind"] == "warehouse":
+                if campaign and (simulation.world.data.get("generation") or
+                                 simulation.world.territories and facility["kind"] == "warehouse"):
                     status += f" · 보급 {campaign.inventory['supplies']}"
                 self.label("site_info/" + facility["id"], f"{facility['name']} · {status}", 13)
         self.label("paused", "PAUSED — P 키로 재개" if paused else "", 24)
@@ -366,7 +367,7 @@ class HUD:
                 x, y = point(*actor.xy)
                 color = (108, 213, 197) if actor.team == "player" else (218, 131, 100)
                 pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *color, filled=True)
-        if world.region_layout:
+        if world.campaign_map:
             for convoy in simulation.campaign.convoys(simulation.time):
                 if not bounds.x <= convoy.x <= bounds.right or not bounds.y <= convoy.y <= bounds.bottom:
                     continue
@@ -455,6 +456,7 @@ class HUD:
         self.text("map_title", 84, camera.height - 111)
         self.text("map_help", 84, camera.height - 140)
         world = simulation.world
+        generated = bool(world.data.get("generation"))
         plan_width = camera.width - (168 if not world.facilities else 480)
         scale = min(plan_width / world.bounds.w, (camera.height - 370) / world.bounds.h)
         left = 84 + (plan_width - world.bounds.w * scale) / 2
@@ -474,7 +476,7 @@ class HUD:
         for control in world.road_controls:
             x, y = point(*control["position"])
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 241, 211, 135, filled=True)
-        if not world.facilities:
+        if not world.facilities or generated:
             for layer in world.layers:
                 if layer.role.startswith("road") or layer.role == "pavement":
                     continue
@@ -496,8 +498,9 @@ class HUD:
             x, y, w, h = facility["rect"]
             a, b = point(x, y), point(x + w, y + h)
             color = (94, 175, 150) if facility["kind"] == "safehouse" else (162, 166, 128)
-            pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=True)
-            self.text("site/" + facility["id"], a[0], b[1] - 13)
+            if not generated:
+                pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=True)
+                self.text("site/" + facility["id"], a[0], b[1] - 13)
             self.text("site_info/" + facility["id"], camera.width - 350, camera.height - 200 - index * 34)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp <= 0 or (actor.team != "player" and not debug):

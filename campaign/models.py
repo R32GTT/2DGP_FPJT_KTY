@@ -150,6 +150,7 @@ class Operation:
     delivered_at: int | None = None
     completed_at: int | None = None
     report_xy: list[float] | None = None
+    operating_distance_m: float = 0.0
 
 
 @dataclass(order=True)
@@ -326,6 +327,8 @@ def validate_state(state: CampaignState) -> None:
         require(all(node in state.nodes for node in operation.route), "작전 경로 노드 누락")
         require(type(operation.edge_index) is int and operation.edge_index >= 0, "잘못된 경로 순번")
         require(math.isfinite(operation.progress_m) and operation.progress_m >= 0, "잘못된 이동 진행도")
+        require(math.isfinite(operation.operating_distance_m) and operation.operating_distance_m >= 0,
+                "잘못된 차량 누적 운행 거리")
         if operation.route:
             require(operation.edge_index < len(operation.route), "경로 순번 초과")
             require(all(frozenset((a, b)) in pairs for a, b in zip(operation.route, operation.route[1:])),

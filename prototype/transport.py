@@ -108,7 +108,7 @@ class TransportCrew:
 
     def sync(self, seconds):
         self.trucks, self.dismounted = [], []
-        if not self.world.region_layout or not self.roster.materialized:
+        if not self.world.campaign_map or not self.roster.materialized:
             return
         state = self.bridge.simulation.state
         active = set()

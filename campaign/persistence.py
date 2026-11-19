@@ -49,7 +49,7 @@ def deserialize_campaign(text: str) -> CampaignState:
         row["regions"] = {key: _construct(Region, {"weak_since": None, "withdrawal_started_at": None, **value})
                           for key, value in row["regions"].items()}
         # 좌표가 추가되기 전에 저장한 작전은 별도 목격 위치 없이 복원한다.
-        row["operations"] = {key: _construct(Operation, {"report_xy": None, **value})
+        row["operations"] = {key: _construct(Operation, {"report_xy": None, "operating_distance_m": 0.0, **value})
                              for key, value in row["operations"].items()}
         row["nodes"] = {key: _construct(Node, {**value, "position": _construct(Position, value["position"])})
                         for key, value in row["nodes"].items()}

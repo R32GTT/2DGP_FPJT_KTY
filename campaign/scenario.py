@@ -14,6 +14,10 @@ DEFAULT_SCENARIO = Path(__file__).parent / "scenarios" / "rear_test.json"
 def load_scenario(path=DEFAULT_SCENARIO, *, seed: int = 42,
                   support: str = "finite") -> CampaignState:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return build_state(data, seed=seed, support=support)
+
+
+def build_state(data, *, seed=42, support="finite") -> CampaignState:
 
     def indexed(cls, rows):
         items = [cls(**row) for row in rows]

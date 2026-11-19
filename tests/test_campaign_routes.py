@@ -1,6 +1,7 @@
 import unittest
 
-from campaign.models import stock
+from campaign.models import Node, Position, Road, stock
+from campaign.persistence import deserialize_campaign, serialize_campaign
 from campaign.resources import assert_invariants, depart, reserve
 from campaign.routes import find_route, move_one_second, position, request_return, set_route
 from campaign.scenario import load_scenario
@@ -8,6 +9,36 @@ from tests.campaign_helpers import make_operation
 
 
 class RouteTests(unittest.TestCase):
+    def test_distance_cost_survives_save_and_is_independent_of_road_piece_count(self):
+        whole, original = self.transport(destination="hq_a")
+        whole.rules["road_cost_distance_m"] = 100
+        split = deserialize_campaign(serialize_campaign(whole))
+        split.roads.pop("a_hq")
+        path = ["depot_a"]
+        for index in range(1, 5):
+            key = f"split/{index}"
+            split.nodes[key] = Node(key, Position(0, index * 100))
+            path.append(key)
+        path.append("hq_a")
+        for index, (a, b) in enumerate(zip(path, path[1:])):
+            key = f"split/road/{index}"
+            split.roads[key] = Road(key, a, b, 100)
+        divided = split.operations[original.id]
+        set_route(split, divided)
+        for state, operation in ((whole, original), (split, divided)):
+            for _ in range(30):
+                move_one_second(state, operation)
+        whole, split = (deserialize_campaign(serialize_campaign(state)) for state in (whole, split))
+        for state in (whole, split):
+            operation = state.operations[original.id]
+            for _ in range(20):
+                move_one_second(state, operation)
+            self.assertEqual(position(state, operation), Position(0, 500))
+            self.assertEqual(operation.operating_distance_m, 500)
+            self.assertEqual(operation.provisions["supplies"], 15)
+            self.assertEqual(state.ledger.consumed["supplies"], 5)
+            assert_invariants(state)
+
     def transport(self, destination="depot_c"):
         state = load_scenario()
         operation = make_operation(state, destination=destination)
