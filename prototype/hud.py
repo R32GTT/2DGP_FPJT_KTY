@@ -2,7 +2,6 @@
 
 import os
 import math
-from collections import Counter
 from pathlib import Path
 from time import perf_counter
 
@@ -11,6 +10,7 @@ import pico2d as pico
 from campaign.clock import world_clock
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
+from .road_visuals import ROAD_STYLES
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -375,7 +375,8 @@ class HUD:
     def _map_roads(self, world, point, scale, blocked=()):
         for road in world.roads:
             color = ((231, 111, 85) if road["id"] in blocked else
-                     (114, 103, 77) if road.get("kind") == "footpath" else (153, 155, 123))
+                     (114, 103, 77) if road.get("kind") == "footpath" else
+                     ROAD_STYLES[road["material"]]["map_color"] if "material" in road else (153, 155, 123))
             a, b = point(*road["start"]), point(*road["end"])
             dx, dy = b[0] - a[0], b[1] - a[1]
             length = max(1e-8, math.hypot(dx, dy))
@@ -388,11 +389,13 @@ class HUD:
                 for i in (0, 1, 2, 0, 2, 3)))
             self.backend.SDL_RenderGeometry(self.backend.renderer, None, vertices, 6, None, 0)
         network = world.data.get("road_network", {})
-        half = world.roads[0]["width"] * scale / 2 if world.roads else 0
-        for key, degree in Counter(key for edge in network.get("edges", ()) for key in edge).items():
-            if degree > 1:
-                x, y = point(*network["nodes"][key])
-                pico.draw_rectangle(x - half, y - half, x + half, y + half, 153, 155, 123, filled=True)
+        for junction in network.get("junctions", ()):
+            x, y = point(*network["nodes"][junction["node"]])
+            half = junction["radius"] * scale
+            color = ROAD_STYLES[junction["material"]]["map_color"]
+            for row in range(math.ceil(y - half), math.floor(y + half) + 1):
+                radius = math.sqrt(max(0, half * half - (row - y) ** 2))
+                pico.draw_line(x - radius, row, x + radius, row, *color)
 
     @staticmethod
     def _draw_field_terrain(world, point):

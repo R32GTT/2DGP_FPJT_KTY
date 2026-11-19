@@ -1,7 +1,7 @@
 {
   "format":"revenant.facility_prefab.v1",
   "id":"field_hq_01",
-  "version":1,
+  "version":2,
   "name":"소형 지휘시설",
   "kind":"hq",
   "region_sizes":["small"],
@@ -9,7 +9,7 @@
   "bounds":[-14,-14,28,28],
   "terminal_node":"terminal",
   "connectors":{
-    "vehicle":{"position":[0,14],"direction":[0,1],"width_m":8,"node":"vehicle_gate"},
+    "vehicle":{"position":[0,14],"direction":[0,1],"width_m":4.5,"node":"vehicle_gate"},
     "pedestrian":{"position":[0,6.5],"direction":[0,1],"width_m":1.6,"node":"entry_outside"}
   },
   "layers":[

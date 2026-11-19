@@ -8,7 +8,8 @@ from shapely import LineString, box, union_all
 
 from prototype.generation import generate_scene
 from prototype.movement import move_actor
-from prototype.road_generation import ROAD_SEPARATION, ROAD_WIDTH, validate_roads
+from prototype.road_generation import ROAD_GAP, TURN_SPACE, validate_roads
+from prototype.road_visuals import ROAD_STYLES, road_layers
 from prototype.simulation import PlaySimulation
 from prototype.world import World
 
@@ -99,11 +100,13 @@ class GeneratedMapTests(unittest.TestCase):
 
     def test_independent_parallel_roads_keep_their_distance(self):
         network = self.scene["road_network"]
-        segments = [(edge, LineString([network["nodes"][key] for key in edge])) for edge in network["edges"]]
-        for index, (edge, line) in enumerate(segments):
+        segments = [(row, LineString([network["nodes"][key] for key in row["nodes"]])) for row in network["segments"]]
+        for index, (segment, line) in enumerate(segments):
+            edge = segment["nodes"]
             a, b = line.coords
             ux, uy = (b[0] - a[0]) / line.length, (b[1] - a[1]) / line.length
-            for other_edge, other in segments[index + 1:]:
+            for other_segment, other in segments[index + 1:]:
+                other_edge = other_segment["nodes"]
                 if set(edge) & set(other_edge) or line.intersects(other):
                     continue
                 p, q = other.coords
@@ -112,8 +115,49 @@ class GeneratedMapTests(unittest.TestCase):
                     continue
                 projections = [(x - a[0]) * ux + (y - a[1]) * uy for x, y in other.coords]
                 overlap = min(line.length, max(projections)) - max(0, min(projections))
-                if overlap >= ROAD_WIDTH:
-                    self.assertGreaterEqual(line.distance(other), ROAD_SEPARATION)
+                if overlap >= min(segment["width"], other_segment["width"]):
+                    self.assertGreaterEqual(line.distance(other), (segment["width"] + other_segment["width"]) / 2 + ROAD_GAP)
+
+    def test_road_roles_materials_and_replaceable_art_preserve_geometry(self):
+        scene = self.scene
+        self.assertEqual({row["kind"]: row["width"] for row in scene["roads"]},
+                         {"main": 6, "access": 4.5, "service": 3.5})
+        routes = {}
+        for road in scene["roads"]:
+            routes.setdefault(road["route"], set()).add((road["kind"], road["width"], road["material"]))
+        self.assertTrue(all(len(specs) == 1 for specs in routes.values()))
+        self.assertEqual({road["material"] for road in scene["roads"] if road["kind"] == "access"}, {"asphalt", "dirt"})
+        for site in scene["planned_facilities"]:
+            gate = scene["road_network"]["terminals"][site["id"]]
+            approach, = [road for road in scene["roads"] if gate in road["nodes"]]
+            self.assertEqual({key: approach[key] for key in ("kind", "width", "material")}, site["road"])
+            self.assertLessEqual(approach["width"], site["connector"]["width_m"])
+        original = list(road_layers(scene["road_network"]))
+        style = ROAD_STYLES["dirt"]
+        old_path = style["image"]
+        try:
+            style["image"] = "assets/prototype/roads/future_dirt.png"
+            replaced = list(road_layers(scene["road_network"]))
+            self.assertTrue(any(row["image"] == style["image"] for row in replaced))
+            self.assertEqual([row["rect"] for row in original], [row["rect"] for row in replaced])
+        finally:
+            style["image"] = old_path
+
+    def test_narrow_road_and_vehicle_turn_space_are_checked(self):
+        from prototype.geometry import Rect
+
+        network = {"nodes": {"a": [-10, 0], "b": [0, 0], "c": [0, 10]},
+                   "edges": [("a", "b"), ("b", "c")], "terminals": {},
+                   "segments": [{"nodes": [a, b], "width": 3.5} for a, b in (("a", "b"), ("b", "c"))],
+                   "junctions": [{"node": "b", "radius": TURN_SPACE, "turn": True}]}
+        bounds = Rect(-20, -20, 40, 40)
+        validate_roads(network, [], bounds, [])
+        narrow = deepcopy(network)
+        narrow["segments"][0]["width"] = 3
+        with self.assertRaisesRegex(ValueError, "폭"):
+            validate_roads(narrow, [], bounds, [])
+        with self.assertRaisesRegex(ValueError, "통행 공간"):
+            validate_roads(network, [], bounds, [{"rect": [2, -3, 0.4, 0.4]}])
 
     def test_generated_road_connects_real_hq_and_player_can_walk_inside(self):
         simulation = PlaySimulation(self.scene)

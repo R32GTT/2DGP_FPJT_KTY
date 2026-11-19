@@ -4,7 +4,7 @@ import random
 
 from .geometry import Rect
 from .prefabs import Placement, rotate
-from .road_generation import ROAD_WIDTH
+from .road_generation import facility_road
 
 
 # 실제 프리팹 제작 전의 임시 점유 치수·검증 맵 크기다.
@@ -48,7 +48,7 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
             grade = 0 if kind == "safehouse" else IMPORTANCE.index(importance)
             width += 4 * rng.randint(grade, grade + 1)
             local = Rect(-width / 2, -height / 2, width, height)
-            connector = {"position": [0, height / 2], "direction": [0, 1], "width_m": ROAD_WIDTH}
+            connector = {"position": [0, height / 2], "direction": [0, 1], "width_m": facility_road(kind)["width"]}
         selected.append((kind, path, definition, local, connector))
     selected.sort(key=lambda item: item[3].w * item[3].h, reverse=True)
     bounds = Rect(-extent / 2, -extent / 2, extent, extent)
@@ -85,6 +85,7 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
                           "reserved": [area.x, area.y, area.w, area.h], "rotation": placement.turns * 90,
                           "variant_id": definition["id"] if definition else f"{kind}/{region_size}/{importance}/{local.w}x{local.h}",
                           "prefab": path, "prefab_version": definition["version"] if definition else None,
+                          "road": facility_road(kind),
                           "importance": importance, "placeholder": definition is None,
                           "connector": {"position": list(gate), "direction": list(direction), "width_m": connector["width_m"],
                                         "approach": list(approach)}})

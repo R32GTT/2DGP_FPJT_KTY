@@ -1,7 +1,6 @@
 """시드로 작은 야외 시험 맵을 만들어 기존 장면 입력에 전달한다."""
 
 import random
-from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -11,12 +10,12 @@ from shapely.prepared import prep
 
 from .geometry import Rect
 from .prefabs import load_catalog
-from .region import strip_layers
-from .road_generation import ROAD_WIDTH, build_roads, road_surface, validate_roads
+from .road_generation import build_roads, road_surface, validate_roads
+from .road_visuals import road_layers
 from .site_planning import IMPORTANCE, REGION_PROFILES, plan_sites
 
 
-GENERATION_VERSION = 5
+GENERATION_VERSION = 6
 
 
 def _density(seed, kind, extent):
@@ -94,17 +93,10 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
         kind = "tree" if tree else "rock"
         colliders.append({"id": f"{kind}/{index}", "rect": [rect.x, rect.y, rect.w, rect.h],
                           "kind": kind, "material": "tree_trunk" if tree else "concrete"})
-    roads = []
-    for index, (a, b) in enumerate(network["edges"]):
-        start, end = network["nodes"][a], network["nodes"][b]
-        key = f"road/{index}"
-        roads.append({"id": key, "start": start, "end": end, "width": ROAD_WIDTH})
-        layers.extend(strip_layers(key, start, end, ROAD_WIDTH, "road_h", [75, 81, 78]))
-    for key, degree in Counter(key for edge in network["edges"] for key in edge).items():
-        if degree > 1:
-            x, y = network["nodes"][key]
-            layers.append({"id": f"junction/{key}", "rect": [x - ROAD_WIDTH / 2, y - ROAD_WIDTH / 2, ROAD_WIDTH, ROAD_WIDTH],
-                           "style": "pavement", "image": "", "color": [75, 81, 78]})
+    roads = [{"id": f"road/{index}", "start": network["nodes"][segment["nodes"][0]],
+              "end": network["nodes"][segment["nodes"][1]], **segment}
+             for index, segment in enumerate(network["segments"])]
+    layers.extend(road_layers(network))
     colors = {"safehouse": [69, 109, 91], "hq": [119, 126, 116], "comms": [102, 119, 126],
               "warehouse": [135, 125, 95], "garrison": [114, 122, 91], "sam": [126, 103, 101]}
     for site in sites:

@@ -133,16 +133,33 @@ def layer_image(backend, layer):
     role = layer.role
     if role == "walls":
         return None
-    road = role.startswith("road")
+    road = role.startswith("road") and role != "road_junction"
     vertical = role == "road_v"
-    if road or role in {"trail", "footbridge"}:
+    if role == "road_junction":
+        width, height = 64, 64
+    elif road or role in {"trail", "footbridge"}:
         width, height = (64, 512) if vertical else (512, 64)
     else:
         width, height = 768, 512
 
     def paint(p):
         rng = random.Random(f"prototype-art:{role}:{layer.variant}")
-        if road:
+        if role == "road_dirt":
+            p.rect(0, 0, width, height, layer.color)
+            for y in (height * 0.25, height * 0.7):
+                p.rect(0, y, width, height * 0.08, (108, 94, 66))
+            for _ in range(200):
+                p.rect(rng.randrange(width), rng.randrange(height), 2, 1, (142, 125, 89))
+        elif role == "road_junction":
+            for y in range(height):
+                half = math.sqrt(max(0, (width / 2) ** 2 - (y + 0.5 - height / 2) ** 2))
+                p.rect(width / 2 - half, y, half * 2, 1, layer.color)
+        elif role == "road_asphalt":
+            p.rect(0, 0, width, height, layer.color)
+            if not layer.variant:
+                for x in range(0, width, 45):
+                    p.rect(x, height / 2, 22, 2, (185, 180, 145))
+        elif road:
             p.rect(0, 0, width, height, (144, 135, 107))
             if vertical:
                 p.rect(5, 0, width - 10, height, (75, 81, 78))
