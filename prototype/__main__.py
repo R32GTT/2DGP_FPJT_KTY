@@ -134,8 +134,10 @@ def main(argv=None):
     scene_options.add_argument("--generate", type=int, metavar="SEED", help="시드로 지형·도로·프리팹 시설 생성")
     scene_options.add_argument("--load", type=Path, nargs="?", const=DEFAULT_SAVE, help="생성 월드 이어하기")
     parser.add_argument("--region-size", choices=("small", "medium", "large", "xlarge"))
-    parser.add_argument("--regions", type=int, choices=(1, 2), help="생성할 지역 수")
+    parser.add_argument("--regions", type=int, choices=(1, 2, 3, 4), help="생성할 지역 수")
     parser.add_argument("--importance", choices=("normal", "important", "core"))
+    parser.add_argument("--region-sizes", help="지역 순서별 크기, 쉼표로 구분 (예: small,medium,small,small)")
+    parser.add_argument("--region-importances", help="지역 순서별 중요도, 쉼표로 구분")
     drills = parser.add_mutually_exclusive_group()
     drills.add_argument("--ai-scenario", choices=SCENARIOS, help="물류창고 AI 검증 장면")
     drills.add_argument("--search-drill", action="store_true", help="선택한 시설에서 실내 수색 훈련")
@@ -153,7 +155,7 @@ def main(argv=None):
         parser.error("시작 줌은 0.5~4.0 사이여야 합니다")
     if args.stack_variant is not None and args.stack_variant < 0:
         parser.error("문 집결 배치 번호는 음수일 수 없습니다")
-    if args.generate is None and (args.region_size or args.importance or args.regions):
+    if args.generate is None and (args.region_size or args.importance or args.regions or args.region_sizes or args.region_importances):
         parser.error("지역 수·크기·중요도는 --generate와 함께 사용하세요")
     if args.load and (args.ai_scenario or args.search_drill or args.stack_variant is not None):
         parser.error("이어하기와 AI 훈련을 함께 사용할 수 없습니다")
@@ -162,8 +164,13 @@ def main(argv=None):
     scene = args.scene
     if args.generate is not None:
         from .generated_world import generate_world
-        scene = generate_world(args.generate, region_count=args.regions or 1,
-                               region_size=args.region_size or "small", importance=args.importance or "normal")
+        try:
+            scene = generate_world(args.generate, region_count=args.regions or 1,
+                                   region_size=args.region_size or "small", importance=args.importance or "normal",
+                                   region_sizes=args.region_sizes.split(',') if args.region_sizes else None,
+                                   region_importances=args.region_importances.split(',') if args.region_importances else None)
+        except ValueError as error:
+            parser.error(str(error))
     try:
         simulation = load_game(args.load) if args.load else PlaySimulation(
             scene, ai_scenario=args.ai_scenario, search_drill=args.search_drill,

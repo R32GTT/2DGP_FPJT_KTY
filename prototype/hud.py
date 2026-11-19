@@ -457,7 +457,8 @@ class HUD:
         self.text("map_help", 84, camera.height - 140)
         world = simulation.world
         generated = bool(world.data.get("generation"))
-        plan_width = camera.width - (168 if not world.facilities else 480)
+        columns = 2 if len(world.facilities) > 10 else 1
+        plan_width = camera.width - (168 if not world.facilities else 750 if columns == 2 else 480)
         scale = min(plan_width / world.bounds.w, (camera.height - 370) / world.bounds.h)
         left = 84 + (plan_width - world.bounds.w * scale) / 2
         top = camera.height - 176
@@ -468,9 +469,6 @@ class HUD:
         right, bottom = point(world.bounds.right, world.bounds.bottom)
         pico.draw_rectangle(left, bottom, right, top, 34, 49, 43, filled=True)
         self._draw_field_terrain(world, point)
-        for rect in world.territories.values():
-            a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
-            pico.draw_rectangle(a[0], b[1], b[0], a[1], 90, 122, 110)
         state = simulation.campaign.simulation.state
         controlled_roads = {control["road"] for control in world.road_controls}
         for control in world.road_controls:
@@ -488,12 +486,21 @@ class HUD:
                 color = (242, 190, 65) if collider.kind == "door" else (36, 43, 41)
                 pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=collider.active)
         self._map_roads(world, point, scale, {key for key in controlled_roads if state.roads[key].blocked})
+        for key, rect in world.territories.items():
+            a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
+            pico.draw_rectangle(a[0], b[1], b[0], a[1], 90, 122, 110)
+            if len(world.territories) > 2:
+                self.label('territory/' + key, world.data['territories'][key]['name'], 13, (118, 215, 191))
+                self.text('territory/' + key, a[0] + 3, a[1] + 9)
         for site in world.data.get("planned_facilities", ()):
             x, y, w, h = site["rect"]
-            self.label("planned/" + site["id"], site["name"] + (" · 예약" if site["placeholder"] else ""), 13, (226, 221, 176))
-            self.text("planned/" + site["id"], *point(x, y + h))
+            if len(world.territories) <= 2:
+                self.label("planned/" + site["id"], site["name"] + (" · 예약" if site["placeholder"] else ""), 13, (226, 221, 176))
+                self.text("planned/" + site["id"], *point(x, y + h))
             gate, approach = site["connector"]["position"], site["connector"]["approach"]
             pico.draw_line(*point(*gate), *point(*approach), 112, 230, 205)
+        rows = math.ceil(len(world.facilities) / columns)
+        row_step = min(34, (camera.height - 476) / max(1, rows - 1))
         for index, facility in enumerate(world.facilities):
             x, y, w, h = facility["rect"]
             a, b = point(x, y), point(x + w, y + h)
@@ -501,7 +508,8 @@ class HUD:
             if not generated:
                 pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=True)
                 self.text("site/" + facility["id"], a[0], b[1] - 13)
-            self.text("site_info/" + facility["id"], camera.width - 350, camera.height - 200 - index * 34)
+            self.text("site_info/" + facility["id"], camera.width - (650 if columns == 2 else 350) + index // rows * 315,
+                      camera.height - 200 - index % rows * row_step)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp <= 0 or (actor.team != "player" and not debug):
                 continue

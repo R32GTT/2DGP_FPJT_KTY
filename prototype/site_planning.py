@@ -15,6 +15,7 @@ REGION_PROFILES = {
 }
 IMPORTANCE = ("normal", "important", "core")
 SAFEHOUSE_FACILITY_RADIUS = 24.0
+SIDES = {"west": (0, -1), "east": (0, 1), "north": (1, -1), "south": (1, 1)}
 SITE_SIZES = {
     "safehouse": ("안전가옥", (12, 8), (12, 8), (12, 8), (12, 8)),
     "hq": ("HQ", (24, 20), (28, 24), (32, 28), (36, 28)),
@@ -25,7 +26,7 @@ SITE_SIZES = {
 }
 
 
-def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None, entry_offsets=None):
+def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None, entries=None):
     if region_size not in REGION_PROFILES or importance not in IMPORTANCE:
         raise ValueError("지원하지 않는 지역 크기 또는 중요도")
     extent, comms, warehouses, garrisons = REGION_PROFILES[region_size]
@@ -55,12 +56,20 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
     selected.sort(key=lambda item: item[3].w * item[3].h, reverse=True)
     bounds = Rect(-extent / 2, -extent / 2, extent, extent)
     half, sites, reserved = extent // 2, [], [Rect(-8, -8, 16, 16)]
-    axis = rng.randrange(2) if entry_offsets is None else 0
+    stub_length = 12 if entries is not None else 4
+    if entries is None:
+        sides = ("west", "east") if rng.randrange(2) == 0 else ("north", "south")
+        entries = [{"side": side, "offset": rng.randrange(-half // 2, half // 2, 2)} for side in sides]
+    if (not 1 <= len(entries) <= 4 or len({entry['side'] for entry in entries}) != len(entries)
+            or any(entry['side'] not in SIDES or type(entry['offset']) not in (int, float)
+                   or not math.isfinite(entry['offset']) or abs(entry['offset']) > half - 12 for entry in entries)):
+        raise ValueError("잘못된 지역 연결점")
     gates, stubs, points = {}, [], {"spawn": (0, 0)}
-    for index, side in enumerate((-1, 1)):
-        offset = rng.randrange(-half // 2, half // 2, 2) if entry_offsets is None else entry_offsets[index]
+    for index, entry in enumerate(entries):
+        axis, side = SIDES[entry['side']]
+        offset = entry['offset']
         gate, approach = [offset, offset], [offset, offset]
-        gate[axis], approach[axis] = side * half, side * (half - (4 if entry_offsets is None else 12))
+        gate[axis], approach[axis] = side * half, side * (half - stub_length)
         key = f"entry/{index}"
         gates[key], points[key] = tuple(gate), tuple(approach)
         stubs.append((tuple(gate), tuple(approach)))
@@ -86,7 +95,8 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
             placement = Placement(key, (rng.randrange(-half + 12, half - 12, 2),
                                         rng.randrange(-half + 12, half - 12, 2)), rng.randrange(4))
             # 연결 경계에서도 보호 반경을 확보해 이웃 지역 시설의 침범을 막는다.
-            if kind == "safehouse" and abs(placement.position[axis]) > half - SAFEHOUSE_FACILITY_RADIUS:
+            if kind == "safehouse" and any(sign * placement.position[axis] > half - SAFEHOUSE_FACILITY_RADIUS
+                                           for axis, sign in (SIDES[entry['side']] for entry in entries)):
                 continue
             area = Rect(*placement.rect((left, top, right - left, bottom - top)))
             if (area.x < bounds.x + 8 or area.y < bounds.y + 8 or area.right > bounds.right - 8

@@ -84,9 +84,10 @@ class PlaySaveTests(unittest.TestCase):
         operation, = [op for op in play.campaign.simulation.state.operations.values() if op.kind == 'qrf']
         play.player.position = Position(0, 0)
         play._sync_guards()
-        play.campaign.advance_to(40)
-        play.time = 40.0
-        play._sync_guards()
+        while operation.id not in play.presence.marches and play.time < 150:
+            play.time = float(play.campaign.simulation.state.world_time + 1)
+            play.campaign.advance_to(play.time)
+            play._sync_guards()
         self.assertIn(operation.id, play.presence.marches)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'play.json.gz'

@@ -24,7 +24,7 @@ class GeneratedWorldTests(unittest.TestCase):
         self.assertEqual(generate_world(**json.loads(json.dumps(scene["generation"]))), scene)
         recreated = []
         for row in reversed(scene["generated_regions"]):
-            region = generate_region(42, row["id"], origin=row["origin"], entry_offsets=row["entry_offsets"])
+            region = generate_region(42, row["id"], origin=row["origin"], entries=row["entries"])
             self.assertEqual(region["planned_facilities"], [site for site in scene["planned_facilities"] if site["region_id"] == row["id"]])
             recreated.append(region)
         self.assertFalse(set(recreated[0]["navigation"]) & set(recreated[1]["navigation"]))

@@ -2,16 +2,17 @@
 
 from hashlib import blake2b
 import math
-import random
 
 from .generation import GENERATION_VERSION, generate_scene
 from .geometry import Rect
-from .road_generation import build_junctions, validate_roads
+from .road_generation import ROAD_WIDTHS, build_junctions, validate_roads
 from .road_visuals import road_layers
 from .site_planning import REGION_PROFILES
+from .world_layout import plan_world
+from .world_terrain import between_regions
 
 
-WORLD_VERSION = 1
+WORLD_VERSION = 2
 
 
 def region_seed(seed, region_id, version=GENERATION_VERSION):
@@ -19,14 +20,14 @@ def region_seed(seed, region_id, version=GENERATION_VERSION):
 
 
 def generate_region(seed, region_id, *, origin=(0, 0), version=GENERATION_VERSION, region_size="small",
-                    importance="normal", prefab_versions=None, entry_offsets=None):
+                    importance="normal", prefab_versions=None, entries=None):
     if type(seed) is not int or not isinstance(region_id, str) or not region_id:
         raise ValueError("월드 시드는 정수, 지역 ID는 비어 있지 않은 문자열이어야 합니다")
     if len(origin) != 2 or not all(math.isfinite(value) for value in origin):
         raise ValueError("지역 원점은 유한한 두 좌표여야 합니다")
     local_seed = region_seed(seed, region_id, version)
     scene = generate_scene(local_seed, version=version, region_size=region_size, importance=importance,
-                           prefab_versions=prefab_versions, entry_offsets=entry_offsets)
+                           prefab_versions=prefab_versions, entries=entries)
     prefix = region_id + "/"
 
     def point(value):
@@ -51,7 +52,7 @@ def generate_region(seed, region_id, *, origin=(0, 0), version=GENERATION_VERSIO
                "spawn_node": prefix + scene["road_network"]["spawn_node"],
                "junctions": build_junctions(nodes, roads, Rect(*bounds))}
     metadata = {"id": region_id, "name": "지역 " + region_id.rsplit("/", 1)[-1], "seed": local_seed,
-                "bounds": bounds, "origin": list(origin), "entry_offsets": entry_offsets,
+                "bounds": bounds, "origin": list(origin), "entries": entries,
                 "importance": importance, "region_size": region_size}
     return {**scene, "name": metadata["name"], "bounds": bounds, "layers": layers + list(road_layers(network)),
             "colliders": colliders, "planned_facilities": sites, "roads": roads, "road_network": network,
@@ -61,27 +62,34 @@ def generate_region(seed, region_id, *, origin=(0, 0), version=GENERATION_VERSIO
             "player_spawn": point(scene["player_spawn"]), "safehouse_spawn": point(scene["safehouse_spawn"]),
             "campaign_facility": next(site["id"] for site in sites if site["kind"] == "warehouse"),
             "supply_point": point(scene["supply_point"]), "campaign_entry": network["terminals"][prefix + "entry/0"],
-            "campaign_exit": network["terminals"][prefix + "entry/1"], "generated_regions": [metadata],
+            "campaign_exit": network["terminals"][prefix + f"entry/{len(entries) - 1 if entries else 1}"],
+            "generated_regions": [metadata],
             "territories": {region_id: metadata},
             "generation": {**scene["generation"], "seed": seed, "region_id": region_id, "origin": list(origin)}}
 
 
 def generate_world(seed=42, *, region_count=1, version=WORLD_VERSION, region_version=GENERATION_VERSION,
-                   region_size="small", importance="normal", prefab_versions=None):
-    if type(seed) is not int or type(region_count) is not int or region_count not in (1, 2):
-        raise ValueError("시드는 정수, 지역 수는 1~2여야 합니다")
+                   region_size="small", importance="normal", prefab_versions=None,
+                   region_sizes=None, region_importances=None):
+    if type(seed) is not int or type(region_count) is not int or not 1 <= region_count <= 4:
+        raise ValueError("시드는 정수, 지역 수는 1~4여야 합니다")
     if type(version) is not int or type(region_version) is not int or version != WORLD_VERSION or region_version != GENERATION_VERSION:
         raise ValueError("지원하지 않는 월드·지역 생성 버전")
     if region_size not in REGION_PROFILES:
         raise ValueError("지원하지 않는 지역 크기")
-    extent = REGION_PROFILES[region_size][0]
-    rng = random.Random(f"world-portals:{version}:{seed}")
-    offsets = [rng.randrange(-extent // 4, extent // 4, 2) for _ in range(region_count + 1)]
-    regions = [generate_region(seed, f"region/{index + 1}", origin=(index * extent, 0), version=region_version,
-                               region_size=region_size, importance=importance, prefab_versions=prefab_versions,
-                               entry_offsets=offsets[index:index + 2]) for index in range(region_count)]
-    aliases = {key: f"portal/{index + 1}" for index in range(region_count - 1)
-               for key in (regions[index]["campaign_exit"], regions[index + 1]["campaign_entry"])}
+    sizes = list(region_sizes) if region_sizes is not None else [region_size] * region_count
+    importances = list(region_importances) if region_importances is not None else [importance] * region_count
+    plans, links = plan_world(seed, version, region_count, sizes, importances)
+    regions = [generate_region(seed, plan['id'], origin=plan['origin'], entries=plan['entries'],
+                               version=region_version, region_size=plan['region_size'], importance=plan['importance'],
+                               prefab_versions=prefab_versions) for plan in plans]
+    by_id = {region['generated_regions'][0]['id']: region for region in regions}
+    aliases = {}
+    for link in links:
+        for side, entry in (('source', 'source_entry'), ('destination', 'destination_entry')):
+            region = by_id[link[side]]
+            terminal = region['road_network']['terminals'][f"{link[side]}/entry/{link[entry]}"]
+            aliases[terminal] = link['id'] + ('/a' if side == 'source' else '/b')
     nodes, terminals, roads = {}, {}, []
     for region in regions:
         for key, value in region["road_network"]["nodes"].items():
@@ -91,20 +99,37 @@ def generate_world(seed=42, *, region_count=1, version=WORLD_VERSION, region_ver
             nodes[target] = value
         terminals.update({key: aliases.get(value, value) for key, value in region["road_network"]["terminals"].items()})
         roads.extend({**row, "nodes": sorted(aliases.get(key, key) for key in row["nodes"])} for row in region["roads"])
-    bounds = [-extent / 2, -extent / 2, extent * region_count, extent]
+    for link in links:
+        a, b = link['id'] + '/a', link['id'] + '/b'
+        nodes[link['id']] = [(x + y) / 2 for x, y in zip(nodes[a], nodes[b])]
+        for index, pair in enumerate(((a, link['id']), (link['id'], b))):
+            roads.append({'id': f"{link['id']}/road/{index}", 'nodes': sorted(pair), 'start': nodes[pair[0]],
+                          'end': nodes[pair[1]], 'kind': 'main', 'width': ROAD_WIDTHS['main'],
+                          'material': 'asphalt', 'route': link['id']})
+    left = min(region['bounds'][0] for region in regions)
+    top = min(region['bounds'][1] for region in regions)
+    right = max(region['bounds'][0] + region['bounds'][2] for region in regions)
+    bottom = max(region['bounds'][1] + region['bounds'][3] for region in regions)
+    bounds = [left, top, right - left, bottom - top]
     network = {"nodes": dict(sorted(nodes.items())), "edges": sorted(tuple(row["nodes"]) for row in roads),
                "segments": roads, "terminals": terminals, "spawn_node": regions[0]["road_network"]["spawn_node"],
                "junctions": build_junctions(nodes, roads, Rect(*bounds))}
-    scene = {**regions[0], "name": f"절차 생성 / {region_count}개 지역 · {region_size} · {importance}", "bounds": bounds,
+    ground, trees = between_regions(seed, Rect(*bounds), regions, network)
+    profile = "지역별 설정" if len(set(sizes)) > 1 or len(set(importances)) > 1 else f"{sizes[0]} · {importances[0]}"
+    scene = {**regions[0], "name": f"절차 생성 / {region_count}개 지역 · {profile}", "bounds": bounds,
              **{key: [row for region in regions for row in region[key]]
                 for key in ("colliders", "planned_facilities", "prefab_instances", "generated_regions")},
              "layers": [row for region in regions for row in region["layers"] if not row["style"].startswith("road")],
              "roads": roads, "road_network": network, "navigation": dict(nodes), "navigation_edges": list(network["edges"]),
              "territories": {key: value for region in regions for key, value in region["territories"].items()},
+             "region_links": links,
              "campaign_exit": regions[-1]["campaign_exit"],
              "generation": {"seed": seed, "version": version, "region_version": region_version, "region_count": region_count,
                             "region_size": region_size, "importance": importance,
+                            "region_sizes": sizes, "region_importances": importances,
                             "prefab_versions": regions[0]["generation"]["prefab_versions"]}}
+    scene['layers'] = ground + scene['layers']
+    scene['colliders'].extend(trees)
     scene["layers"].extend(road_layers(network))
     validate_roads(network, scene["planned_facilities"], Rect(*bounds), scene["colliders"])
     return scene

@@ -58,6 +58,12 @@ def build_command(target, values):
             raise ValueError("시드는 정수로 입력하세요") from None
         command += ["--generate", str(seed), "--region-size", REGIONS[values["region"]],
                     "--importance", IMPORTANCE[values["importance"]], "--regions", values.get("regions", "1")]
+        for key, mapping in (("region_sizes", REGIONS), ("region_importances", IMPORTANCE)):
+            if values.get(key, '').strip():
+                items = [mapping.get(item.strip(), item.strip()) for item in values[key].split(',')]
+                if len(items) != int(values.get('regions', '1')) or any(item not in mapping.values() for item in items):
+                    raise ValueError("지역별 설정은 지역 수만큼 쉼표로 구분해 입력하세요")
+                command += ['--' + key.replace('_', '-'), ','.join(items)]
     command += list(target["modes"][values["mode"]])
     try:
         frames = int(values["frames"])
@@ -90,8 +96,8 @@ class Launcher:
         self.process, self.output = None, Queue()
         self.selected_key, self.last_modes = None, {}
         root.title("REVENANT · 통합 테스트 런처")
-        root.geometry("980x760")
-        root.minsize(840, 640)
+        root.geometry("980x820")
+        root.minsize(840, 760)
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=0)
         root.rowconfigure(1, weight=1)
@@ -116,13 +122,15 @@ class Launcher:
         options.grid(row=0, column=1, sticky="nsew")
         options.columnconfigure(1, weight=1)
         defaults = {"mode": "기본", "seed": "42", "region": "소형", "regions": "1", "importance": "일반", "frames": "0",
-                    "zoom": "장면 기본값", "paused": "장면 기본값", "debug": "장면 기본값"}
+                    "zoom": "장면 기본값", "paused": "장면 기본값", "debug": "장면 기본값",
+                    "region_sizes": "", "region_importances": ""}
         self.values = {key: tk.StringVar(root, value=value) for key, value in defaults.items()}
         self.values.update({key: tk.BooleanVar(root) for key in ("headless", "map_open")})
         self.fields = {}
         rows = [("mode", "훈련 종류", ["기본"]), ("seed", "생성 시드", None),
                 ("region", "지역 크기", list(REGIONS)), ("importance", "지역 중요도", list(IMPORTANCE)),
-                ("regions", "지역 수", ["1", "2"]),
+                ("regions", "지역 수", ["1", "2", "3", "4"]),
+                ("region_sizes", "지역별 크기 (선택)", None), ("region_importances", "지역별 중요도 (선택)", None),
                 ("zoom", "시작 줌", ["장면 기본값", "0.5", "0.55", "1.0", "1.5", "2.0", "4.0"]),
                 ("paused", "시작 일시정지", list(SWITCHES)), ("debug", "개발 정보", list(SWITCHES)),
                 ("frames", "프레임 제한", None)]
@@ -139,7 +147,7 @@ class Launcher:
             widget = ttk.Checkbutton(options, text=label, variable=self.values[key])
             widget.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
             self.fields[key] = widget
-        ttk.Label(options, text="프레임 0: 플레이 창은 무제한, 화면 없이는 120프레임\nF2 다시 시작 · F3 다음 훈련 · P 일시정지 · M 지도",
+        ttk.Label(options, text="지역별 설정: 비우면 공통값 사용 · 쉼표로 구분\n예: 소형,중형,소형,소형 / 일반,핵심,일반,일반\n프레임 0: 무제한 · P 일시정지 · M 지도 · F5/F9 저장·불러오기",
                   foreground="#555555", wraplength=410).grid(row=len(rows) + 2, column=0, columnspan=3, sticky="w", pady=(12, 0))
         log_frame = ttk.LabelFrame(root, text="실행 결과 · 오류", padding=6)
         log_frame.grid(row=1, column=0, sticky="nsew", padx=12)
@@ -175,12 +183,12 @@ class Launcher:
             self.values["mode"].set(self.last_modes.get(key, next(iter(modes))))
             self.selected_key = key
         for key, widget in self.fields.items():
-            enabled = generated if key in {"seed", "region", "regions", "importance"} else play
+            enabled = generated if key in {"seed", "region", "regions", "importance", "region_sizes", "region_importances"} else play
             if key == "mode":
                 enabled = play and len(modes) > 1
             if key in {"zoom", "paused", "debug", "map_open"} and self.values["headless"].get():
                 enabled = False
-            state = ("normal" if key in {"seed", "frames", "zoom", "headless", "map_open"} else "readonly") if enabled else "disabled"
+            state = ("normal" if key in {"seed", "frames", "zoom", "headless", "map_open", "region_sizes", "region_importances"} else "readonly") if enabled else "disabled"
             widget.configure(state=state)
         self.random_button.configure(state="normal" if generated else "disabled")
         self.start_button.configure(state="normal" if target and self.process is None else "disabled")

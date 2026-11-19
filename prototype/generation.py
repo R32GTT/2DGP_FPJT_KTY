@@ -15,7 +15,7 @@ from .road_visuals import road_layers
 from .site_planning import IMPORTANCE, REGION_PROFILES, plan_sites
 
 
-GENERATION_VERSION = 8
+GENERATION_VERSION = 9
 GENERATION_ATTEMPTS = 8
 FOREST_DENSITY = 0.55
 FOREST_TREE_GAP = 0.75
@@ -35,7 +35,7 @@ def _sample(field, x, y):
 
 
 def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", importance="normal", prefab_versions=None,
-                   entry_offsets=None):
+                   entries=None):
     if type(seed) is not int:
         raise ValueError("월드 시드는 정수여야 합니다")
     if type(version) is not int or version != GENERATION_VERSION:
@@ -54,7 +54,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
     for attempt in range(GENERATION_ATTEMPTS):
         try:
             bounds, sites, points, gates, stubs = plan_sites(seed, version, region_size, importance, attempt,
-                                                          catalog=catalog, entry_offsets=entry_offsets)
+                                                          catalog=catalog, entries=entries)
             network = build_roads(bounds, sites, points, gates, stubs, 1 + vegetation * 3 + (1 - soil) * 0.5,
                                   random.Random(f"roads:{version}:{seed}:{attempt}"))
             validate_roads(network, sites, bounds, [])
@@ -112,7 +112,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
     validate_roads(network, sites, bounds, colliders)
     return {"format": "revenant.image_scene.v1", "name": f"절차 생성 / {region_size} · {importance}",
             "generation": {"seed": seed, "version": version, "region_size": region_size, "importance": importance,
-                           "prefab_versions": manifest, "entry_offsets": entry_offsets},
+                           "prefab_versions": manifest, "entries": entries},
             "bounds": [-half, -half, extent, extent], "planned_facilities": sites, "road_network": network,
             "player_spawn": [0, 0], "safehouse_spawn": [0, 0], "supply_point": [0, 0],
             "campaign_facility": "depot_a", "player_weapons": [], "interaction_markers": False,

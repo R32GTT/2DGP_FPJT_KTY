@@ -25,6 +25,17 @@ class LauncherTests(unittest.TestCase):
             with self.subTest(option=key, value=value), self.assertRaises(ValueError):
                 build_command(self.targets["generated"], {**self.values, key: value})
 
+    def test_four_regions_and_individual_settings_reach_the_real_entry(self):
+        values = {**self.values, 'regions': '4', 'region_sizes': '소형,중형,소형,소형',
+                  'region_importances': '일반,핵심,일반,일반'}
+        command = build_command(self.targets['generated'], values)
+        self.assertIn('small,medium,small,small', command)
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('목업 코어 실행', result.stdout)
+        with self.assertRaises(ValueError):
+            build_command(self.targets['generated'], {**values, 'region_sizes': '소형,중형'})
+
     def test_automatic_test_selection_runs_existing_clock_tests(self):
         result = subprocess.run(build_command(self.targets["test/test_campaign_clock"], {}), cwd=ROOT,
                                 capture_output=True, text=True, encoding="utf-8", timeout=30)
