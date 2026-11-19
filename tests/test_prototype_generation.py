@@ -3,11 +3,11 @@ import unittest
 from collections import Counter
 from copy import deepcopy
 
-from shapely import box, union_all
+from shapely import LineString, box, union_all
 
 from prototype.generation import generate_scene
 from prototype.movement import move_actor
-from prototype.road_generation import validate_roads
+from prototype.road_generation import ROAD_SEPARATION, ROAD_WIDTH, validate_roads
 from prototype.simulation import PlaySimulation
 from prototype.world import World
 
@@ -90,3 +90,21 @@ class GeneratedMapTests(unittest.TestCase):
         x, y = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
         with self.assertRaises(ValueError):
             validate_roads(network, sites, bounds, [{"rect": [x - 0.5, y - 0.5, 1, 1]}])
+
+    def test_independent_parallel_roads_keep_their_distance(self):
+        network = self.scene["road_network"]
+        segments = [(edge, LineString([network["nodes"][key] for key in edge])) for edge in network["edges"]]
+        for index, (edge, line) in enumerate(segments):
+            a, b = line.coords
+            ux, uy = (b[0] - a[0]) / line.length, (b[1] - a[1]) / line.length
+            for other_edge, other in segments[index + 1:]:
+                if set(edge) & set(other_edge) or line.intersects(other):
+                    continue
+                p, q = other.coords
+                vx, vy = (q[0] - p[0]) / other.length, (q[1] - p[1]) / other.length
+                if abs(ux * vy - uy * vx) >= 0.2:
+                    continue
+                projections = [(x - a[0]) * ux + (y - a[1]) * uy for x, y in other.coords]
+                overlap = min(line.length, max(projections)) - max(0, min(projections))
+                if overlap >= ROAD_WIDTH:
+                    self.assertGreaterEqual(line.distance(other), ROAD_SEPARATION)

@@ -4,12 +4,14 @@ from collections import Counter
 import math
 
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra, minimum_spanning_tree
 from shapely import LineString, Point, box, union_all
 
 
 ROAD_WIDTH = 8
+ROAD_SEPARATION = ROAD_WIDTH + 6
 VEHICLE_SIZE = (5.6, 2.4)
 
 
@@ -67,26 +69,68 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
     if not free.ravel()[indices].all():
         raise ValueError("시설 진입로가 예약 영역에 막힘")
     graph = _grid_graph(cost, free)
-    distances, previous = dijkstra(graph, directed=False, indices=indices, return_predecessors=True)
+    distances = dijkstra(graph, directed=False, indices=indices)
     terminal_cost = distances[:, indices]
     if not np.isfinite(terminal_cost).all():
         raise ValueError("도로망을 연결할 수 없는 시설 배치")
     tree = minimum_spanning_tree(terminal_cost).tocoo()
     pairs = {tuple(sorted((int(a), int(b)))) for a, b in zip(tree.row, tree.col)}
-    paths = [_path(previous[a], indices[a], indices[b]) for a, b in sorted(pairs)]
+    order = [keys.index("spawn")]
+    for parent in order:
+        for a, b in sorted(pairs):
+            child = b if a == parent else a if b == parent else None
+            if child is not None and child not in order:
+                order.append(child)
+    paths = []
+    used = np.zeros(cost.size, dtype=bool)
+    used[indices[order[0]]] = True
+    row, col = np.indices(cost.shape)
+
+    def spaced_path(start, end, joins):
+        allowed = distance_transform_edt(~used.reshape(cost.shape)) * 2 >= ROAD_SEPARATION
+        # 합류점 주변에서만 간격 제한을 풀어 같은 길에 직접 접속한다.
+        for cell in joins:
+            allowed |= (row - cell // side) ** 2 + (col - cell % side) ** 2 <= ((ROAD_SEPARATION + 2) / 2) ** 2
+        routed = _grid_graph(cost, free & allowed)
+        distance, parents = dijkstra(routed, directed=False, indices=start, return_predecessors=True)
+        return _path(parents, start, end) if np.isfinite(distance[end]) else None
+
+    for number in order[1:]:
+        start = indices[number]
+        if used[start]:
+            continue
+        distance = dijkstra(graph, directed=False, indices=start)
+        existing = np.flatnonzero(used)
+        join = int(existing[np.argmin(distance[existing])])
+        path = spaced_path(start, join, (start, join))
+        if path is None:
+            raise ValueError("기존 도로와 간격을 확보할 수 없는 진입로")
+        # 먼저 만난 기존 도로에 합류해 불필요한 평행 구간을 남기지 않는다.
+        stop = next(i for i, cell in enumerate(path) if used[cell])
+        paths.append(path[:stop + 1])
+        used[paths[-1]] = True
     candidates = [(a, b) for a in range(len(keys)) for b in range(a + 1, len(keys)) if (a, b) not in pairs]
     rng.shuffle(candidates)
-    # 기존 길에 비용을 더해 실제 우회 경로가 생기도록 순환 연결을 찾는다.
-    for a, b in candidates[:max(1, len(keys) // 4)]:
-        used = np.zeros(cost.size, dtype=bool)
-        used[np.concatenate(paths)] = True
-        alternate = graph.copy()
-        alternate.data *= np.where(used[alternate.indices] & np.repeat(used, np.diff(alternate.indptr)), 3, 1)
-        _, parents = dijkstra(alternate, directed=False, indices=indices[a], return_predecessors=True)
-        paths.append(_path(parents, indices[a], indices[b]))
+    loops = 0
+    for a, b in candidates[:8]:
+        if math.dist(points[keys[a]], points[keys[b]]) < ROAD_SEPARATION * 3:
+            continue
+        path = spaced_path(indices[a], indices[b], (indices[a], indices[b]))
+        if path is None or used[path].all():
+            continue
+        paths.append(path)
+        used[path] = True
+        loops += 1
+        if loops >= max(1, len(keys) // 4):
+            break
+    if not loops:
+        raise ValueError("기존 도로와 떨어진 우회로를 확보하지 못함")
     lines = [LineString([(bounds.x + (cell % side) * 2, bounds.y + (cell // side) * 2) for cell in path])
              for path in paths]
     merged = union_all(lines + [LineString(stub) for stub in stubs])
+    # 교차점을 먼저 확정한 뒤 짧은 격자 꺾임을 줄여 합류점은 그대로 보존한다.
+    pieces = merged.geoms if merged.geom_type == "MultiLineString" else (merged,)
+    merged = union_all([line.simplify(1) for line in pieces])
     nodes, edges = {}, set()
 
     def node(point):
