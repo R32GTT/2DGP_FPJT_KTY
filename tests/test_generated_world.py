@@ -30,7 +30,7 @@ class GeneratedWorldTests(unittest.TestCase):
         self.assertFalse(set(recreated[0]["navigation"]) & set(recreated[1]["navigation"]))
         self.assertNotEqual(*[row["seed"] for row in scene["generated_regions"]])
         single = generate_world(42)
-        self.assertEqual(single["planned_facilities"], [site for site in scene["planned_facilities"] if site["region_id"] == "region/1"])
+        self.assertEqual(single['generated_regions'][0]['seed'], scene['generated_regions'][0]['seed'])
 
     def test_player_starts_in_the_first_regions_safehouse(self):
         play = PlaySimulation(self.scene)

@@ -309,7 +309,7 @@ class HUD:
                         else "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보")
             self.label("map_title", map_title, 24, (118, 215, 191))
             self.label("map_help", map_help, 13)
-            self.label("map_size", f"{simulation.world.bounds.w:g} × {simulation.world.bounds.h:g} m", 13)
+            self.label("map_size", f"{simulation.world.bounds.w:.0f} × {simulation.world.bounds.h:.0f} m", 13)
             for facility in simulation.world.facilities:
                 self.label("site/" + facility["id"], facility["name"], 13)
                 campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])

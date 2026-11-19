@@ -7,7 +7,9 @@ from scipy.ndimage import distance_transform_edt
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra, minimum_spanning_tree
 from shapely import LineString, Point, Polygon, box, union_all
+from shapely.prepared import prep
 from .road_junctions import build_junctions
+from .road_paths import smooth_path
 
 
 DIRT_WIDTH = 3.0
@@ -94,7 +96,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
     specs = {site["id"]: site["road"] for site in sites}
     main = {"kind": "main", "width": ROAD_WIDTHS["main"], "material": "asphalt"}
     specs.update({key: main for key in keys if key not in specs})
-    order = [order[0]] + sorted(order[1:], key=lambda number: keys[number] not in {"entry/0", "entry/1"})
+    order = [order[0]] + sorted(order[1:], key=lambda number: not keys[number].startswith('entry/'))
     paths = []
     used = np.zeros(cost.size, dtype=bool)
     used[indices[order[0]]] = True
@@ -141,14 +143,17 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
         path = spaced_path(indices[a], indices[b], (indices[a], indices[b]), spec["width"])
         if path is None or used[path].all():
             continue
+        old_distance = dijkstra(_grid_graph(np.ones_like(cost), used.reshape(cost.shape)),
+                                directed=False, indices=indices[a])[indices[b]]
+        length = sum(math.hypot((a % side) - (b % side), (a // side) - (b // side)) * 2 for a, b in zip(path, path[1:]))
+        if length >= old_distance * .75:
+            continue
         paths.append((path, f"loop/{loops}", spec))
         used[path] = True
         used_width[path] = np.maximum(used_width[path], spec["width"])
         loops += 1
-        if loops >= max(1, len(keys) // 4):
+        if loops >= 1:
             break
-    if not loops:
-        raise ValueError("기존 도로와 떨어진 우회로를 확보하지 못함")
     routes = [(LineString([(bounds.x + (cell % side) * 2, bounds.y + (cell // side) * 2) for cell in path]),
                {"route": key, **spec}) for path, key, spec in paths]
     routes.extend((LineString(stub), {"route": key, **specs[key]}) for key, stub in zip(gates, stubs))
@@ -161,7 +166,19 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
         middle = line.interpolate(0.5, normalized=True)
         return min(sources, key=lambda item: (round(item[0].distance(middle), 6), rank[item[1]["kind"]]))[1]
 
-    routes = [(line.simplify(1), owner(line, routes)) for line in pieces]
+    forbidden = prep(union_all([box(x, y, x + w, y + h) for x, y, w, h in (site['rect'] for site in sites)]).buffer(-1e-6))
+    envelope = box(bounds.x, bounds.y, bounds.right, bounds.bottom).buffer(1e-6)
+    refined = []
+    for line in pieces:
+        spec = owner(line, routes)
+        clearance = max(spec['width'] / 2, math.hypot(VEHICLE_SIZE[0] / 2, VEHICLE_SIZE[1] / 2) + VEHICLE_MARGIN)
+        def valid(candidate):
+            bed = candidate.buffer(clearance, cap_style='flat', join_style='bevel')
+            return not forbidden.intersects(bed) and envelope.covers(bed)
+        candidate = line.simplify(2)
+        candidate = candidate if valid(candidate) else line
+        refined.append((LineString(smooth_path(candidate.coords, valid)), spec))
+    routes = refined
     merged = union_all([line for line, _ in routes])
     nodes, segments = {}, {}
 

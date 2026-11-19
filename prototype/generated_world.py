@@ -5,14 +5,15 @@ import math
 
 from .generation import GENERATION_VERSION, generate_scene
 from .geometry import Rect
-from .road_generation import ROAD_WIDTHS, build_junctions, validate_roads
+from .road_generation import build_junctions, validate_roads
 from .road_visuals import road_layers
 from .site_planning import REGION_PROFILES
 from .world_layout import plan_world
 from .world_terrain import between_regions
+from .world_roads import connect_regions
 
 
-WORLD_VERSION = 2
+WORLD_VERSION = 3
 
 
 def region_seed(seed, region_id, version=GENERATION_VERSION):
@@ -50,7 +51,12 @@ def generate_region(seed, region_id, *, origin=(0, 0), version=GENERATION_VERSIO
     network = {"nodes": nodes, "edges": [tuple(row["nodes"]) for row in roads], "segments": roads,
                "terminals": {prefix + key: prefix + value for key, value in scene["road_network"]["terminals"].items()},
                "spawn_node": prefix + scene["road_network"]["spawn_node"],
-               "junctions": build_junctions(nodes, roads, Rect(*bounds))}
+               "junctions": [{**junction, 'node': prefix + junction['node'],
+                              **{key: [point(value) for value in junction[key]] for key in ('polygon', 'vehicle_polygon')},
+                              'surfaces': [{**surface, **{key: [point(value) for value in surface[key]]
+                                                         for key in ('polygon', 'triangles')}}
+                                           for surface in junction['surfaces']]}
+                             for junction in scene['road_network']['junctions']]}
     metadata = {"id": region_id, "name": "지역 " + region_id.rsplit("/", 1)[-1], "seed": local_seed,
                 "bounds": bounds, "origin": list(origin), "entries": entries,
                 "importance": importance, "region_size": region_size}
@@ -99,21 +105,18 @@ def generate_world(seed=42, *, region_count=1, version=WORLD_VERSION, region_ver
             nodes[target] = value
         terminals.update({key: aliases.get(value, value) for key, value in region["road_network"]["terminals"].items()})
         roads.extend({**row, "nodes": sorted(aliases.get(key, key) for key in row["nodes"])} for row in region["roads"])
-    for link in links:
-        a, b = link['id'] + '/a', link['id'] + '/b'
-        nodes[link['id']] = [(x + y) / 2 for x, y in zip(nodes[a], nodes[b])]
-        for index, pair in enumerate(((a, link['id']), (link['id'], b))):
-            roads.append({'id': f"{link['id']}/road/{index}", 'nodes': sorted(pair), 'start': nodes[pair[0]],
-                          'end': nodes[pair[1]], 'kind': 'main', 'width': ROAD_WIDTHS['main'],
-                          'material': 'asphalt', 'route': link['id']})
     left = min(region['bounds'][0] for region in regions)
     top = min(region['bounds'][1] for region in regions)
     right = max(region['bounds'][0] + region['bounds'][2] for region in regions)
     bottom = max(region['bounds'][1] + region['bounds'][3] for region in regions)
-    bounds = [left, top, right - left, bottom - top]
+    padding = 24 if region_count > 1 else 0
+    bounds = [left - padding, top - padding, right - left + padding * 2, bottom - top + padding * 2]
+    connections = connect_regions(seed, regions, links, nodes, Rect(*bounds))
+    roads.extend(connections)
     network = {"nodes": dict(sorted(nodes.items())), "edges": sorted(tuple(row["nodes"]) for row in roads),
                "segments": roads, "terminals": terminals, "spawn_node": regions[0]["road_network"]["spawn_node"],
-               "junctions": build_junctions(nodes, roads, Rect(*bounds))}
+               "junctions": [junction for region in regions for junction in region['road_network']['junctions']]
+                            + build_junctions(nodes, connections, Rect(*bounds))}
     ground, trees = between_regions(seed, Rect(*bounds), regions, network)
     profile = "지역별 설정" if len(set(sizes)) > 1 or len(set(importances)) > 1 else f"{sizes[0]} · {importances[0]}"
     scene = {**regions[0], "name": f"절차 생성 / {region_count}개 지역 · {profile}", "bounds": bounds,

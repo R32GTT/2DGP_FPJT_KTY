@@ -63,6 +63,9 @@ def build_junctions(nodes, segments, bounds=None):
                     previous = pose
         if not swept:
             continue
+        parts = {material: [union_all(group)] for material, group in parts.items()}
+        parts = {material: [group[0].union(group[0].simplify(.3, preserve_topology=True))]
+                 for material, group in parts.items()}
         surface = union_all([part for group in parts.values() for part in group])
         if bounds:
             surface = surface.intersection(box(bounds.x, bounds.y, bounds.right, bounds.bottom))

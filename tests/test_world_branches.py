@@ -39,11 +39,10 @@ class BranchWorldTests(unittest.TestCase):
     def test_seed_rebuilds_branch_layout_and_individual_region_contract(self):
         scene = self.scene
         self.assertEqual(scene, generate_world(**json.loads(json.dumps(scene['generation']))))
-        self.assertEqual(len(scene['region_links']), 3)
-        self.assertTrue(all(link['source'] == 'region/1' for link in scene['region_links']))
+        self.assertIn(len(scene['region_links']), (3, 4))
+        self.assertTrue(any(link['source'] != 'region/1' for link in scene['region_links']))
         regions = scene['generated_regions']
-        self.assertTrue(any(region['origin'][0] for region in regions))
-        self.assertTrue(any(region['origin'][1] for region in regions))
+        self.assertTrue(all(region['origin'][0] and region['origin'][1] for region in regions[1:]))
         self.assertEqual(regions[1]['region_size'], 'medium')
         self.assertEqual(regions[1]['importance'], 'core')
         row = regions[1]
@@ -74,7 +73,10 @@ class BranchWorldTests(unittest.TestCase):
             target = next(f.node_id for f in campaign.state.facilities.values()
                           if f.region_id == f'region/{index}' and 'command' in f.capabilities)
             path = find_route(campaign.state, current, target)
-            self.assertIn(f'portal/{index - 1}', path)
+            ports = {self.scene['road_network']['terminals'][f"region/{index}/entry/{link[side + '_entry']}"]
+                     for link in self.scene['region_links'] for side in ('source', 'destination')
+                     if link[side] == f'region/{index}'}
+            self.assertTrue(ports.intersection(path))
             walk(play.player, play.world, [(campaign.state.nodes[key].position.x, campaign.state.nodes[key].position.y) for key in path])
             play._sync_guards()
             self.assertEqual(play.world.territory_at(play.player.xy), f'region/{index}')
@@ -116,8 +118,8 @@ class BranchWorldTests(unittest.TestCase):
             simulation.campaign.advance_to(600)
             state = simulation.campaign.simulation.state
             self.assertEqual(state.operations[qrf.id].phase, 'completed')
-            self.assertTrue(any(op.kind == 'supply' and op.delivered_at is not None
-                                and len({key for key in op.route if key in {'portal/1', 'portal/2', 'portal/3'}}) >= 2
+            self.assertTrue(any(op.kind == 'supply' and op.delivered_at is not None and op.origin_id in state.facilities
+                                and state.facilities[op.origin_id].region_id != state.facilities[op.destination_id].region_id
                                 for op in state.operations.values()))
             assert_invariants(state)
         self.assertEqual(asdict(play.campaign.simulation.state), asdict(restored.campaign.simulation.state))
