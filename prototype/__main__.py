@@ -1,6 +1,7 @@
 """검증용 최소 실행기. 일반 테스트·플레이 평가는 사용자가 수행한다."""
 
 import argparse
+import math
 from pathlib import Path
 from time import perf_counter, sleep
 
@@ -9,7 +10,7 @@ from .simulation import FIXED_DT, PlaySimulation
 from .world import DEFAULT_SCENE
 
 
-def run_window(simulation, *, frames=0):
+def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_open=False):
     import pico2d
     from .camera import CANVAS_SIZE, PlayCamera
     from .controls import Controls
@@ -21,8 +22,11 @@ def run_window(simulation, *, frames=0):
         renderer = Renderer(simulation.world)
         facility_test = simulation.world.data.get("training_facility", False)
         test_mode = facility_test or bool(simulation.ai_scenario)
-        controls, camera = Controls(), PlayCamera(zoom=0.55 if test_mode else 1.0)
-        controls.debug = controls.paused = test_mode
+        controls = Controls()
+        camera = PlayCamera(zoom=zoom if zoom is not None else 0.55 if test_mode else 1.0)
+        controls.debug = test_mode if debug is None else debug
+        controls.paused = test_mode if paused is None else paused
+        controls.map_open = map_open
         camera.follow(simulation.player.xy)
         previous, accumulator, count = perf_counter(), 0.0, 0
         stack_previewed = False
@@ -110,12 +114,23 @@ def main(argv=None):
     scene_options.add_argument("--generate", type=int, metavar="SEED", help="시드로 지형·도로·프리팹 시설 생성")
     parser.add_argument("--region-size", choices=("small", "medium", "large", "xlarge"))
     parser.add_argument("--importance", choices=("normal", "important", "core"))
-    parser.add_argument("--ai-scenario", choices=SCENARIOS, help="물류창고 AI 검증 장면")
+    drills = parser.add_mutually_exclusive_group()
+    drills.add_argument("--ai-scenario", choices=SCENARIOS, help="물류창고 AI 검증 장면")
+    drills.add_argument("--search-drill", action="store_true", help="선택한 시설에서 실내 수색 훈련")
+    drills.add_argument("--stack-variant", type=int, help="문 집결 훈련 배치 번호 (0부터)")
+    parser.add_argument("--zoom", type=float, help="시작 줌 (0.5~4.0)")
+    parser.add_argument("--paused", action=argparse.BooleanOptionalAction, default=None, help="일시정지 상태로 시작")
+    parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=None, help="개발 정보 표시")
+    parser.add_argument("--map-open", action="store_true", help="지도를 연 상태로 시작")
     parser.add_argument("--headless", action="store_true", help="그래픽 없이 코어만 짧게 실행")
     parser.add_argument("--frames", type=int, default=0, help="지정 프레임 뒤 종료. 0이면 창을 닫을 때까지 실행")
     args = parser.parse_args(argv)
     if args.frames < 0:
         parser.error("프레임 수는 음수일 수 없음")
+    if args.zoom is not None and (not math.isfinite(args.zoom) or not 0.5 <= args.zoom <= 4):
+        parser.error("시작 줌은 0.5~4.0 사이여야 합니다")
+    if args.stack_variant is not None and args.stack_variant < 0:
+        parser.error("문 집결 배치 번호는 음수일 수 없습니다")
     if args.generate is None and (args.region_size or args.importance):
         parser.error("지역 크기·중요도는 --generate와 함께 사용하세요")
     if args.ai_scenario and (args.generate is not None or args.scene.resolve() != DEFAULT_SCENE.resolve()):
@@ -124,7 +139,8 @@ def main(argv=None):
     if args.generate is not None:
         from .generation import generate_scene
         scene = generate_scene(args.generate, region_size=args.region_size or "small", importance=args.importance or "normal")
-    simulation = PlaySimulation(scene, ai_scenario=args.ai_scenario)
+    simulation = PlaySimulation(scene, ai_scenario=args.ai_scenario, search_drill=args.search_drill,
+                                stack_drill=args.stack_variant is not None, stack_variant=args.stack_variant or 0)
     if args.generate is not None:
         simulation.message = f"생성 맵 · 시드 {args.generate} · WASD 이동 / Shift 달리기 / M 지도 / F 문 / Esc 종료"
     if args.headless:
@@ -132,7 +148,8 @@ def main(argv=None):
             simulation.step()
         print(f"목업 코어 실행: {simulation.time:.2f}s / AI {len(simulation.guards)} / 창고 {simulation.campaign.supplies}")
     else:
-        run_window(simulation, frames=args.frames)
+        run_window(simulation, frames=args.frames, zoom=args.zoom, paused=args.paused,
+                   debug=args.debug, map_open=args.map_open)
 
 
 if __name__ == "__main__":

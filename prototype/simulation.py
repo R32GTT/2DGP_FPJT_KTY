@@ -34,6 +34,8 @@ class PlaySimulation:
         stack_setup = self.world.data.get("stack_drill")
         if stack_drill and (stack_setup is None or search_drill or ai_scenario is not None):
             raise ValueError("이 장면에서는 문 옆 집결 훈련을 시작할 수 없습니다")
+        if stack_drill and not 0 <= stack_variant < len(stack_setup["layouts"]):
+            raise ValueError("문 집결 배치 번호가 범위를 벗어났습니다")
         self.stack_drill = stack_drill
         self.stack_variant = stack_variant
         self.stack_title = ""
