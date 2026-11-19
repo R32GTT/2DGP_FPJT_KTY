@@ -56,6 +56,19 @@ class GeneratedMapTests(unittest.TestCase):
                     union_all([box(r.x, r.y, r.right, r.bottom) for r in obstacles]))
                 self.assertEqual(free.geom_type, "Polygon")
 
+    def test_tree_clusters_offer_real_cover_and_leave_walkable_gaps(self):
+        for scene in (self.scene, self.other):
+            world = World(scene)
+            trees = [collider for collider in world.geometry.objects.values() if collider.kind == 'tree']
+            centers = [(tree.rect.x + tree.rect.w / 2, tree.rect.y + tree.rect.h / 2) for tree in trees]
+            gaps = [(a, b) for index, a in enumerate(centers) for b in centers[index + 1:]
+                    if math.dist(a, b) < 2.7 and world.navigation.walkable(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2))]
+            self.assertTrue(gaps, '엄폐 사이로 이동할 수 있는 나무 군집이 필요함')
+            center = centers[0]
+            start, end = (center[0] - .6, center[1]), (center[0] + .6, center[1])
+            for category in ('sight', 'bullet'):
+                self.assertEqual(world.geometry.raycast(start, end, category=category)[1], trees[0].id)
+
     def test_new_map_starts_inside_its_safehouse(self):
         for scene in (self.scene, self.other):
             with self.subTest(seed=scene['generation']['seed']):

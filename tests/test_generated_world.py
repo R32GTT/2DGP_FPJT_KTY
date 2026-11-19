@@ -10,6 +10,8 @@ from campaign.simulation import Simulation
 from prototype.generated_world import generate_region, generate_world
 from prototype.movement import move_actor
 from prototype.simulation import PlaySimulation
+from shapely import Point, box
+from prototype.site_planning import SAFEHOUSE_FACILITY_RADIUS
 
 
 class GeneratedWorldTests(unittest.TestCase):
@@ -37,6 +39,17 @@ class GeneratedWorldTests(unittest.TestCase):
         self.assertEqual(play.player.xy, tuple(safehouses[0]['position']))
         self.assertNotEqual(play.player.xy, tuple(safehouses[1]['position']))
         self.assertEqual(play.world.territory_at(play.player.xy), 'region/1')
+
+    def test_safehouses_keep_other_facilities_outside_their_radius_across_regions(self):
+        for scene in (self.scene, generate_world(43, region_count=2, importance='core')):
+            play = PlaySimulation(scene)
+            for safehouse in (site for site in play.world.facilities if site['kind'] == 'safehouse'):
+                center = Point(safehouse['position'])
+                for site in play.world.facilities:
+                    if site['id'] == safehouse['id']:
+                        continue
+                    x, y, w, h = site['rect']
+                    self.assertGreaterEqual(box(x, y, x + w, y + h).distance(center), SAFEHOUSE_FACILITY_RADIUS)
 
     def test_player_crosses_shared_portal_and_returns_without_resetting_campaign(self):
         play = PlaySimulation(self.scene)

@@ -15,7 +15,10 @@ from .road_visuals import road_layers
 from .site_planning import IMPORTANCE, REGION_PROFILES, plan_sites
 
 
-GENERATION_VERSION = 7
+GENERATION_VERSION = 8
+GENERATION_ATTEMPTS = 8
+FOREST_DENSITY = 0.55
+FOREST_TREE_GAP = 0.75
 
 
 def _density(seed, kind, extent):
@@ -48,7 +51,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
     terrain = random.Random(f"terrain:{version}:{seed}")
     obstacles = random.Random(f"obstacles:{version}:{seed}")
     vegetation, soil = _density(seed, "vegetation", extent), _density(seed, "soil", extent)
-    for attempt in range(4):
+    for attempt in range(GENERATION_ATTEMPTS):
         try:
             bounds, sites, points, gates, stubs = plan_sites(seed, version, region_size, importance, attempt,
                                                           catalog=catalog, entry_offsets=entry_offsets)
@@ -57,7 +60,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
             validate_roads(network, sites, bounds, [])
             break
         except ValueError as error:
-            if attempt == 3:
+            if attempt == GENERATION_ATTEMPTS - 1:
                 raise ValueError(f"지역 생성 실패: {error}") from error
     reserved = prep(union_all([road_surface(network).buffer(1.8)] +
                               [box(x, y, x + w, y + h) for x, y, w, h in (site["reserved"] for site in sites)]))
@@ -77,9 +80,9 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
                        "style": "dirt", "image": "", "color": [104, 91, 62]})
     occupied = []
     # 연속된 밀도 분포에서 후보를 뽑고, 장애물 사이의 통행 공간을 침범하면 다시 뽑는다.
-    for index in range(int(700 * scale)):
+    for index in range(int(1100 * scale)):
         x, y = obstacles.uniform(-half + 3, half - 3), obstacles.uniform(-half + 3, half - 3)
-        tree = obstacles.random() < 0.82
+        tree = index >= 700 * scale or obstacles.random() < 0.82
         density = _sample(vegetation if tree else soil, x, y)
         if obstacles.random() > 0.03 + 0.9 * density ** 2:
             continue
@@ -87,7 +90,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
         rect = Rect(x - width / 2, y - height / 2, width, height)
         if rect.expanded(4).segment_entry((0, 0), (0, 0)) is not None:
             continue
-        spacing = rect.expanded(1.8)
+        spacing = rect.expanded(FOREST_TREE_GAP if tree and density >= FOREST_DENSITY else 1.8)
         if (reserved.intersects(box(rect.x, rect.y, rect.right, rect.bottom))
                 or any(spacing.overlaps(other) for other in occupied)):
             continue

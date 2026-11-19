@@ -1,5 +1,6 @@
 """지역 등급별 시설 예약 영역과 회전된 차량 진입점을 선택한다."""
 
+import math
 import random
 
 from .geometry import Rect
@@ -13,6 +14,7 @@ REGION_PROFILES = {
     "large": (256, 2, 3, 2), "xlarge": (320, 3, 4, 3),
 }
 IMPORTANCE = ("normal", "important", "core")
+SAFEHOUSE_FACILITY_RADIUS = 24.0
 SITE_SIZES = {
     "safehouse": ("안전가옥", (12, 8), (12, 8), (12, 8), (12, 8)),
     "hq": ("HQ", (24, 20), (28, 24), (32, 28), (36, 28)),
@@ -64,20 +66,38 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
         stubs.append((tuple(gate), tuple(approach)))
         reserved.append(Rect(min(gate[0], approach[0]) - 6, min(gate[1], approach[1]) - 6,
                              abs(gate[0] - approach[0]) + 12, abs(gate[1] - approach[1]) + 12))
-    for index, (kind, path, definition, local, connector) in enumerate(selected):
+    ordered = sorted(enumerate(selected), key=lambda item: item[1][0] != "safehouse")
+    budget = 8000
+
+    def place_site(depth):
+        nonlocal budget
+        if depth == len(ordered):
+            return True
+        index, (kind, path, definition, local, connector) = ordered[depth]
         key = f"{kind}/{index}"
         local_gate, normal = connector["position"], connector["direction"]
         local_approach = [local_gate[i] + normal[i] * 12 for i in (0, 1)]
         left, top = min(local.x, local_approach[0]) - 6, min(local.y, local_approach[1]) - 6
         right, bottom = max(local.right, local_approach[0]) + 6, max(local.bottom, local_approach[1]) + 6
         for _ in range(160):
+            if budget <= 0:
+                return False
+            budget -= 1
             placement = Placement(key, (rng.randrange(-half + 12, half - 12, 2),
                                         rng.randrange(-half + 12, half - 12, 2)), rng.randrange(4))
+            # 연결 경계에서도 보호 반경을 확보해 이웃 지역 시설의 침범을 막는다.
+            if kind == "safehouse" and abs(placement.position[axis]) > half - SAFEHOUSE_FACILITY_RADIUS:
+                continue
             area = Rect(*placement.rect((left, top, right - left, bottom - top)))
             if (area.x < bounds.x + 8 or area.y < bounds.y + 8 or area.right > bounds.right - 8
                     or area.bottom > bounds.bottom - 8 or any(area.overlaps(other) for other in reserved)):
                 continue
             footprint = placement.rect((local.x, local.y, local.w, local.h))
+            if sites:
+                sx, sy = sites[0]["position"]
+                x, y, w, h = footprint
+                if math.hypot(max(x - sx, 0, sx - x - w), max(y - sy, 0, sy - y - h)) < SAFEHOUSE_FACILITY_RADIUS:
+                    continue
             gate, approach = placement.point(local_gate), placement.point(local_approach)
             direction = rotate(normal, placement.turns)
             sites.append({"id": key, "kind": kind, "name": definition["name"] if definition else SITE_SIZES[kind][0],
@@ -92,7 +112,14 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
             points[key], gates[key] = approach, gate
             stubs.append((gate, approach))
             reserved.append(area)
-            break
-        else:
-            raise ValueError(f"시설 배치 후보 부족: {key}")
+            if place_site(depth + 1):
+                return True
+            sites.pop()
+            reserved.pop()
+            stubs.pop()
+            del points[key], gates[key]
+        return False
+
+    if not place_site(0):
+        raise ValueError("시설 간격을 만족하는 배치 후보 부족")
     return bounds, sites, points, gates, stubs
