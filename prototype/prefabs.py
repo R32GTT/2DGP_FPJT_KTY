@@ -1,6 +1,8 @@
 """시설 한 단위의 그림·벽·문·노드를 같은 변환으로 배치한다."""
 
 from dataclasses import dataclass
+from copy import deepcopy
+import json
 
 def rotate(point, turns):
     x, y = point
@@ -22,6 +24,55 @@ class Placement:
         points = [self.point(point) for point in ((x, y), (x + w, y), (x, y + h), (x + w, y + h))]
         left, top = min(p[0] for p in points), min(p[1] for p in points)
         return [left, top, max(p[0] for p in points) - left, max(p[1] for p in points) - top]
+
+
+def expand_instances(scene, root):
+    scene = deepcopy(scene)
+    definitions = {}
+    scene["placed_prefabs"] = []
+    for row in scene.get("prefab_instances", ()):
+        path = root / row["prefab"]
+        if path not in definitions:
+            definitions[path] = json.loads(path.read_text(encoding="utf-8"))
+        definition = definitions[path]
+        if definition.get("format") != "revenant.facility_prefab.v1":
+            raise ValueError(f"지원하지 않는 시설 프리팹: {path}")
+        angle = row.get("rotation", 0)
+        if angle % 90:
+            raise ValueError("시설 배치는 90도 회전 단위여야 함")
+        placement = Placement(row["id"], tuple(row["position"]), angle // 90)
+        prefix = row["id"] + "/"
+        if any(item["id"] == row["id"] for item in scene["placed_prefabs"]):
+            raise ValueError(f"중복 프리팹 배치 ID: {row['id']}")
+        floors = []
+        for layer in definition["layers"]:
+            rect = placement.rect(layer["rect"])
+            scene["layers"].append({**layer, "id": prefix + layer["id"], "rect": rect,
+                                    "rotation": (layer.get("rotation", 0) + angle) % 360,
+                                    "image_size": layer.get("image_size", layer["rect"][2:])})
+            if layer.get("style") == "floor":
+                floors.append(rect)
+        for collider in definition["colliders"]:
+            placed = {**collider, "id": prefix + collider["id"], "rect": placement.rect(collider["rect"]),
+                      "rotation": (collider.get("rotation", 0) + angle) % 360}
+            if collider.get("visual_layer"):
+                placed["visual_layer"] = prefix + collider["visual_layer"]
+            scene["colliders"].append(placed)
+        for key, point in definition["navigation"].items():
+            if prefix + key in scene["navigation"]:
+                raise ValueError(f"중복 프리팹 이동 노드: {prefix + key}")
+            scene["navigation"][prefix + key] = placement.point(point)
+        scene["navigation_edges"].extend((prefix + a, prefix + b) for a, b in definition["navigation_edges"])
+        scene.setdefault("search_areas", {})[row["id"]] = floors
+        connectors = {key: {**connector, "position": placement.point(connector["position"]),
+                            "direction": rotate(connector["direction"], placement.turns),
+                            "node": prefix + connector["node"]}
+                      for key, connector in definition["connectors"].items()}
+        scene["placed_prefabs"].append({"id": row["id"], "prefab_id": definition["id"],
+                                       "version": definition["version"], "kind": definition["kind"],
+                                       "rect": placement.rect(definition["bounds"]), "connectors": connectors,
+                                       "terminal": prefix + definition["terminal_node"]})
+    return scene
 
 
 def instantiate(row, definition):

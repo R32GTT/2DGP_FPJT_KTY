@@ -1,0 +1,13 @@
+{
+  "format":"revenant.image_scene.v1", "name":"프리팹 검증 / 소형 지휘시설",
+  "bounds":[-38,-20,76,42], "player_spawn":[-20,9], "safehouse_spawn":[-20,9],
+  "campaign_facility":"depot_a", "supply_point":[-20,9], "player_weapons":[], "interaction_markers":false,
+  "layers":[{"id":"ground","rect":[-38,-20,76,42],"style":"grass","image":"","color":[45,65,48]}],
+  "colliders":[], "guards":[], "facilities":[], "roads":[],
+  "navigation":{"yard_cross":[0,18],"yard_turn":[0,0]},
+  "navigation_edges":[["hq_a/vehicle_gate","yard_cross"],["yard_cross","yard_turn"],["yard_turn","hq_b/vehicle_gate"]],
+  "prefab_instances":[
+    {"id":"hq_a","prefab":"prototype/data/prefabs/field_hq_01.json","position":[-20,0],"rotation":0},
+    {"id":"hq_b","prefab":"prototype/data/prefabs/field_hq_01.json","position":[20,0],"rotation":90}
+  ]
+}

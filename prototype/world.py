@@ -10,6 +10,7 @@ from .geometry import Collider, Rect, SpatialIndex
 from .indoor_search import build_search_areas
 from .navigation import Navigation
 from .region import build_region
+from .prefabs import expand_instances
 from .spatial import BoundsIndex
 
 
@@ -46,6 +47,8 @@ class World:
             self.data = build_region(self.data, ROOT)
         if self.data.get("format") != "revenant.image_scene.v1":
             raise ValueError("지원하지 않는 그림 맵 형식")
+        if self.data.get("prefab_instances"):
+            self.data = expand_instances(self.data, ROOT)
         self.bounds = Rect(*self.data["bounds"])
         self.layers = [ImageLayer(row["id"], Rect(*row["rect"]), row["image"],
                                   tuple(row["color"]), row.get("fallback", ""), row.get("style", ""),
