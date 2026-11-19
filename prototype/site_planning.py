@@ -23,7 +23,7 @@ SITE_SIZES = {
 }
 
 
-def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None):
+def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None, entry_offsets=None):
     if region_size not in REGION_PROFILES or importance not in IMPORTANCE:
         raise ValueError("지원하지 않는 지역 크기 또는 중요도")
     extent, comms, warehouses, garrisons = REGION_PROFILES[region_size]
@@ -53,12 +53,12 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
     selected.sort(key=lambda item: item[3].w * item[3].h, reverse=True)
     bounds = Rect(-extent / 2, -extent / 2, extent, extent)
     half, sites, reserved = extent // 2, [], [Rect(-8, -8, 16, 16)]
-    axis = rng.randrange(2)
+    axis = rng.randrange(2) if entry_offsets is None else 0
     gates, stubs, points = {}, [], {"spawn": (0, 0)}
     for index, side in enumerate((-1, 1)):
-        offset = rng.randrange(-half // 2, half // 2, 2)
+        offset = rng.randrange(-half // 2, half // 2, 2) if entry_offsets is None else entry_offsets[index]
         gate, approach = [offset, offset], [offset, offset]
-        gate[axis], approach[axis] = side * half, side * (half - 4)
+        gate[axis], approach[axis] = side * half, side * (half - (4 if entry_offsets is None else 12))
         key = f"entry/{index}"
         gates[key], points[key] = tuple(gate), tuple(approach)
         stubs.append((tuple(gate), tuple(approach)))

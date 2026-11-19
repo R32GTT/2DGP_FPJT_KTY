@@ -54,7 +54,7 @@ def build_command(target, values):
         except ValueError:
             raise ValueError("시드는 정수로 입력하세요") from None
         command += ["--generate", str(seed), "--region-size", REGIONS[values["region"]],
-                    "--importance", IMPORTANCE[values["importance"]]]
+                    "--importance", IMPORTANCE[values["importance"]], "--regions", values.get("regions", "1")]
     command += list(target["modes"][values["mode"]])
     try:
         frames = int(values["frames"])
@@ -87,8 +87,8 @@ class Launcher:
         self.process, self.output = None, Queue()
         self.selected_key, self.last_modes = None, {}
         root.title("REVENANT · 통합 테스트 런처")
-        root.geometry("980x720")
-        root.minsize(840, 600)
+        root.geometry("980x760")
+        root.minsize(840, 640)
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=0)
         root.rowconfigure(1, weight=1)
@@ -112,13 +112,14 @@ class Launcher:
         options = ttk.LabelFrame(body, text="실행 옵션", padding=12)
         options.grid(row=0, column=1, sticky="nsew")
         options.columnconfigure(1, weight=1)
-        defaults = {"mode": "기본", "seed": "42", "region": "소형", "importance": "일반", "frames": "0",
+        defaults = {"mode": "기본", "seed": "42", "region": "소형", "regions": "1", "importance": "일반", "frames": "0",
                     "zoom": "장면 기본값", "paused": "장면 기본값", "debug": "장면 기본값"}
         self.values = {key: tk.StringVar(root, value=value) for key, value in defaults.items()}
         self.values.update({key: tk.BooleanVar(root) for key in ("headless", "map_open")})
         self.fields = {}
         rows = [("mode", "훈련 종류", ["기본"]), ("seed", "생성 시드", None),
                 ("region", "지역 크기", list(REGIONS)), ("importance", "지역 중요도", list(IMPORTANCE)),
+                ("regions", "지역 수", ["1", "2"]),
                 ("zoom", "시작 줌", ["장면 기본값", "0.5", "0.55", "1.0", "1.5", "2.0", "4.0"]),
                 ("paused", "시작 일시정지", list(SWITCHES)), ("debug", "개발 정보", list(SWITCHES)),
                 ("frames", "프레임 제한", None)]
@@ -131,12 +132,12 @@ class Launcher:
             self.fields[key] = widget
         self.random_button = ttk.Button(options, text="새 시드", command=lambda: self.values["seed"].set(random.SystemRandom().randrange(2**31)))
         self.random_button.grid(row=1, column=2, padx=(6, 0))
-        for row, (key, label) in enumerate((("headless", "화면 없이 코어만 실행"), ("map_open", "지도를 연 상태로 시작")), 8):
+        for row, (key, label) in enumerate((("headless", "화면 없이 코어만 실행"), ("map_open", "지도를 연 상태로 시작")), len(rows)):
             widget = ttk.Checkbutton(options, text=label, variable=self.values[key])
             widget.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
             self.fields[key] = widget
         ttk.Label(options, text="프레임 0: 플레이 창은 무제한, 화면 없이는 120프레임\nF2 다시 시작 · F3 다음 훈련 · P 일시정지 · M 지도",
-                  foreground="#555555", wraplength=410).grid(row=10, column=0, columnspan=3, sticky="w", pady=(12, 0))
+                  foreground="#555555", wraplength=410).grid(row=len(rows) + 2, column=0, columnspan=3, sticky="w", pady=(12, 0))
         log_frame = ttk.LabelFrame(root, text="실행 결과 · 오류", padding=6)
         log_frame.grid(row=1, column=0, sticky="nsew", padx=12)
         self.log = ScrolledText(log_frame, height=10, wrap="word", state="disabled", font=("Consolas", 10))
@@ -171,7 +172,7 @@ class Launcher:
             self.values["mode"].set(self.last_modes.get(key, next(iter(modes))))
             self.selected_key = key
         for key, widget in self.fields.items():
-            enabled = generated if key in {"seed", "region", "importance"} else play
+            enabled = generated if key in {"seed", "region", "regions", "importance"} else play
             if key == "mode":
                 enabled = play and len(modes) > 1
             if key in {"zoom", "paused", "debug", "map_open"} and self.values["headless"].get():

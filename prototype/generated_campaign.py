@@ -13,12 +13,15 @@ SETUP_PATH = Path(__file__).parent / "data/campaign_setup.json"
 
 def bind_sites(scene):
     network = scene["road_network"]
+    regions = scene.get("generated_regions", ())
+    names = {row["id"]: row["name"] for row in regions} if len(regions) > 1 else {}
     placed = {row["id"]: row for row in scene.get("placed_prefabs", ())}
     facilities = []
     for site in scene["planned_facilities"]:
         instance = placed.get(site["id"])
         terminal = scene["navigation"][instance["terminal"]] if instance else site["connector"]["position"]
-        facilities.append({"id": site["id"], "name": site["name"], "kind": site["kind"], "rect": site["rect"],
+        name = (names[site["region_id"]] + " · " if site.get("region_id") in names else "") + site["name"]
+        facilities.append({"id": site["id"], "name": name, "kind": site["kind"], "rect": site["rect"],
                            "campaign_id": "" if site["kind"] == "safehouse" else site["id"],
                            "service_node": network["terminals"][site["id"]], "position": site["position"],
                            "terminal": terminal})

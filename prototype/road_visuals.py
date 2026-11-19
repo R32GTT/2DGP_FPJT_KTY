@@ -15,7 +15,7 @@ def road_layers(network):
     for index, segment in enumerate(network["segments"]):
         start, end = (network["nodes"][key] for key in segment["nodes"])
         style = ROAD_STYLES[segment["material"]]
-        for layer in strip_layers(f"road/{index}", start, end, segment["width"], style["style"], style["color"]):
+        for layer in strip_layers(segment.get("id", f"road/{index}"), start, end, segment["width"], style["style"], style["color"]):
             yield {**layer, "image": style["image"], "variant": int(segment["kind"] != "main")}
     for junction in network["junctions"]:
         points = junction["polygon"]

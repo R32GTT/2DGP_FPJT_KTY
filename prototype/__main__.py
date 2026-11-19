@@ -113,6 +113,7 @@ def main(argv=None):
     scene_options.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
     scene_options.add_argument("--generate", type=int, metavar="SEED", help="시드로 지형·도로·프리팹 시설 생성")
     parser.add_argument("--region-size", choices=("small", "medium", "large", "xlarge"))
+    parser.add_argument("--regions", type=int, choices=(1, 2), help="생성할 지역 수")
     parser.add_argument("--importance", choices=("normal", "important", "core"))
     drills = parser.add_mutually_exclusive_group()
     drills.add_argument("--ai-scenario", choices=SCENARIOS, help="물류창고 AI 검증 장면")
@@ -131,14 +132,15 @@ def main(argv=None):
         parser.error("시작 줌은 0.5~4.0 사이여야 합니다")
     if args.stack_variant is not None and args.stack_variant < 0:
         parser.error("문 집결 배치 번호는 음수일 수 없습니다")
-    if args.generate is None and (args.region_size or args.importance):
-        parser.error("지역 크기·중요도는 --generate와 함께 사용하세요")
+    if args.generate is None and (args.region_size or args.importance or args.regions):
+        parser.error("지역 수·크기·중요도는 --generate와 함께 사용하세요")
     if args.ai_scenario and (args.generate is not None or args.scene.resolve() != DEFAULT_SCENE.resolve()):
         parser.error("--ai-scenario는 기본 지역 장면에서 실행하세요")
     scene = args.scene
     if args.generate is not None:
-        from .generation import generate_scene
-        scene = generate_scene(args.generate, region_size=args.region_size or "small", importance=args.importance or "normal")
+        from .generated_world import generate_world
+        scene = generate_world(args.generate, region_count=args.regions or 1,
+                               region_size=args.region_size or "small", importance=args.importance or "normal")
     simulation = PlaySimulation(scene, ai_scenario=args.ai_scenario, search_drill=args.search_drill,
                                 stack_drill=args.stack_variant is not None, stack_variant=args.stack_variant or 0)
     if args.generate is not None:
