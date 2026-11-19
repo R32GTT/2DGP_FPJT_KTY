@@ -263,7 +263,7 @@ class HUD:
         if simulation is not self.message_simulation:
             self.message_simulation = simulation
             self.last_message = simulation.message
-            self.message_until = 0.0
+            self.message_until = now + 3.0
         elif simulation.message != self.last_message:
             self.last_message = simulation.message
             self.message_until = now + 3.0
@@ -277,7 +277,7 @@ class HUD:
             message = "안전가옥으로 복귀 중"
         elif simulation.player.hp <= 0:
             message = "전투 불능  ·  Enter로 안전가옥 복귀"
-        elif not paused and now < self.message_until:
+        elif now < self.message_until:
             message = self.last_message
         else:
             return

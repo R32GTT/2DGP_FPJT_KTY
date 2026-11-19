@@ -72,16 +72,20 @@ def deserialize_campaign(text: str) -> CampaignState:
 
 
 def save_campaign(state: CampaignState, path) -> None:
-    text = serialize_campaign(state)
+    write_save(serialize_campaign(state).encode("utf-8"), path)
+
+
+def write_save(data: bytes, path) -> None:
+    """완성된 저장 데이터만 원자적으로 교체한다."""
     destination = Path(path)
     temporary = None
     try:
         # 완성된 임시 파일만 교체해 저장 도중 실패가 기존 세이브를 훼손하지 않게 한다.
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False,
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False,
                                          dir=destination.parent, prefix=f".{destination.name}.",
                                          suffix=".tmp") as stream:
             temporary = Path(stream.name)
-            stream.write(text)
+            stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)

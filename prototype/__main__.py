@@ -7,6 +7,7 @@ from time import perf_counter, sleep
 
 from .ai_scenarios import SCENARIOS
 from .simulation import FIXED_DT, PlaySimulation
+from .savegame import CampaignSaveError, DEFAULT_SAVE, load_game, save_game
 from .world import DEFAULT_SCENE
 
 
@@ -34,6 +35,25 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             started = perf_counter()
             elapsed, previous = min(0.1, started - previous), started
             for action in controls.poll(camera):
+                if action in {"save", "load"}:
+                    try:
+                        if not simulation.presence:
+                            raise CampaignSaveError("저장·불러오기는 절차 생성 월드에서 사용하세요")
+                        if action == "save":
+                            save_game(simulation)
+                            simulation.message = "월드 저장 완료 · F9 불러오기"
+                        else:
+                            loaded = load_game()
+                            replacement = Renderer(loaded.world)
+                            renderer.close()
+                            renderer, simulation = replacement, loaded
+                            controls.keys.clear()
+                            controls.firing = controls.aiming = controls.trigger_pending = False
+                            controls.paused = True
+                    except CampaignSaveError as error:
+                        simulation.message = str(error)
+                    previous, elapsed, accumulator = perf_counter(), 0.0, 0.0
+                    continue
                 select_drill = action == "next_ai" and "search_drill" in simulation.world.data
                 select_stack = action == "next_ai" and "stack_drill" in simulation.world.data
                 next_scenario = action == "next_ai" and simulation.ai_scenario
@@ -112,6 +132,7 @@ def main(argv=None):
     scene_options = parser.add_mutually_exclusive_group()
     scene_options.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
     scene_options.add_argument("--generate", type=int, metavar="SEED", help="시드로 지형·도로·프리팹 시설 생성")
+    scene_options.add_argument("--load", type=Path, nargs="?", const=DEFAULT_SAVE, help="생성 월드 이어하기")
     parser.add_argument("--region-size", choices=("small", "medium", "large", "xlarge"))
     parser.add_argument("--regions", type=int, choices=(1, 2), help="생성할 지역 수")
     parser.add_argument("--importance", choices=("normal", "important", "core"))
@@ -134,6 +155,8 @@ def main(argv=None):
         parser.error("문 집결 배치 번호는 음수일 수 없습니다")
     if args.generate is None and (args.region_size or args.importance or args.regions):
         parser.error("지역 수·크기·중요도는 --generate와 함께 사용하세요")
+    if args.load and (args.ai_scenario or args.search_drill or args.stack_variant is not None):
+        parser.error("이어하기와 AI 훈련을 함께 사용할 수 없습니다")
     if args.ai_scenario and (args.generate is not None or args.scene.resolve() != DEFAULT_SCENE.resolve()):
         parser.error("--ai-scenario는 기본 지역 장면에서 실행하세요")
     scene = args.scene
@@ -141,10 +164,14 @@ def main(argv=None):
         from .generated_world import generate_world
         scene = generate_world(args.generate, region_count=args.regions or 1,
                                region_size=args.region_size or "small", importance=args.importance or "normal")
-    simulation = PlaySimulation(scene, ai_scenario=args.ai_scenario, search_drill=args.search_drill,
-                                stack_drill=args.stack_variant is not None, stack_variant=args.stack_variant or 0)
+    try:
+        simulation = load_game(args.load) if args.load else PlaySimulation(
+            scene, ai_scenario=args.ai_scenario, search_drill=args.search_drill,
+            stack_drill=args.stack_variant is not None, stack_variant=args.stack_variant or 0)
+    except CampaignSaveError as error:
+        parser.error(str(error))
     if args.generate is not None:
-        simulation.message = f"생성 맵 · 시드 {args.generate} · WASD 이동 / Shift 달리기 / M 지도 / F 문 / Esc 종료"
+        simulation.message = f"생성 맵 · 시드 {args.generate} · WASD 이동 / M 지도 / F5 저장 / F9 불러오기"
     if args.headless:
         for _ in range(args.frames or 120):
             simulation.step()

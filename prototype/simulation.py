@@ -26,7 +26,7 @@ FIXED_DT = 1 / 60
 
 class PlaySimulation:
     def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False,
-                 stack_drill=False, stack_variant=0, campaign=None):
+                 stack_drill=False, stack_variant=0, campaign=None, materialized=True):
         self.world = World(scene)
         drill = self.world.data.get("search_drill")
         if search_drill and (drill is None or ai_scenario is not None):
@@ -71,6 +71,7 @@ class PlaySimulation:
         campaign = campaign if campaign is not None else create_campaign(self.world)
         self.campaign = CampaignBridge(campaign, self.world.data["campaign_facility"])
         self.roster = CampaignRoster(self.campaign, self.guard_records, self.world)
+        self.roster.materialized = materialized
         self.roster.track_player(self.player.xy)
         self.guards = self.roster.sync()
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],

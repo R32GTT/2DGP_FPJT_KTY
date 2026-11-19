@@ -23,6 +23,7 @@ SWITCHES = {"장면 기본값": None, "켜기": True, "끄기": False}
 
 def discover_targets():
     targets = {"generated": {"name": "절차 생성 맵", "kind": "generated", "modes": {"기본": ()}},
+               "continue": {"name": "생성 월드 이어하기", "kind": "resume", "modes": {"기본": ()}},
                "ai": {"name": "창고 전술 AI", "kind": "play",
                       "modes": {row[0]: ("--ai-scenario", key) for key, row in SCENARIOS.items()}}}
     for path in sorted((ROOT / "prototype/scenarios").glob("*.json")):
@@ -46,6 +47,8 @@ def build_command(target, values):
     if target["kind"] == "test":
         return command + ["unittest", target["module"], "-v"] if target["module"] else command + ["unittest", "discover", "-s", "tests", "-v"]
     command += ["prototype"]
+    if target["kind"] == "resume":
+        command += ["--load"]
     if "path" in target:
         command += ["--scene", str(target["path"])]
     if target["kind"] == "generated":
