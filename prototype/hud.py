@@ -350,9 +350,6 @@ class HUD:
         world = simulation.world
         if world.facilities:
             self._draw_field_terrain(world, point)
-            for road in world.roads:
-                color = (112, 102, 75) if road.get("kind") == "footpath" else (82, 99, 90)
-                pico.draw_line(*point(*road["start"]), *point(*road["end"]), *color)
             for facility in world.facilities:
                 x, y, w, h = facility["rect"]
                 a, b = point(x, y), point(x + w, y + h)
@@ -361,6 +358,9 @@ class HUD:
             for collider in world.geometry.objects.values():
                 a, b = point(collider.rect.x, collider.rect.y), point(collider.rect.right, collider.rect.bottom)
                 pico.draw_rectangle(a[0], b[1], b[0], a[1], 93, 111, 94, filled=True)
+        for road in world.roads:
+            color = (112, 102, 75) if road.get("kind") == "footpath" else (153, 155, 123)
+            pico.draw_line(*point(*road["start"]), *point(*road["end"]), *color)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp > 0 and (actor.team == "player" or debug or math.dist(actor.xy, simulation.player.xy) < 20):
                 x, y = point(*actor.xy)
@@ -453,16 +453,13 @@ class HUD:
             pico.draw_rectangle(a[0], b[1], b[0], a[1], 90, 122, 110)
         state = simulation.campaign.simulation.state
         controlled_roads = {control["road"] for control in world.road_controls}
-        for road in world.roads:
-            color = (114, 103, 77) if road.get("kind") == "footpath" else (153, 155, 123)
-            if road["id"] in controlled_roads and state.roads[road["id"]].blocked:
-                color = (231, 111, 85)
-            pico.draw_line(*point(*road["start"]), *point(*road["end"]), *color)
         for control in world.road_controls:
             x, y = point(*control["position"])
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 241, 211, 135, filled=True)
         if not world.facilities:
             for layer in world.layers:
+                if layer.role.startswith("road") or layer.role == "pavement":
+                    continue
                 a, b = point(layer.rect.x, layer.rect.y), point(layer.rect.right, layer.rect.bottom)
                 pico.draw_rectangle(a[0], b[1], b[0], a[1], *layer.color, filled=True)
             for collider in world.geometry.objects.values():
@@ -470,6 +467,17 @@ class HUD:
                 a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
                 color = (242, 190, 65) if collider.kind == "door" else (36, 43, 41)
                 pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=collider.active)
+        for road in world.roads:
+            color = (114, 103, 77) if road.get("kind") == "footpath" else (153, 155, 123)
+            if road["id"] in controlled_roads and state.roads[road["id"]].blocked:
+                color = (231, 111, 85)
+            pico.draw_line(*point(*road["start"]), *point(*road["end"]), *color)
+        for site in world.data.get("planned_facilities", ()):
+            x, y, w, h = site["rect"]
+            self.label("planned/" + site["id"], site["name"] + " · 예약", 13, (226, 221, 176))
+            self.text("planned/" + site["id"], *point(x, y + h))
+            gate, approach = site["connector"]["position"], site["connector"]["approach"]
+            pico.draw_line(*point(*gate), *point(*approach), 112, 230, 205)
         for index, facility in enumerate(world.facilities):
             x, y, w, h = facility["rect"]
             a, b = point(x, y), point(x + w, y + h)

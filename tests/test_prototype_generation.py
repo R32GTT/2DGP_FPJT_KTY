@@ -1,34 +1,41 @@
 import json
 import unittest
+from collections import Counter
+from copy import deepcopy
 
 from shapely import box, union_all
 
 from prototype.generation import generate_scene
 from prototype.movement import move_actor
+from prototype.road_generation import validate_roads
 from prototype.simulation import PlaySimulation
 from prototype.world import World
 
 
 class GeneratedMapTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.scene, cls.other = generate_scene(42), generate_scene(43)
+
     def test_seed_repeats_geometry_and_other_seeds_change_it(self):
-        scene = generate_scene(42)
+        scene = self.scene
         self.assertEqual(scene, generate_scene(42))
-        self.assertNotEqual(scene["colliders"], generate_scene(43)["colliders"])
-        self.assertNotEqual(scene["layers"], generate_scene(43)["layers"])
+        self.assertNotEqual(scene["colliders"], self.other["colliders"])
+        self.assertNotEqual(scene["road_network"], self.other["road_network"])
         self.assertEqual(scene["facilities"], [])
         self.assertEqual(scene["guards"], [])
 
     def test_saved_generation_settings_rebuild_the_same_map_and_reject_other_versions(self):
-        scene = generate_scene(42)
+        scene = self.scene
         settings = json.loads(json.dumps(scene["generation"]))
         self.assertEqual(generate_scene(**settings), scene)
         with self.assertRaises(ValueError):
             generate_scene(42, version=settings["version"] + 1)
 
     def test_spawn_and_free_space_are_connected(self):
-        for seed in (42, 43):
-            with self.subTest(seed=seed):
-                world = World(generate_scene(seed))
+        for scene in (self.scene, self.other):
+            with self.subTest(seed=scene["generation"]["seed"]):
+                world = World(scene)
                 self.assertTrue(world.navigation.walkable((0, 0)))
                 obstacles = [collider.rect.expanded(world.navigation.clearance)
                              for collider in world.geometry.objects.values()]
@@ -38,7 +45,7 @@ class GeneratedMapTests(unittest.TestCase):
                 self.assertEqual(free.geom_type, "Polygon")
 
     def test_play_movement_obstacle_collision_and_map_boundary(self):
-        simulation = PlaySimulation(generate_scene(42))
+        simulation = PlaySimulation(self.scene)
         self.assertFalse(simulation.guards)
         for _ in range(60):
             simulation.step((1, 0))
@@ -52,3 +59,34 @@ class GeneratedMapTests(unittest.TestCase):
         actor.position.x, actor.position.y = obstacle.x - actor.radius - 0.1, obstacle.y + obstacle.h / 2
         move_actor(actor, (1, 0), world, 1, speed=3)
         self.assertLessEqual(actor.position.x + actor.radius, obstacle.x + 1e-8)
+
+    def test_region_size_and_importance_select_facility_candidates(self):
+        counts = Counter(site["kind"] for site in self.scene["planned_facilities"])
+        self.assertEqual(counts, {"safehouse": 1, "hq": 1, "comms": 1, "warehouse": 1})
+        larger = generate_scene(42, region_size="medium", importance="core")
+        counts = Counter(site["kind"] for site in larger["planned_facilities"])
+        self.assertEqual((counts["hq"], counts["warehouse"], counts["garrison"], counts["sam"]), (1, 2, 1, 1))
+        self.assertIn(counts["comms"], (1, 2))
+        warehouse = next(site for site in self.scene["planned_facilities"] if site["kind"] == "warehouse")
+        selected = next(site for site in larger["planned_facilities"] if site["kind"] == "warehouse")
+        self.assertGreater(selected["rect"][2] * selected["rect"][3], warehouse["rect"][2] * warehouse["rect"][3])
+        self.assertIn("/core/", selected["variant_id"])
+
+    def test_roads_reject_disconnection_wrong_entry_direction_and_blocked_vehicle_space(self):
+        scene = self.scene
+        network, sites = scene["road_network"], scene["planned_facilities"]
+        bounds = World(scene).bounds
+        self.assertGreaterEqual(len(network["edges"]), len(network["nodes"]))
+        broken = deepcopy(network)
+        gate = broken["terminals"][sites[0]["id"]]
+        broken["edges"] = [edge for edge in broken["edges"] if gate not in edge]
+        with self.assertRaises(ValueError):
+            validate_roads(broken, sites, bounds, [])
+        reversed_sites = deepcopy(sites)
+        reversed_sites[0]["connector"]["direction"] = [-v for v in sites[0]["connector"]["direction"]]
+        with self.assertRaises(ValueError):
+            validate_roads(network, reversed_sites, bounds, [])
+        a, b = (network["nodes"][key] for key in network["edges"][0])
+        x, y = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        with self.assertRaises(ValueError):
+            validate_roads(network, sites, bounds, [{"rect": [x - 0.5, y - 0.5, 1, 1]}])

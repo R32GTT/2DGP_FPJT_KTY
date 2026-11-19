@@ -1,43 +1,67 @@
 """시드로 작은 야외 시험 맵을 만들어 기존 장면 입력에 전달한다."""
 
 import random
+from collections import Counter
 
 import numpy as np
 from scipy.ndimage import gaussian_filter, map_coordinates
+from shapely import box, union_all
+from shapely.prepared import prep
 
 from .geometry import Rect
+from .region import strip_layers
+from .road_generation import ROAD_WIDTH, build_roads, road_surface, validate_roads
+from .site_planning import IMPORTANCE, REGION_PROFILES, plan_sites
 
 
-GENERATION_VERSION = 2
+GENERATION_VERSION = 3
 
 
-def _density(seed, kind):
+def _density(seed, kind, extent):
     rng = np.random.default_rng(random.Random(f"{kind}:{GENERATION_VERSION}:{seed}").getrandbits(64))
-    field = gaussian_filter(rng.random((32, 32)), sigma=3, mode="reflect")
+    cells = extent // 2 + 1
+    field = gaussian_filter(rng.random((cells, cells)), sigma=3, mode="reflect")
     return (field - field.min()) / max(float(np.ptp(field)), 1e-8)
 
 
 def _sample(field, x, y):
-    return float(map_coordinates(field, [[(y + 31) / 2], [(x + 31) / 2]],
+    half = field.shape[0] - 1
+    return float(map_coordinates(field, [[(y + half) / 2], [(x + half) / 2]],
                                  order=1, mode="nearest", prefilter=False)[0])
 
 
-def generate_scene(seed=42, *, version=GENERATION_VERSION):
+def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", importance="normal"):
     if type(seed) is not int:
         raise ValueError("월드 시드는 정수여야 합니다")
     if type(version) is not int or version != GENERATION_VERSION:
         raise ValueError(f"지원하지 않는 맵 생성 버전: {version}")
+    if region_size not in REGION_PROFILES or importance not in IMPORTANCE:
+        raise ValueError("지원하지 않는 지역 크기 또는 중요도")
+    extent = REGION_PROFILES[region_size][0]
+    half, scale = extent / 2, (extent / 64) ** 2
     terrain = random.Random(f"terrain:{version}:{seed}")
     obstacles = random.Random(f"obstacles:{version}:{seed}")
-    vegetation, soil = _density(seed, "vegetation"), _density(seed, "soil")
+    vegetation, soil = _density(seed, "vegetation", extent), _density(seed, "soil", extent)
+    for attempt in range(4):
+        try:
+            bounds, sites, points, gates, stubs = plan_sites(seed, version, region_size, importance, attempt)
+            network = build_roads(bounds, sites, points, gates, stubs, 1 + vegetation * 3 + (1 - soil) * 0.5,
+                                  random.Random(f"roads:{version}:{seed}:{attempt}"))
+            validate_roads(network, sites, bounds, [])
+            break
+        except ValueError as error:
+            if attempt == 3:
+                raise ValueError(f"지역 생성 실패: {error}") from error
+    reserved = prep(union_all([road_surface(network).buffer(1.8)] +
+                              [box(x, y, x + w, y + h) for x, y, w, h in (site["reserved"] for site in sites)]))
     layers, colliders = [], []
-    for row in range(4):
-        for col in range(4):
-            layers.append({"id": f"ground/{row}/{col}", "rect": [-32 + col * 16, -32 + row * 16, 16, 16],
+    for row in range(extent // 16):
+        for col in range(extent // 16):
+            layers.append({"id": f"ground/{row}/{col}", "rect": [-half + col * 16, -half + row * 16, 16, 16],
                            "style": "grass", "image": "", "color": [45, 65, 48],
                            "variant": terrain.randrange(4)})
-    for index in range(80):
-        x, y = terrain.uniform(-27, 27), terrain.uniform(-27, 27)
+    for index in range(int(80 * scale)):
+        x, y = terrain.uniform(-half + 5, half - 5), terrain.uniform(-half + 5, half - 5)
         density = _sample(soil, x, y)
         if density < 0.55:
             continue
@@ -46,8 +70,8 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION):
                        "style": "dirt", "image": "", "color": [104, 91, 62]})
     occupied = []
     # 연속된 밀도 분포에서 후보를 뽑고, 장애물 사이의 통행 공간을 침범하면 다시 뽑는다.
-    for index in range(700):
-        x, y = obstacles.uniform(-29, 29), obstacles.uniform(-29, 29)
+    for index in range(int(700 * scale)):
+        x, y = obstacles.uniform(-half + 3, half - 3), obstacles.uniform(-half + 3, half - 3)
         tree = obstacles.random() < 0.82
         density = _sample(vegetation if tree else soil, x, y)
         if obstacles.random() > 0.03 + 0.9 * density ** 2:
@@ -56,15 +80,35 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION):
         rect = Rect(x - width / 2, y - height / 2, width, height)
         if rect.expanded(4).segment_entry((0, 0), (0, 0)) is not None:
             continue
-        if any(rect.expanded(1.8).overlaps(other) for other in occupied):
+        spacing = rect.expanded(1.8)
+        if (reserved.intersects(box(rect.x, rect.y, rect.right, rect.bottom))
+                or any(spacing.overlaps(other) for other in occupied)):
             continue
         occupied.append(rect)
         kind = "tree" if tree else "rock"
         colliders.append({"id": f"{kind}/{index}", "rect": [rect.x, rect.y, rect.w, rect.h],
                           "kind": kind, "material": "tree_trunk" if tree else "concrete"})
-    return {"format": "revenant.image_scene.v1", "name": "절차 생성 / 야외 이동 시험",
-            "generation": {"seed": seed, "version": GENERATION_VERSION}, "bounds": [-32, -32, 64, 64],
+    roads = []
+    for index, (a, b) in enumerate(network["edges"]):
+        start, end = network["nodes"][a], network["nodes"][b]
+        key = f"road/{index}"
+        roads.append({"id": key, "start": start, "end": end, "width": ROAD_WIDTH})
+        layers.extend(strip_layers(key, start, end, ROAD_WIDTH, "road_h", [75, 81, 78]))
+    for key, degree in Counter(key for edge in network["edges"] for key in edge).items():
+        if degree > 1:
+            x, y = network["nodes"][key]
+            layers.append({"id": f"junction/{key}", "rect": [x - ROAD_WIDTH / 2, y - ROAD_WIDTH / 2, ROAD_WIDTH, ROAD_WIDTH],
+                           "style": "pavement", "image": "", "color": [75, 81, 78]})
+    colors = {"safehouse": [69, 109, 91], "hq": [119, 126, 116], "comms": [102, 119, 126],
+              "warehouse": [135, 125, 95], "garrison": [114, 122, 91], "sam": [126, 103, 101]}
+    for site in sites:
+        layers.append({"id": f"site/{site['id']}", "rect": site["rect"], "style": "yard", "image": "",
+                       "color": colors[site["kind"]]})
+    validate_roads(network, sites, bounds, colliders)
+    return {"format": "revenant.image_scene.v1", "name": f"절차 생성 / {region_size} · {importance}",
+            "generation": {"seed": seed, "version": version, "region_size": region_size, "importance": importance},
+            "bounds": [-half, -half, extent, extent], "planned_facilities": sites, "road_network": network,
             "player_spawn": [0, 0], "safehouse_spawn": [0, 0], "supply_point": [0, 0],
             "campaign_facility": "depot_a", "player_weapons": [], "interaction_markers": False,
-            "layers": layers, "colliders": colliders, "navigation": {}, "navigation_edges": [],
-            "guards": [], "facilities": [], "roads": []}
+            "layers": layers, "colliders": colliders, "navigation": network["nodes"], "navigation_edges": network["edges"],
+            "guards": [], "facilities": [], "roads": roads}
