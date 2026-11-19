@@ -3,14 +3,12 @@
 from copy import deepcopy
 import json
 import math
+from pathlib import Path
 
-from campaign.scenario import DEFAULT_SCENARIO, build_state
+from campaign.scenario import build_state
 
 
-FACILITY_TEMPLATES = {"hq": "hq_a", "comms": "comms_a", "warehouse": "depot_a",
-                      "garrison": "hq_a", "sam": "comms_a"}
-CAPABILITIES = {"hq": ["command", "garrison", "qrf"], "comms": ["communication"],
-                "warehouse": ["logistics"], "garrison": ["garrison", "qrf"], "sam": ["air_defense"]}
+SETUP_PATH = Path(__file__).parent / "data/campaign_setup.json"
 
 
 def bind_sites(scene):
@@ -30,35 +28,43 @@ def bind_sites(scene):
             "supply_point": depot["terminal"], "safehouse_spawn": safehouse["position"]}
 
 
-def build_generated_state(scene):
-    template = json.loads(DEFAULT_SCENARIO.read_text(encoding="utf-8"))
-    prototypes = {row["id"]: row for row in template["facilities"]}
+def build_generated_state(scene, setup=None):
+    setup = deepcopy(setup) if setup is not None else json.loads(SETUP_PATH.read_text(encoding="utf-8"))
+    if setup["version"] != 1:
+        raise ValueError("지원하지 않는 캠페인 초기 설정 버전")
     network = scene["road_network"]
     facilities, units, vehicles = [], [], []
+
+    def assets(key, node, definition):
+        units.extend({"id": f"{key}/unit/{index}", "soldiers": count, "node_id": node}
+                     for index, count in enumerate(definition["units"]))
+        for profile, count in definition["vehicles"].items():
+            vehicles.extend({**setup["vehicle_profiles"][profile], "id": f"{key}/{profile}/{index}", "node_id": node}
+                            for index in range(count))
+
     for site in scene["planned_facilities"]:
         kind, key = site["kind"], site["id"]
         if kind == "safehouse":
             continue
         node = network["terminals"][key]
-        facilities.append({**deepcopy(prototypes[FACILITY_TEMPLATES[kind]]), "id": key, "region_id": "generated",
-                           "node_id": node, "capabilities": list(CAPABILITIES[kind])})
-        count = 10 if kind in {"hq", "garrison"} else 2
-        for index in range(2 if kind == "warehouse" else 1):
-            units.append({"id": f"{key}/unit/{index}", "soldiers": count, "node_id": node})
-            if kind == "warehouse":
-                vehicles.append({**template["vehicles"][2], "id": f"{key}/truck/{index}", "node_id": node})
-    source = {**deepcopy(template["source"]), "node_id": network["terminals"]["entry/0"]}
-    for index in range(2):
-        units.append({"id": f"external/unit/{index}", "soldiers": 4, "node_id": source["node_id"]})
-        vehicles.append({**template["vehicles"][index], "id": f"external/truck/{index}", "node_id": source["node_id"]})
+        definition = deepcopy(setup["facilities"][kind])
+        facilities.append({**{name: definition[name] for name in ("capabilities", "inventory", "minimum_stock", "target_stock")},
+                           "id": key, "region_id": site.get("region_id", "generated"), "node_id": node})
+        if key == scene["campaign_facility"]:
+            facilities[-1]["inventory"] = dict(setup["collection_inventory"])
+        assets(key, node, definition)
+    regions = scene.get("generated_regions", [{"id": "generated", "importance": scene["generation"]["importance"]}])
+    source = {"id": "external_source", "node_id": scene.get("campaign_entry", network["terminals"].get("entry/0")),
+              "inventory": setup["external"]["inventory"]}
+    assets("external", source["node_id"], setup["external"])
     roads = [{"id": row["id"], "start": row["nodes"][0], "end": row["nodes"][1],
               "length_m": math.dist(row["start"], row["end"])} for row in scene["roads"]]
     data = {"nodes": [{"id": key, "position": {"x": point[0], "y": point[1]}} for key, point in network["nodes"].items()],
             "roads": roads, "facilities": facilities, "units": units, "vehicles": vehicles, "source": source,
-            "regions": [{"id": "generated", "facility_ids": [row["id"] for row in facilities], "minimum_garrison": 10,
-                         "importance": ("normal", "important", "core").index(scene["generation"]["importance"]) + 1}],
-            "demand": {**template["demand"], "node_id": network["terminals"]["entry/1"],
+            "regions": [{"id": region["id"], "facility_ids": [row["id"] for row in facilities if row["region_id"] == region["id"]],
+                         "minimum_garrison": setup["minimum_garrison"], "importance": setup["importance"][region["importance"]]}
+                        for region in regions],
+            "demand": {**setup["demand"], "node_id": scene.get("campaign_exit", network["terminals"].get("entry/1")),
                        "collection_facility_id": scene["campaign_facility"]},
-            "rules": {**template["rules"], "road_cost_distance_m": 100},
-            "resource_priority": template["resource_priority"]}
+            "rules": {**setup["rules"], "setup_version": setup["version"]}, "resource_priority": setup["resource_priority"]}
     return build_state(data, seed=scene["generation"]["seed"])

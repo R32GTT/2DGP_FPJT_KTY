@@ -11,6 +11,7 @@ from campaign.persistence import deserialize_campaign, serialize_campaign
 from campaign.resources import assert_invariants
 from campaign.simulation import Simulation
 from prototype.generation import generate_scene
+from prototype.generated_campaign import SETUP_PATH, build_generated_state
 from prototype.movement import move_actor
 from prototype.road_generation import ROAD_GAP, build_junctions, validate_roads
 from prototype.road_visuals import ROAD_STYLES, road_layers
@@ -239,3 +240,21 @@ class GeneratedMapTests(unittest.TestCase):
         Simulation(snapshot).advance_to(120)
         self.assertEqual(asdict(snapshot), asdict(state))
         assert_invariants(state)
+
+    def test_configured_initial_assets_and_shared_campaign_survive_view_rebuild(self):
+        world = World(self.scene)
+        setup = json.loads(SETUP_PATH.read_text(encoding="utf-8"))
+        setup["facilities"]["hq"]["inventory"]["supplies"] = 7
+        setup["vehicle_profiles"]["truck"]["capacity"] = 180
+        state = build_generated_state(world.data, setup)
+        hq = next(facility for facility in state.facilities.values() if "command" in facility.capabilities)
+        self.assertEqual(hq.inventory["supplies"], 7)
+        self.assertTrue(all(vehicle.capacity == 180 for key, vehicle in state.vehicles.items() if not key.startswith("external/")))
+        play = PlaySimulation(self.scene)
+        campaign = play.campaign.simulation
+        campaign.advance_to(45)
+        snapshot = asdict(campaign.state)
+        rebuilt = PlaySimulation(self.scene, campaign=campaign)
+        self.assertIs(rebuilt.campaign.simulation, campaign)
+        self.assertEqual(rebuilt.time, 45)
+        self.assertEqual(asdict(campaign.state), snapshot)

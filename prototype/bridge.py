@@ -22,14 +22,13 @@ class ConvoyView:
     progress_m: float
 
 
-class CampaignBridge:
-    def __init__(self, facility_id="depot_a", world=None):
-        if world is not None and world.data.get("generation"):
-            from .generated_campaign import build_generated_state
-            state = build_generated_state(world.data)
-        else:
-            state = load_scenario()
-        if world is not None and world.region_layout:
+def create_campaign(world):
+    if world.data.get("generation"):
+        from .generated_campaign import build_generated_state
+        state = build_generated_state(world.data)
+    else:
+        state = load_scenario()
+        if world.region_layout:
             layout = world.region_layout
             for key, xy in layout["road_nodes"].items():
                 state.nodes[key] = Node(key, Position(*xy))
@@ -38,9 +37,16 @@ class CampaignBridge:
             for road in layout["roads"]:
                 a, b = layout["road_nodes"][road["start"]], layout["road_nodes"][road["end"]]
                 state.roads[road["id"]] = Road(road["id"], road["start"], road["end"], math.dist(a, b))
-        self.simulation = Simulation(state)
-        self.simulation.advance_to(0)
+    simulation = Simulation(state)
+    simulation.advance_to(state.world_time)
+    return simulation
+
+
+class CampaignBridge:
+    def __init__(self, simulation, facility_id):
+        self.simulation = simulation
         self.facility_id = facility_id
+        state = simulation.state
         self.node_facilities = {facility.node_id: facility for facility in state.facilities.values()}
         self._convoy_time = -1
         self._convoy_ids = []

@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "minimum_garrison": 10,
+  "importance": {"normal": 1, "important": 2, "core": 3},
+  "resource_priority": ["supplies", "ammunition", "repair_parts"],
+  "vehicle_profiles": {
+    "truck": {"capacity": 150, "speed_mps": 10.0},
+    "external_truck": {"capacity": 200, "speed_mps": 10.0}
+  },
+  "facilities": {
+    "hq": {
+      "capabilities": ["command", "garrison", "qrf"], "units": [10], "vehicles": {},
+      "inventory": {"supplies": 30, "ammunition": 20, "repair_parts": 5},
+      "minimum_stock": {"supplies": 10, "ammunition": 10, "repair_parts": 2},
+      "target_stock": {"supplies": 80, "ammunition": 20, "repair_parts": 5}
+    },
+    "comms": {
+      "capabilities": ["communication"], "units": [2], "vehicles": {},
+      "inventory": {"supplies": 10, "ammunition": 10, "repair_parts": 5},
+      "minimum_stock": {"supplies": 5, "ammunition": 5, "repair_parts": 2},
+      "target_stock": {"supplies": 25, "ammunition": 10, "repair_parts": 5}
+    },
+    "warehouse": {
+      "capabilities": ["logistics"], "units": [2, 2], "vehicles": {"truck": 2},
+      "inventory": {"supplies": 60, "ammunition": 25, "repair_parts": 10},
+      "minimum_stock": {"supplies": 30, "ammunition": 10, "repair_parts": 5},
+      "target_stock": {"supplies": 350, "ammunition": 80, "repair_parts": 40}
+    },
+    "garrison": {
+      "capabilities": ["garrison", "qrf"], "units": [10], "vehicles": {},
+      "inventory": {"supplies": 30, "ammunition": 20, "repair_parts": 5},
+      "minimum_stock": {"supplies": 10, "ammunition": 10, "repair_parts": 2},
+      "target_stock": {"supplies": 80, "ammunition": 20, "repair_parts": 5}
+    },
+    "sam": {
+      "capabilities": ["air_defense"], "units": [2], "vehicles": {},
+      "inventory": {"supplies": 10, "ammunition": 10, "repair_parts": 5},
+      "minimum_stock": {"supplies": 5, "ammunition": 5, "repair_parts": 2},
+      "target_stock": {"supplies": 25, "ammunition": 10, "repair_parts": 5}
+    }
+  },
+  "collection_inventory": {"supplies": 700, "ammunition": 150, "repair_parts": 100},
+  "external": {
+    "inventory": {"supplies": 2400, "ammunition": 600, "repair_parts": 300},
+    "units": [4, 4], "vehicles": {"external_truck": 2}
+  },
+  "demand": {"cargo": {"supplies": 120, "ammunition": 20, "repair_parts": 10}, "period_s": 7200},
+  "rules": {
+    "planning_period_s": 300, "consumption_period_s": 3600, "supplies_per_soldier": 1,
+    "loading_s": 30, "unloading_s": 20, "turnaround_s": 120, "external_departure_interval_s": 600,
+    "external_cargo_limit": 180, "escort_soldiers": 2, "provisions_per_vehicle": 20,
+    "road_cost_per_vehicle": 1, "road_cost_distance_m": 100, "minimum_export_batch": 80, "export_provision_buffer": 40
+  }
+}

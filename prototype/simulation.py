@@ -7,7 +7,7 @@ from campaign.models import Position
 from .actors import Actor
 from .ai import EnemyAI
 from .ai_scenarios import configure
-from .bridge import CampaignBridge
+from .bridge import CampaignBridge, create_campaign
 from .combat import Combat
 from .door_layout import DoorLayout
 from .events import EventBus
@@ -25,7 +25,7 @@ FIXED_DT = 1 / 60
 
 class PlaySimulation:
     def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False,
-                 stack_drill=False, stack_variant=0):
+                 stack_drill=False, stack_variant=0, campaign=None):
         self.world = World(scene)
         drill = self.world.data.get("search_drill")
         if search_drill and (drill is None or ai_scenario is not None):
@@ -67,7 +67,8 @@ class PlaySimulation:
             key = row.get("weapon", "ar_a")
             actor.loadout = {key: WeaponState.ready(self.specs[key])}
             actor.active_weapon = key
-        self.campaign = CampaignBridge(self.world.data["campaign_facility"], world=self.world)
+        campaign = campaign if campaign is not None else create_campaign(self.world)
+        self.campaign = CampaignBridge(campaign, self.world.data["campaign_facility"])
         self.roster = CampaignRoster(self.campaign, self.guard_records, self.world)
         self.roster.track_player(self.player.xy)
         self.guards = self.roster.sync()
@@ -76,7 +77,7 @@ class PlaySimulation:
         self.events, self.feedback = EventBus(), Feedback()
         self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"], self.events)
         self.combat = Combat(self.events, self.transports)
-        self.time, self.footstep_at = 0.0, 0.0
+        self.time, self.footstep_at = float(campaign.state.world_time), 0.0
         self.message = "R 재장전 / C 취소 / 1·2 총기 교체 / V 단발·연사 / F 문 / E 상호작용"
         if self.world.territories:
             self.message = "M 지도에서 동서 보급로 확인 · 차단기 가까이에서 E"
