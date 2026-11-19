@@ -7,8 +7,9 @@ import random
 import pico2d
 
 
-def draw_polygon(backend, points, color):
-    indices = [index for end in range(1, len(points) - 1) for index in (0, end, end + 1)]
+def draw_polygon(backend, points, color, indices=None):
+    if indices is None:
+        indices = [index for end in range(1, len(points) - 1) for index in (0, end, end + 1)]
     vertices = (backend.SDL_Vertex * len(indices))(*(
         backend.SDL_Vertex((points[index][0], pico2d.get_canvas_height() - points[index][1]), color)
         for index in indices))

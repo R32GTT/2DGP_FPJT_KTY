@@ -6,7 +6,8 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra, minimum_spanning_tree
-from shapely import LineString, MultiPoint, Point, Polygon, box, union_all
+from shapely import LineString, Point, Polygon, box, union_all
+from .road_junctions import build_junctions
 
 
 DIRT_WIDTH = 3.0
@@ -20,54 +21,6 @@ def facility_road(kind):
     role = "service" if kind in {"safehouse", "comms"} else "access"
     material = "asphalt" if kind in {"hq", "garrison"} else "dirt"
     return {"kind": role, "width": DIRT_WIDTH if material == "dirt" else ROAD_WIDTHS[role], "material": material}
-
-
-def build_junctions(nodes, segments, bounds=None):
-    incident = {}
-    for segment in segments:
-        for key in segment["nodes"]:
-            incident.setdefault(key, []).append(segment)
-    junctions = []
-    rank = {kind: index for index, kind in enumerate(ROAD_WIDTHS)}
-    half_length = VEHICLE_SIZE[0] / 2 + VEHICLE_MARGIN
-    for key, adjacent in sorted(incident.items()):
-        if len(adjacent) < 2:
-            continue
-        center = np.array(nodes[key])
-        arms, road_points, vehicle_points = [], [], []
-        for segment in adjacent:
-            other = next(other for other in segment["nodes"] if other != key)
-            vector = np.subtract(nodes[other], center)
-            length = np.linalg.norm(vector)
-            setback = min(half_length, max(0, length - half_length))
-            direction = vector / length
-            start = center + direction * setback
-            normal = np.array([-direction[1], direction[0]])
-            road_points.extend((point + normal * side * segment["width"] / 2).tolist()
-                               for point in (center, start) for side in (-1, 1))
-            arms.append((start, direction))
-        for index, (start, start_direction) in enumerate(arms):
-            for end, end_direction in arms[index + 1:]:
-                # 진입 방향 사이의 차량 자세를 연결해 대각선·직각 합류부를 만든다.
-                for t in np.linspace(0, 1, 5):
-                    position = (1 - t) ** 2 * start + 2 * t * (1 - t) * center + t ** 2 * end
-                    tangent = (1 - t) * (center - start) + t * (end - center)
-                    if np.linalg.norm(tangent) < 1e-8:
-                        tangent = -(1 - t) * start_direction + t * end_direction
-                    if np.linalg.norm(tangent) < 1e-8:
-                        tangent = end_direction
-                    tangent = tangent / np.linalg.norm(tangent)
-                    normal = np.array([-tangent[1], tangent[0]])
-                    half_width = VEHICLE_SIZE[1] / 2 + VEHICLE_MARGIN
-                    vehicle_points.extend((position + tangent * along * half_length + normal * side * half_width).tolist()
-                                          for along in (-1, 1) for side in (-1, 1))
-        spec = min(adjacent, key=lambda segment: (rank[segment["kind"]], segment["material"] != "asphalt"))
-        shapes = [MultiPoint(road_points + vehicle_points).convex_hull, MultiPoint(vehicle_points).convex_hull]
-        if bounds:
-            shapes[0] = shapes[0].intersection(box(bounds.x, bounds.y, bounds.right, bounds.bottom))
-        polygons = [list(map(list, shape.exterior.coords))[:-1] for shape in shapes]
-        junctions.append({"node": key, "polygon": polygons[0], "vehicle_polygon": polygons[1], "material": spec["material"]})
-    return junctions
 
 
 def _grid_graph(cost, free):

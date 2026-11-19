@@ -32,6 +32,7 @@ class ImageLayer:
     image_size: tuple = ()
     order: int = 0
     polygon: tuple = ()
+    triangles: tuple = ()
 
     @property
     def role(self):
@@ -57,7 +58,7 @@ class World:
         self.layers = [ImageLayer(row["id"], Rect(*row["rect"]), row["image"],
                                   tuple(row["color"]), row.get("fallback", ""), row.get("style", ""),
                                   row.get("variant", 0), row.get("rotation", 0), tuple(row.get("image_size", ())), index,
-                                  tuple(map(tuple, row.get("polygon", ()))))
+                                  tuple(map(tuple, row.get("polygon", ()))), tuple(map(tuple, row.get("triangles", ()))))
                        for index, row in enumerate(self.data["layers"])]
         self.layer_index, self.collider_index = BoundsIndex(), BoundsIndex()
         for layer in self.layers:

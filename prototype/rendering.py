@@ -110,7 +110,9 @@ class Renderer:
                 size = layer.image_size or (layer.rect.w, layer.rect.h)
                 image.rotate_draw(-math.radians(layer.rotation), x, y, size[0] * view.scale, size[1] * view.scale)
             elif layer.polygon:
-                draw_polygon(self.backend, [view.pico(*point) for point in layer.polygon], layer.color)
+                points = layer.triangles or layer.polygon
+                draw_polygon(self.backend, [view.pico(*point) for point in points], layer.color,
+                             range(len(points)) if layer.triangles else None)
             elif layer.role != "walls" and not layer.rotation % 90:
                 self._rect(view, layer.rect, layer.color)
         for collider in world.visible_colliders(view.viewport(4)):

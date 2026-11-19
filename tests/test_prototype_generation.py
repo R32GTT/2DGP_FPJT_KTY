@@ -164,7 +164,8 @@ class GeneratedMapTests(unittest.TestCase):
         original = list(road_layers(scene["road_network"]))
         junction_layers = {row["id"]: row for row in original if row["style"] == "road_junction"}
         for junction in scene["road_network"]["junctions"]:
-            self.assertEqual(junction_layers["junction/" + junction["node"]]["polygon"], junction["polygon"])
+            for index, surface in enumerate(junction['surfaces']):
+                self.assertEqual(junction_layers[f"junction/{junction['node']}/{index}"]["polygon"], surface["polygon"])
         style = ROAD_STYLES["dirt"]
         old_path = style["image"]
         try:
@@ -198,6 +199,31 @@ class GeneratedMapTests(unittest.TestCase):
         shape = Polygon(network["junctions"][0]["polygon"])
         self.assertTrue(shape.is_valid)
         self.assertGreater(shape.bounds[1], -2.5)
+
+    def test_mixed_junction_preserves_pavement_edge_and_concave_mesh(self):
+        nodes = {'center': [0, 0], 'west': [-12, 0], 'east': [12, 0], 'north': [0, -12]}
+        segments = [{'nodes': ['center', key], 'width': width, 'material': material, 'kind': kind}
+                    for key, width, material, kind in (('west', 6, 'asphalt', 'main'),
+                                                      ('east', 6, 'asphalt', 'main'),
+                                                      ('north', 3, 'dirt', 'service'))]
+        junction, = build_junctions(nodes, segments)
+        shape = Polygon(junction['polygon'])
+        self.assertLess(shape.area, shape.convex_hull.area)
+        paved = []
+        for surface in junction['surfaces']:
+            points = surface['triangles']
+            triangles = [Polygon(points[index:index + 3]) for index in range(0, len(points), 3)]
+            mesh = union_all(triangles)
+            self.assertAlmostEqual(sum(triangle.area for triangle in triangles), mesh.area)
+            if surface['material'] == 'asphalt':
+                paved.append(mesh)
+        self.assertTrue(box(-7, -3, 7, 3).buffer(1e-6).covers(union_all(paved)))
+        self.assertAlmostEqual(shape.area, sum(Polygon(surface['triangles'][index:index + 3]).area
+                                              for surface in junction['surfaces']
+                                              for index in range(0, len(surface['triangles']), 3)))
+        network = {'nodes': nodes, 'segments': segments, 'junctions': [junction]}
+        order = [layer['color'] == ROAD_STYLES['asphalt']['color'] for layer in road_layers(network)]
+        self.assertEqual(order, sorted(order))
 
     def test_generated_road_connects_real_hq_and_player_can_walk_inside(self):
         simulation = PlaySimulation(self.scene)

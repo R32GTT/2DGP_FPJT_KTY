@@ -12,15 +12,21 @@ ROAD_STYLES = {
 
 
 def road_layers(network):
-    for index, segment in enumerate(network["segments"]):
-        start, end = (network["nodes"][key] for key in segment["nodes"])
-        style = ROAD_STYLES[segment["material"]]
-        for layer in strip_layers(segment.get("id", f"road/{index}"), start, end, segment["width"], style["style"], style["color"]):
-            yield {**layer, "image": style["image"], "variant": int(segment["kind"] != "main")}
-    for junction in network["junctions"]:
-        points = junction["polygon"]
-        x, y = map(min, zip(*points))
-        right, bottom = map(max, zip(*points))
-        style = ROAD_STYLES[junction["material"]]
-        yield {"id": f"junction/{junction['node']}", "rect": [x, y, right - x, bottom - y], "polygon": points,
-               "style": "road_junction", "image": style["junction_image"], "color": style["color"]}
+    for material in ('dirt', 'asphalt'):
+        style = ROAD_STYLES[material]
+        for index, segment in enumerate(network["segments"]):
+            if segment['material'] != material:
+                continue
+            start, end = (network["nodes"][key] for key in segment["nodes"])
+            for layer in strip_layers(segment.get("id", f"road/{index}"), start, end, segment["width"], style["style"], style["color"]):
+                yield {**layer, "image": style["image"], "variant": int(segment["kind"] != "main")}
+        for junction in network["junctions"]:
+            for index, surface in enumerate(junction['surfaces']):
+                if surface['material'] != material:
+                    continue
+                points = surface["polygon"]
+                x, y = map(min, zip(*points))
+                right, bottom = map(max, zip(*points))
+                yield {"id": f"junction/{junction['node']}/{index}", "rect": [x, y, right - x, bottom - y],
+                       "polygon": points, "triangles": surface['triangles'],
+                       "style": "road_junction", "image": style["junction_image"], "color": style["color"]}

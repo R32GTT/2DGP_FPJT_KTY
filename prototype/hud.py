@@ -375,6 +375,7 @@ class HUD:
                 pico.draw_rectangle(x - 2, y - 1, x + 2, y + 1, 221, 186, 100, filled=True)
 
     def _map_roads(self, world, point, scale, blocked=()):
+        commands = []
         for road in world.roads:
             color = ((231, 111, 85) if road["id"] in blocked else
                      (114, 103, 77) if road.get("kind") == "footpath" else
@@ -386,11 +387,15 @@ class HUD:
             x, y = -dy / length * half, dx / length * half
             corners = ((a[0] + x, a[1] + y), (b[0] + x, b[1] + y),
                        (b[0] - x, b[1] - y), (a[0] - x, a[1] - y))
-            draw_polygon(self.backend, corners, color)
+            commands.append((road.get('material', ''), corners, color, None))
         network = world.data.get("road_network", {})
         for junction in network.get("junctions", ()):
-            color = ROAD_STYLES[junction["material"]]["map_color"]
-            draw_polygon(self.backend, [point(*vertex) for vertex in junction["polygon"]], color)
+            for surface in junction['surfaces']:
+                color = ROAD_STYLES[surface['material']]["map_color"]
+                points = surface['triangles']
+                commands.append((surface['material'], [point(*vertex) for vertex in points], color, range(len(points))))
+        for _, points, color, indices in sorted(commands, key=lambda command: command[0] == 'asphalt'):
+            draw_polygon(self.backend, points, color, indices)
 
     @staticmethod
     def _draw_field_terrain(world, point):

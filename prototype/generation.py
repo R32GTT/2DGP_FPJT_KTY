@@ -15,7 +15,7 @@ from .road_visuals import road_layers
 from .site_planning import IMPORTANCE, REGION_PROFILES, plan_sites
 
 
-GENERATION_VERSION = 9
+GENERATION_VERSION = 10
 GENERATION_ATTEMPTS = 8
 FOREST_DENSITY = 0.55
 FOREST_TREE_GAP = 0.75
