@@ -56,13 +56,23 @@ class GeneratedMapTests(unittest.TestCase):
                     union_all([box(r.x, r.y, r.right, r.bottom) for r in obstacles]))
                 self.assertEqual(free.geom_type, "Polygon")
 
+    def test_new_map_starts_inside_its_safehouse(self):
+        for scene in (self.scene, self.other):
+            with self.subTest(seed=scene['generation']['seed']):
+                play = PlaySimulation(scene)
+                safehouse = next(site for site in play.world.facilities if site['kind'] == 'safehouse')
+                self.assertEqual(play.player.xy, tuple(safehouse['position']))
+                self.assertEqual(play.player.xy, play.world.safehouse)
+                self.assertTrue(play.world.navigation.walkable(play.player.xy))
+
     def test_play_movement_obstacle_collision_and_map_boundary(self):
         simulation = PlaySimulation(self.scene)
+        start_x, start_y = simulation.player.xy
         self.assertTrue(simulation.guards)
         for _ in range(60):
             simulation.step((1, 0))
-        self.assertAlmostEqual(simulation.player.position.x, 3)
-        self.assertAlmostEqual(simulation.player.position.y, 0)
+        self.assertAlmostEqual(simulation.player.position.x, start_x + 3)
+        self.assertAlmostEqual(simulation.player.position.y, start_y)
         actor, world = simulation.player, simulation.world
         actor.position.x = world.bounds.right - 1
         move_actor(actor, (1, 0), world, 1, speed=3)

@@ -30,6 +30,14 @@ class GeneratedWorldTests(unittest.TestCase):
         single = generate_world(42)
         self.assertEqual(single["planned_facilities"], [site for site in scene["planned_facilities"] if site["region_id"] == "region/1"])
 
+    def test_player_starts_in_the_first_regions_safehouse(self):
+        play = PlaySimulation(self.scene)
+        safehouses = [site for site in play.world.facilities if site['kind'] == 'safehouse']
+        self.assertEqual(len(safehouses), 2)
+        self.assertEqual(play.player.xy, tuple(safehouses[0]['position']))
+        self.assertNotEqual(play.player.xy, tuple(safehouses[1]['position']))
+        self.assertEqual(play.world.territory_at(play.player.xy), 'region/1')
+
     def test_player_crosses_shared_portal_and_returns_without_resetting_campaign(self):
         play = PlaySimulation(self.scene)
         campaign, actor = play.campaign.simulation, play.player
@@ -37,7 +45,7 @@ class GeneratedWorldTests(unittest.TestCase):
         hq = next(f for f in state.facilities.values() if f.region_id == "region/2" and "command" in f.capabilities)
         unit = next(unit for unit in state.units.values() if unit.node_id == hq.node_id)
         campaign.apply_action({"type": "damage_unit", "unit_id": unit.id, "soldiers": 1})
-        spawn = self.scene["road_network"]["spawn_node"]
+        spawn = next(site['service_node'] for site in play.world.facilities if site['kind'] == 'safehouse')
         path = find_route(state, spawn, hq.node_id)
         self.assertIn("portal/1", path)
 

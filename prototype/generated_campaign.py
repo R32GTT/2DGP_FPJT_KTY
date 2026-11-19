@@ -28,7 +28,8 @@ def bind_sites(scene):
     depot = next(row for row in facilities if row["kind"] == "warehouse")
     safehouse = next(row for row in facilities if row["kind"] == "safehouse")
     return {**scene, "facilities": facilities, "campaign_facility": depot["id"],
-            "supply_point": depot["terminal"], "safehouse_spawn": safehouse["position"]}
+            "supply_point": depot["terminal"], "safehouse_spawn": safehouse["position"],
+            "player_spawn": safehouse["position"]}
 
 
 def build_generated_state(scene, setup=None):

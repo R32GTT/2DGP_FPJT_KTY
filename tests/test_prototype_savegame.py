@@ -41,6 +41,7 @@ class PlaySaveTests(unittest.TestCase):
         play.reload()
         play.player.weapon.tick(.3)
         play.player.hp, play.player.armor = 67, 12
+        play.player.position = Position(0, 0)
         play.time = .75
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'play.json.gz'
@@ -56,6 +57,8 @@ class PlaySaveTests(unittest.TestCase):
             self.assertEqual(restored.time, .75)
             self.assertEqual(restored.player.hp, 67)
             self.assertEqual(restored.player.armor, 12)
+            self.assertEqual(restored.player.xy, (0, 0))
+            self.assertNotEqual(restored.player.xy, restored.world.safehouse)
             self.assertEqual(vars(restored.player.weapon), vars(play.player.weapon))
             self.assertEqual(restored.world.geometry.objects[door.id].active, door.active)
             self.assertEqual(restored.roster.by_id[casualty.id].hp, 0)
