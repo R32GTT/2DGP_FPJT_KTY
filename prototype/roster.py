@@ -21,6 +21,7 @@ class CampaignRoster:
                                  for facility in world.facilities if facility["campaign_id"]}
         self.active_nodes = self.nodes
         self.unit_ids = sorted({actor.source_unit for actor in actors if actor.source_unit})
+        self.in_transit = set()
         self._stamp, self._active = None, []
         self.bridge.simulation.departure_ready = self.ready
 
@@ -48,28 +49,25 @@ class CampaignRoster:
                 return False
         return True
 
-    def transport_members(self, operation, weapon):
+    def members(self, unit_id, weapon):
         state = self.bridge.simulation.state
-        members = []
-        for unit_id in operation.unit_ids:
-            unit = state.units[unit_id]
-            present = [actor for actor in self.actors if actor.source_unit == unit_id]
-            alive = [actor for actor in present if actor.hp > 0]
-            if unit_id not in self.unit_ids:
-                home = state.nodes[operation.home_node].position
-                for index in range(unit.soldiers):
-                    actor = Actor(f"{unit_id}:{index}", Position(home.x, home.y, home.floor),
-                                  armor=15, source_unit=unit_id, member=index,
-                                  home_node=operation.home_node, present=False)
-                    actor.loadout = {weapon.id: WeaponState.ready(weapon)}
-                    actor.active_weapon = weapon.id
-                    self.actors.append(actor)
-                    self.by_id[actor.id] = actor
-                    self.spawns[actor.id] = actor.xy
-                    alive.append(actor)
-                self.unit_ids.append(unit_id)
-            members.extend(alive[:unit.soldiers])
-        return members
+        unit = state.units[unit_id]
+        if unit_id not in self.unit_ids:
+            node = unit.node_id or state.operations[unit.operation_id].home_node
+            home = state.nodes[node].position
+            for index in range(unit.soldiers):
+                actor = Actor(f"{unit_id}:{index}", Position(home.x, home.y, home.floor), armor=15,
+                              source_unit=unit_id, member=index, home_node=node, present=False)
+                actor.loadout = {weapon.id: WeaponState.ready(weapon)}
+                actor.active_weapon = weapon.id
+                self.actors.append(actor)
+                self.by_id[actor.id] = actor
+                self.spawns[actor.id] = actor.xy
+            self.unit_ids.append(unit_id)
+        return [actor for actor in self.actors if actor.source_unit == unit_id and actor.hp > 0][:unit.soldiers]
+
+    def transport_members(self, operation, weapon):
+        return [actor for unit_id in operation.unit_ids for actor in self.members(unit_id, weapon)]
 
     def record_loss(self, actor, *, seated=False, driver_vehicle_id=None, progress_m=None):
         if actor.source_unit and actor.id not in self.local_deaths:
@@ -80,7 +78,7 @@ class CampaignRoster:
 
     def sync(self, *, restore=False):
         state = self.bridge.simulation.state
-        stamp = (self.materialized, self.active_nodes, len(self.local_deaths),
+        stamp = (self.materialized, self.active_nodes, frozenset(self.in_transit), len(self.local_deaths),
                  tuple((key, state.units[key].node_id, state.units[key].soldiers,
                         state.units[key].status, state.units[key].operation_id) for key in self.unit_ids))
         if not restore and stamp == self._stamp:
@@ -97,6 +95,9 @@ class CampaignRoster:
                 actor.boarding_goal = None
                 if actor.id in self.local_deaths:
                     actor.present = actor.id not in self.seated_deaths
+                    continue
+                if actor.id in self.in_transit:
+                    actor.present = self.materialized and actor.hp > 0
                     continue
                 actor.present = self.materialized and actor.hp > 0 and unit.node_id in self.active_nodes
                 if not actor.present:

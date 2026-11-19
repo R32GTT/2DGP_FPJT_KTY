@@ -58,7 +58,7 @@ class GeneratedMapTests(unittest.TestCase):
 
     def test_play_movement_obstacle_collision_and_map_boundary(self):
         simulation = PlaySimulation(self.scene)
-        self.assertFalse(simulation.guards)
+        self.assertTrue(simulation.guards)
         for _ in range(60):
             simulation.step((1, 0))
         self.assertAlmostEqual(simulation.player.position.x, 3)

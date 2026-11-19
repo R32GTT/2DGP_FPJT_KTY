@@ -16,6 +16,7 @@ from .movement import move_actor
 from .interactions import nearby_facility, nearby_road_control, use_facility, use_road_control
 from .roster import CampaignRoster
 from .transport import TransportCrew
+from .campaign_presence import CampaignPresence
 from .weapons import WeaponState, load_weapons
 from .world import DEFAULT_SCENE, World
 
@@ -74,6 +75,8 @@ class PlaySimulation:
         self.guards = self.roster.sync()
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],
                           can_radio=self.campaign.can_radio)
+        self.presence = (CampaignPresence(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"])
+                         if self.world.data.get("generation") else None)
         self.events, self.feedback = EventBus(), Feedback()
         self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"], self.events)
         self.combat = Combat(self.events, self.transports)
@@ -85,6 +88,8 @@ class PlaySimulation:
         self.dropped = []
         self.kit_available = True
         self.ai_scenario, self.ai_hint = ai_scenario, ""
+        if self.presence:
+            self._sync_guards()
         if ai_scenario:
             configure(self, ai_scenario)
         elif search_drill:
@@ -165,6 +170,8 @@ class PlaySimulation:
 
     def _sync_guards(self, *, restore=False):
         self.roster.track_player(self.player.xy)
+        if self.presence:
+            self.presence.prepare(self.time, self.player.xy)
         self.transports.sync(self.time)
         self.guards = self.roster.sync(restore=restore) + self.transports.dismounted
 
