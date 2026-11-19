@@ -1,4 +1,5 @@
 import json
+import math
 import unittest
 from collections import Counter
 from copy import deepcopy
@@ -31,6 +32,11 @@ class GeneratedMapTests(unittest.TestCase):
         self.assertEqual(generate_scene(**settings), scene)
         with self.assertRaises(ValueError):
             generate_scene(42, version=settings["version"] + 1)
+        changed = deepcopy(settings)
+        path = next(iter(changed["prefab_versions"]))
+        changed["prefab_versions"][path] += 1
+        with self.assertRaises(ValueError):
+            generate_scene(**changed)
 
     def test_spawn_and_free_space_are_connected(self):
         for scene in (self.scene, self.other):
@@ -38,7 +44,7 @@ class GeneratedMapTests(unittest.TestCase):
                 world = World(scene)
                 self.assertTrue(world.navigation.walkable((0, 0)))
                 obstacles = [collider.rect.expanded(world.navigation.clearance)
-                             for collider in world.geometry.objects.values()]
+                             for collider in world.geometry.objects.values() if collider.kind != "door"]
                 bounds = world.bounds.expanded(-world.navigation.clearance)
                 free = box(bounds.x, bounds.y, bounds.right, bounds.bottom).difference(
                     union_all([box(r.x, r.y, r.right, r.bottom) for r in obstacles]))
@@ -108,3 +114,31 @@ class GeneratedMapTests(unittest.TestCase):
                 overlap = min(line.length, max(projections)) - max(0, min(projections))
                 if overlap >= ROAD_WIDTH:
                     self.assertGreaterEqual(line.distance(other), ROAD_SEPARATION)
+
+    def test_generated_road_connects_real_hq_and_player_can_walk_inside(self):
+        simulation = PlaySimulation(self.scene)
+        world, actor = simulation.world, simulation.player
+        instance, = world.data["placed_prefabs"]
+        site = next(site for site in self.scene["planned_facilities"] if site["id"] == instance["id"])
+        self.assertFalse(site["placeholder"])
+        self.assertEqual(tuple(site["rect"]), tuple(instance["rect"]))
+        self.assertEqual(world.data["road_network"], self.scene["road_network"])
+        road_node = self.scene["road_network"]["terminals"][site["id"]]
+        vehicle_node = instance["connectors"]["vehicle"]["node"]
+        self.assertEqual(world.navigation.nodes[road_node], world.navigation.nodes[vehicle_node])
+        self.assertIn(vehicle_node, world.navigation.edges[road_node])
+        goal = world.navigation.nodes[instance["terminal"]]
+        route = world.navigation.route(actor.xy, goal, allow_doors=True)
+        self.assertTrue(route)
+        for point in route:
+            for _ in range(math.ceil(math.dist(actor.xy, point) / 0.3) + 10):
+                distance = math.dist(actor.xy, point)
+                if distance < 0.02:
+                    break
+                world.open_for_ai(actor, point)
+                direction = point[0] - actor.position.x, point[1] - actor.position.y
+                move_actor(actor, direction, world, min(0.3, distance) / 3, speed=3)
+            self.assertLess(math.dist(actor.xy, point), 0.02)
+        self.assertEqual(world.indoor_search_area(actor.xy).id, instance["id"])
+        self.assertTrue(any(not collider.active for collider in world.geometry.objects.values()
+                            if collider.kind == "door" and collider.id.startswith(instance["id"] + "/")))

@@ -79,6 +79,9 @@ class World:
         self.region_layout = self.data.get("region_layout")
         self.territories = {key: Rect(*area["bounds"]) for key, area in self.data.get("territories", {}).items()}
         self.road_controls = self.data.get("road_controls", [])
+        if self.data.get("road_network") and self.data.get("prefab_instances"):
+            from .road_generation import validate_roads
+            validate_roads(self.data["road_network"], self.data["planned_facilities"], self.bounds, self.data["colliders"])
         self.search_areas = build_search_areas(self)
 
     def territory_at(self, point):

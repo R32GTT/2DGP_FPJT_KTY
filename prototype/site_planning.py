@@ -3,7 +3,7 @@
 import random
 
 from .geometry import Rect
-from .prefabs import Placement
+from .prefabs import Placement, rotate
 from .road_generation import ROAD_WIDTH
 
 
@@ -23,7 +23,7 @@ SITE_SIZES = {
 }
 
 
-def plan_sites(seed, version, region_size, importance, attempt=0):
+def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None):
     if region_size not in REGION_PROFILES or importance not in IMPORTANCE:
         raise ValueError("지원하지 않는 지역 크기 또는 중요도")
     extent, comms, warehouses, garrisons = REGION_PROFILES[region_size]
@@ -34,7 +34,23 @@ def plan_sites(seed, version, region_size, importance, attempt=0):
     if region_size in {"large", "xlarge"} or importance != "normal":
         kinds.append("sam")
     size_index = tuple(REGION_PROFILES).index(region_size)
-    kinds.sort(key=lambda kind: SITE_SIZES[kind][size_index + 1][0] * SITE_SIZES[kind][size_index + 1][1], reverse=True)
+    selected = []
+    for kind in kinds:
+        candidates = [(path, item) for path, item in (catalog or {}).items() if item["kind"] == kind
+                      and region_size in item.get("region_sizes", REGION_PROFILES)
+                      and importance in item.get("importance", IMPORTANCE)]
+        path, definition = rng.choice(candidates) if candidates else (None, None)
+        if definition:
+            local = Rect(*definition["bounds"])
+            connector = definition["connectors"]["vehicle"]
+        else:
+            width, height = SITE_SIZES[kind][size_index + 1]
+            grade = 0 if kind == "safehouse" else IMPORTANCE.index(importance)
+            width += 4 * rng.randint(grade, grade + 1)
+            local = Rect(-width / 2, -height / 2, width, height)
+            connector = {"position": [0, height / 2], "direction": [0, 1], "width_m": ROAD_WIDTH}
+        selected.append((kind, path, definition, local, connector))
+    selected.sort(key=lambda item: item[3].w * item[3].h, reverse=True)
     bounds = Rect(-extent / 2, -extent / 2, extent, extent)
     half, sites, reserved = extent // 2, [], [Rect(-8, -8, 16, 16)]
     axis = rng.randrange(2)
@@ -48,28 +64,29 @@ def plan_sites(seed, version, region_size, importance, attempt=0):
         stubs.append((tuple(gate), tuple(approach)))
         reserved.append(Rect(min(gate[0], approach[0]) - 6, min(gate[1], approach[1]) - 6,
                              abs(gate[0] - approach[0]) + 12, abs(gate[1] - approach[1]) + 12))
-    for index, kind in enumerate(kinds):
+    for index, (kind, path, definition, local, connector) in enumerate(selected):
         key = f"{kind}/{index}"
-        name, *sizes = SITE_SIZES[kind]
-        width, height = sizes[size_index]
-        # 중요도별 선택 풀의 임시 확장형. 완성 프리팹의 실측 치수로 교체한다.
-        grade = 0 if kind == "safehouse" else IMPORTANCE.index(importance)
-        width += 4 * rng.randint(grade, grade + 1)
+        local_gate, normal = connector["position"], connector["direction"]
+        local_approach = [local_gate[i] + normal[i] * 12 for i in (0, 1)]
+        left, top = min(local.x, local_approach[0]) - 6, min(local.y, local_approach[1]) - 6
+        right, bottom = max(local.right, local_approach[0]) + 6, max(local.bottom, local_approach[1]) + 6
         for _ in range(160):
             placement = Placement(key, (rng.randrange(-half + 12, half - 12, 2),
                                         rng.randrange(-half + 12, half - 12, 2)), rng.randrange(4))
-            area = Rect(*placement.rect((-width / 2 - 6, -height / 2 - 6, width + 12, height + 24)))
+            area = Rect(*placement.rect((left, top, right - left, bottom - top)))
             if (area.x < bounds.x + 8 or area.y < bounds.y + 8 or area.right > bounds.right - 8
                     or area.bottom > bounds.bottom - 8 or any(area.overlaps(other) for other in reserved)):
                 continue
-            footprint = placement.rect((-width / 2, -height / 2, width, height))
-            gate, approach = placement.point((0, height / 2)), placement.point((0, height / 2 + 12))
-            direction = ((0, 1), (-1, 0), (0, -1), (1, 0))[placement.turns]
-            sites.append({"id": key, "kind": kind, "name": name, "rect": footprint,
+            footprint = placement.rect((local.x, local.y, local.w, local.h))
+            gate, approach = placement.point(local_gate), placement.point(local_approach)
+            direction = rotate(normal, placement.turns)
+            sites.append({"id": key, "kind": kind, "name": definition["name"] if definition else SITE_SIZES[kind][0],
+                          "rect": footprint, "position": list(placement.position),
                           "reserved": [area.x, area.y, area.w, area.h], "rotation": placement.turns * 90,
-                          "variant_id": f"{kind}/{region_size}/{importance}/{width}x{height}",
-                          "importance": importance, "placeholder": True,
-                          "connector": {"position": list(gate), "direction": list(direction), "width_m": ROAD_WIDTH,
+                          "variant_id": definition["id"] if definition else f"{kind}/{region_size}/{importance}/{local.w}x{local.h}",
+                          "prefab": path, "prefab_version": definition["version"] if definition else None,
+                          "importance": importance, "placeholder": definition is None,
+                          "connector": {"position": list(gate), "direction": list(direction), "width_m": connector["width_m"],
                                         "approach": list(approach)}})
             points[key], gates[key] = approach, gate
             stubs.append((gate, approach))

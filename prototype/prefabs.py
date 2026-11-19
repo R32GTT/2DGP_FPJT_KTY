@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from copy import deepcopy
 import json
+import math
 
 def rotate(point, turns):
     x, y = point
@@ -26,6 +27,16 @@ class Placement:
         return [left, top, max(p[0] for p in points) - left, max(p[1] for p in points) - top]
 
 
+def load_catalog(root):
+    catalog = {}
+    for path in sorted((root / "prototype/data/prefabs").glob("*.json")):
+        definition = json.loads(path.read_text(encoding="utf-8"))
+        if definition.get("format") != "revenant.facility_prefab.v1":
+            raise ValueError(f"지원하지 않는 시설 프리팹: {path}")
+        catalog[path.relative_to(root).as_posix()] = definition
+    return catalog
+
+
 def expand_instances(scene, root):
     scene = deepcopy(scene)
     definitions = {}
@@ -37,6 +48,8 @@ def expand_instances(scene, root):
         definition = definitions[path]
         if definition.get("format") != "revenant.facility_prefab.v1":
             raise ValueError(f"지원하지 않는 시설 프리팹: {path}")
+        if row.get("version", definition["version"]) != definition["version"]:
+            raise ValueError(f"시설 프리팹 버전 불일치: {path}")
         angle = row.get("rotation", 0)
         if angle % 90:
             raise ValueError("시설 배치는 90도 회전 단위여야 함")
@@ -68,6 +81,12 @@ def expand_instances(scene, root):
                             "direction": rotate(connector["direction"], placement.turns),
                             "node": prefix + connector["node"]}
                       for key, connector in definition["connectors"].items()}
+        if row.get("road_node"):
+            road_node = row["road_node"]
+            vehicle_node = connectors["vehicle"]["node"]
+            if math.dist(scene["navigation"][road_node], scene["navigation"][vehicle_node]) > 1e-6:
+                raise ValueError(f"도로와 프리팹 차량 진입점 불일치: {row['id']}")
+            scene["navigation_edges"].append((road_node, vehicle_node))
         scene["placed_prefabs"].append({"id": row["id"], "prefab_id": definition["id"],
                                        "version": definition["version"], "kind": definition["kind"],
                                        "rect": placement.rect(definition["bounds"]), "connectors": connectors,

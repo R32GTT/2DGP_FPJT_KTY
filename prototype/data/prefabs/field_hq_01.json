@@ -4,6 +4,8 @@
   "version":1,
   "name":"소형 지휘시설",
   "kind":"hq",
+  "region_sizes":["small"],
+  "importance":["normal","important","core"],
   "bounds":[-14,-14,28,28],
   "terminal_node":"terminal",
   "connectors":{

@@ -491,7 +491,7 @@ class HUD:
         self._map_roads(world, point, scale, {key for key in controlled_roads if state.roads[key].blocked})
         for site in world.data.get("planned_facilities", ()):
             x, y, w, h = site["rect"]
-            self.label("planned/" + site["id"], site["name"] + " · 예약", 13, (226, 221, 176))
+            self.label("planned/" + site["id"], site["name"] + (" · 예약" if site["placeholder"] else ""), 13, (226, 221, 176))
             self.text("planned/" + site["id"], *point(x, y + h))
             gate, approach = site["connector"]["position"], site["connector"]["approach"]
             pico.draw_line(*point(*gate), *point(*approach), 112, 230, 205)

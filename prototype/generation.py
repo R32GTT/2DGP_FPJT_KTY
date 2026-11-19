@@ -2,6 +2,7 @@
 
 import random
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 from scipy.ndimage import gaussian_filter, map_coordinates
@@ -9,12 +10,13 @@ from shapely import box, union_all
 from shapely.prepared import prep
 
 from .geometry import Rect
+from .prefabs import load_catalog
 from .region import strip_layers
 from .road_generation import ROAD_WIDTH, build_roads, road_surface, validate_roads
 from .site_planning import IMPORTANCE, REGION_PROFILES, plan_sites
 
 
-GENERATION_VERSION = 4
+GENERATION_VERSION = 5
 
 
 def _density(seed, kind, extent):
@@ -30,13 +32,17 @@ def _sample(field, x, y):
                                  order=1, mode="nearest", prefilter=False)[0])
 
 
-def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", importance="normal"):
+def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", importance="normal", prefab_versions=None):
     if type(seed) is not int:
         raise ValueError("월드 시드는 정수여야 합니다")
     if type(version) is not int or version != GENERATION_VERSION:
         raise ValueError(f"지원하지 않는 맵 생성 버전: {version}")
     if region_size not in REGION_PROFILES or importance not in IMPORTANCE:
         raise ValueError("지원하지 않는 지역 크기 또는 중요도")
+    catalog = load_catalog(Path(__file__).resolve().parent.parent)
+    manifest = {path: definition["version"] for path, definition in catalog.items()}
+    if prefab_versions is not None and prefab_versions != manifest:
+        raise ValueError("저장된 프리팹 목록·버전과 현재 생성 카탈로그가 다릅니다")
     extent = REGION_PROFILES[region_size][0]
     half, scale = extent / 2, (extent / 64) ** 2
     terrain = random.Random(f"terrain:{version}:{seed}")
@@ -44,7 +50,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
     vegetation, soil = _density(seed, "vegetation", extent), _density(seed, "soil", extent)
     for attempt in range(4):
         try:
-            bounds, sites, points, gates, stubs = plan_sites(seed, version, region_size, importance, attempt)
+            bounds, sites, points, gates, stubs = plan_sites(seed, version, region_size, importance, attempt, catalog=catalog)
             network = build_roads(bounds, sites, points, gates, stubs, 1 + vegetation * 3 + (1 - soil) * 0.5,
                                   random.Random(f"roads:{version}:{seed}:{attempt}"))
             validate_roads(network, sites, bounds, [])
@@ -102,13 +108,19 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
     colors = {"safehouse": [69, 109, 91], "hq": [119, 126, 116], "comms": [102, 119, 126],
               "warehouse": [135, 125, 95], "garrison": [114, 122, 91], "sam": [126, 103, 101]}
     for site in sites:
+        if not site["placeholder"]:
+            continue
         layers.append({"id": f"site/{site['id']}", "rect": site["rect"], "style": "yard", "image": "",
                        "color": colors[site["kind"]]})
     validate_roads(network, sites, bounds, colliders)
     return {"format": "revenant.image_scene.v1", "name": f"절차 생성 / {region_size} · {importance}",
-            "generation": {"seed": seed, "version": version, "region_size": region_size, "importance": importance},
+            "generation": {"seed": seed, "version": version, "region_size": region_size, "importance": importance,
+                           "prefab_versions": manifest},
             "bounds": [-half, -half, extent, extent], "planned_facilities": sites, "road_network": network,
             "player_spawn": [0, 0], "safehouse_spawn": [0, 0], "supply_point": [0, 0],
             "campaign_facility": "depot_a", "player_weapons": [], "interaction_markers": False,
-            "layers": layers, "colliders": colliders, "navigation": network["nodes"], "navigation_edges": network["edges"],
+            "prefab_instances": [{"id": site["id"], "prefab": site["prefab"], "version": site["prefab_version"],
+                                  "position": site["position"], "rotation": site["rotation"],
+                                  "road_node": network["terminals"][site["id"]]} for site in sites if not site["placeholder"]],
+            "layers": layers, "colliders": colliders, "navigation": dict(network["nodes"]), "navigation_edges": list(network["edges"]),
             "guards": [], "facilities": [], "roads": roads}

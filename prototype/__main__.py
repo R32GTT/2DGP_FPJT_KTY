@@ -107,7 +107,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="그림 맵·미터 좌표·기초 AI·발사·군수 연결 검증 목업")
     scene_options = parser.add_mutually_exclusive_group()
     scene_options.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
-    scene_options.add_argument("--generate", type=int, metavar="SEED", help="시드로 지형·도로·시설 예약 영역 생성")
+    scene_options.add_argument("--generate", type=int, metavar="SEED", help="시드로 지형·도로·프리팹 시설 생성")
     parser.add_argument("--region-size", choices=("small", "medium", "large", "xlarge"))
     parser.add_argument("--importance", choices=("normal", "important", "core"))
     parser.add_argument("--ai-scenario", choices=SCENARIOS, help="물류창고 AI 검증 장면")
@@ -126,7 +126,7 @@ def main(argv=None):
         scene = generate_scene(args.generate, region_size=args.region_size or "small", importance=args.importance or "normal")
     simulation = PlaySimulation(scene, ai_scenario=args.ai_scenario)
     if args.generate is not None:
-        simulation.message = f"야외 이동 시험 · 시드 {args.generate} · WASD 이동 / Shift 달리기 / M 지도 / Esc 종료"
+        simulation.message = f"생성 맵 · 시드 {args.generate} · WASD 이동 / Shift 달리기 / M 지도 / F 문 / Esc 종료"
     if args.headless:
         for _ in range(args.frames or 120):
             simulation.step()
