@@ -480,7 +480,7 @@ class HUD:
             x, y = point(*control["position"])
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 241, 211, 135, filled=True)
         if not world.facilities or generated:
-            for layer in world.layers:
+            for layer in world.map_layers:
                 if layer.role.startswith("road") or layer.role == "pavement":
                     continue
                 a, b = point(layer.rect.x, layer.rect.y), point(layer.rect.right, layer.rect.bottom)

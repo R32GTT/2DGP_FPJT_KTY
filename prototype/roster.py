@@ -32,6 +32,10 @@ class CampaignRoster:
                   if rect.expanded(48).segment_entry(point, point) is not None}
         self.active_nodes = {key for key, territory in self.node_territories.items()
                              if territory is None or territory in nearby}
+        if self.world.chunks:
+            nodes = self.bridge.simulation.state.nodes
+            self.active_nodes = {key for key in self.active_nodes
+                                 if self.world.detail_loaded((nodes[key].position.x, nodes[key].position.y))}
 
     def ready(self, operation):
         if not self.materialized or operation.home_node not in self.active_nodes:
@@ -79,6 +83,7 @@ class CampaignRoster:
     def sync(self, *, restore=False):
         state = self.bridge.simulation.state
         stamp = (self.materialized, self.active_nodes, frozenset(self.in_transit), len(self.local_deaths),
+                 self.world.revision,
                  tuple((key, state.units[key].node_id, state.units[key].soldiers,
                         state.units[key].status, state.units[key].operation_id) for key in self.unit_ids))
         if not restore and stamp == self._stamp:
@@ -94,7 +99,8 @@ class CampaignRoster:
             for actor in members:
                 actor.boarding_goal = None
                 if actor.id in self.local_deaths:
-                    actor.present = actor.id not in self.seated_deaths
+                    actor.present = (self.materialized and actor.id not in self.seated_deaths
+                                     and self.world.detail_loaded(actor.xy))
                     continue
                 if actor.id in self.in_transit:
                     actor.present = self.materialized and actor.hp > 0

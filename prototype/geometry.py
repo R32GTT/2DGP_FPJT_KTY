@@ -77,6 +77,10 @@ class SpatialIndex:
     def query(self, rect, category="movement"):
         return [item for item in self.index.query(rect) if item.active and category in item.blocks]
 
+    def remove(self, key):
+        del self.objects[key]
+        self.index.remove(key)
+
     def raycast(self, start, end, *, padding=0.0, category="sight", ignore_doors=False, ignore_ids=()):
         if padding:
             shape = MultiPoint([(x + dx, y + dy) for x, y in (start, end)

@@ -171,6 +171,7 @@ class PlaySimulation:
             self.message = "전투 불능 — Enter: 6시간 진행 후 무장 없이 복귀"
 
     def _sync_guards(self, *, restore=False):
+        self.world.update_chunks(self.player.xy)
         self.roster.track_player(self.player.xy)
         if self.presence:
             self.presence.prepare(self.time, self.player.xy)
@@ -217,6 +218,7 @@ class PlaySimulation:
             self.feedback.update(FIXED_DT, 0)
             return
         self.time += FIXED_DT
+        self.world.update_chunks(self.player.xy)
         if trigger_pressed and self.player.weapon is not None and self.player.weapon.reloading:
             self.cancel_reload()
         if aim is not None and self.player.hp > 0:

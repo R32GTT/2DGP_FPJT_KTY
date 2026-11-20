@@ -21,6 +21,10 @@ class BoundsIndex:
                                  for rect, _ in (self.items[key] for key in self.keys)])
         return sorted(self.tree.query(shape, predicate=predicate))
 
+    def remove(self, key):
+        del self.items[key]
+        self.tree = None
+
     def query_shape(self, shape):
         return [self.items[self.keys[index]][1] for index in self._query(shape, "intersects")]
 

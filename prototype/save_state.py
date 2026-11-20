@@ -75,6 +75,7 @@ def restore(play, row):
     if not math.isfinite(play.time) or int(play.time + 1e-8) != state.world_time:
         raise ValueError("현장·캠페인 시각 불일치")
     play.player = restore_actor(row["player"], play.specs)
+    play.world.update_chunks(play.player.xy)
     roster.actors[:] = [restore_actor(actor, play.specs) for actor in row["actors"]]
     roster.by_id = {actor.id: actor for actor in roster.actors}
     if len(roster.by_id) != len(roster.actors) or set(row["brains"]) != set(roster.by_id):

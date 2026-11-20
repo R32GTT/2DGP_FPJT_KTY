@@ -35,7 +35,7 @@ def _sample(field, x, y):
 
 
 def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", importance="normal", prefab_versions=None,
-                   entries=None):
+                   entries=None, detail=True):
     if type(seed) is not int:
         raise ValueError("월드 시드는 정수여야 합니다")
     if type(version) is not int or version != GENERATION_VERSION:
@@ -65,12 +65,12 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
     reserved = prep(union_all([road_surface(network).buffer(1.8)] +
                               [box(x, y, x + w, y + h) for x, y, w, h in (site["reserved"] for site in sites)]))
     layers, colliders = [], []
-    for row in range(extent // 16):
+    for row in range(extent // 16 if detail else 0):
         for col in range(extent // 16):
             layers.append({"id": f"ground/{row}/{col}", "rect": [-half + col * 16, -half + row * 16, 16, 16],
                            "style": "grass", "image": "", "color": [45, 65, 48],
                            "variant": terrain.randrange(4)})
-    for index in range(int(80 * scale)):
+    for index in range(int(80 * scale) if detail else 0):
         x, y = terrain.uniform(-half + 5, half - 5), terrain.uniform(-half + 5, half - 5)
         density = _sample(soil, x, y)
         if density < 0.55:
@@ -80,7 +80,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
                        "style": "dirt", "image": "", "color": [104, 91, 62]})
     occupied = []
     # 연속된 밀도 분포에서 후보를 뽑고, 장애물 사이의 통행 공간을 침범하면 다시 뽑는다.
-    for index in range(int(1100 * scale)):
+    for index in range(int(1100 * scale) if detail else 0):
         x, y = obstacles.uniform(-half + 3, half - 3), obstacles.uniform(-half + 3, half - 3)
         tree = index >= 700 * scale or obstacles.random() < 0.82
         density = _sample(vegetation if tree else soil, x, y)

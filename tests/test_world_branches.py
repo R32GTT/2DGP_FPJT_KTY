@@ -21,6 +21,7 @@ from shapely import Point, box
 def walk(actor, world, points):
     for goal in points:
         for _ in range(math.ceil(math.dist(actor.xy, goal) / .3) + 5):
+            world.update_chunks(actor.xy)
             distance = math.dist(actor.xy, goal)
             if distance < .02:
                 break
@@ -126,7 +127,10 @@ class BranchWorldTests(unittest.TestCase):
 
     def test_navigation_can_walk_around_a_tree_between_regions(self):
         world = World(self.scene)
-        for tree in (c for c in world.geometry.objects.values() if c.id.startswith('between/') and c.kind == 'tree'):
+        link = self.scene['region_links'][0]
+        world.update_chunks(self.scene['road_network']['nodes'][link['node']])
+        for tree in (c for c in list(world.geometry.objects.values()) if c.id.startswith('terrain/') and c.kind == 'tree'
+                     and world.territory_at((c.rect.x, c.rect.y)) is None):
             x, y = tree.rect.x + tree.rect.w / 2, tree.rect.y + tree.rect.h / 2
             start, goal = (x - 1.2, y), (x + 1.2, y)
             if not world.navigation.walkable(start) or not world.navigation.walkable(goal):

@@ -115,6 +115,8 @@ class TransportCrew:
         for view in self.bridge.convoys(seconds):
             operation = state.operations[view.id]
             active.add(view.id)
+            if not self.world.detail_loaded((view.x, view.y)):
+                continue
             trip = self.trips.get(view.id)
             ids = [key for key in operation.vehicle_ids if state.vehicles[key].status != "destroyed"]
             if not ids:

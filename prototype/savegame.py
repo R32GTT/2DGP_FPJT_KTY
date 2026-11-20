@@ -14,7 +14,7 @@ from .simulation import PlaySimulation
 from .world import ROOT
 
 
-SAVE_VERSION = 1
+SAVE_VERSION = 2
 SAVE_FORMAT = "revenant_lost.generated_play"
 DEFAULT_SAVE = ROOT / "saves" / "prototype.json.gz"
 MAX_BYTES = 16 * 1024 * 1024
@@ -38,9 +38,7 @@ def save_game(play, path=DEFAULT_SAVE):
         payload = {"format": SAVE_FORMAT, "version": SAVE_VERSION, "content": content_version(),
                    "generation": generation, "campaign": json.loads(serialize_campaign(play.campaign.simulation.state)),
                    "local": capture(play),
-                   "changes": {row["id"]: play.world.geometry.objects[row["id"]].active
-                               for row in play.world.data["colliders"]
-                               if play.world.geometry.objects[row["id"]].active != row.get("active", True)}}
+                   "changes": play.world.collider_changes()}
         data = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
         if len(data) > MAX_BYTES:
             raise ValueError("저장 데이터 크기 제한 초과")
@@ -70,12 +68,7 @@ def load_game(path=DEFAULT_SAVE):
                 or any((node.position.x, node.position.y) != tuple(play.world.data["road_network"]["nodes"][key])
                        for key, node in campaign.state.nodes.items())):
             raise ValueError("생성 월드·캠페인 지도 불일치")
-        for key, active in payload["changes"].items():
-            if type(active) is not bool:
-                raise ValueError("잘못된 오브젝트 변경 상태")
-            play.world.geometry.objects[key].active = active
-        play.world.revision += bool(payload["changes"])
-        play.world.navigation.invalidate()
+        play.world.restore_changes(payload["changes"])
         restore(play, payload["local"])
         play.message = "저장한 월드 복원 완료 · F5 저장 / F9 불러오기"
         return play

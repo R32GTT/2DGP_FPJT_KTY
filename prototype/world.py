@@ -55,27 +55,15 @@ class World:
             from .generated_campaign import bind_sites
             self.data = bind_sites(self.data)
         self.bounds = Rect(*self.data["bounds"])
-        self.layers = [ImageLayer(row["id"], Rect(*row["rect"]), row["image"],
-                                  tuple(row["color"]), row.get("fallback", ""), row.get("style", ""),
-                                  row.get("variant", 0), row.get("rotation", 0), tuple(row.get("image_size", ())), index,
-                                  tuple(map(tuple, row.get("polygon", ()))), tuple(map(tuple, row.get("triangles", ()))))
-                       for index, row in enumerate(self.data["layers"])]
+        self.layers = []
         self.layer_index, self.collider_index = BoundsIndex(), BoundsIndex()
-        for layer in self.layers:
-            self.layer_index.add(layer.id, layer.rect, layer)
         self.geometry = SpatialIndex()
         self.revision = 0
+        for index, row in enumerate(self.data["layers"]):
+            self.add_layer(row, index)
+        self.layers = [item[1] for item in self.layer_index.items.values()]
         for row in self.data["colliders"]:
-            rect = Rect(*row["rect"])
-            if not all(math.isfinite(value) for value in (rect.x, rect.y, rect.w, rect.h)) or min(rect.w, rect.h) <= 0:
-                raise ValueError("충돌 영역 치수 오류")
-            collider = Collider(row["id"], rect, row.get("kind", "wall"), row.get("active", True),
-                                material=row.get("material", "concrete"), ai_access=row.get("ai_access", True),
-                                visual_layer=row.get("visual_layer", ""), rotation=row.get("rotation", 0))
-            if "blocks" in row:
-                collider.blocks = tuple(row["blocks"])
-            self.geometry.add(collider)
-            self.collider_index.add(collider.id, rect, collider)
+            self.add_collider(row)
         self.navigation = Navigation({key: tuple(point) for key, point in self.data["navigation"].items()},
                                      self.data["navigation_edges"], self.geometry, bounds=self.bounds)
         self.crate = tuple(self.data["supply_point"])
@@ -90,6 +78,70 @@ class World:
             from .road_generation import validate_roads
             validate_roads(self.data["road_network"], self.data["planned_facilities"], self.bounds, self.data["colliders"])
         self.search_areas = build_search_areas(self)
+        self.map_layers = self.layers
+        self.chunks = None
+        if self.data.get('stream_terrain'):
+            from .chunks import WorldChunks
+            self.chunks = WorldChunks(self)
+            self.map_layers = [self.make_layer(row, -2 if row['style'] == 'grass' else -1)
+                               for row in self.chunks.terrain.ground(self.bounds)] + self.map_layers
+            self.update_chunks(self.data['player_spawn'])
+
+    @staticmethod
+    def make_layer(row, order):
+        return ImageLayer(row['id'], Rect(*row['rect']), row['image'], tuple(row['color']),
+                          row.get('fallback', ''), row.get('style', ''), row.get('variant', 0),
+                          row.get('rotation', 0), tuple(row.get('image_size', ())), order,
+                          tuple(map(tuple, row.get('polygon', ()))), tuple(map(tuple, row.get('triangles', ()))))
+
+    def add_layer(self, row, order):
+        layer = self.make_layer(row, order)
+        self.layer_index.add(layer.id, layer.rect, layer)
+
+    def add_collider(self, row):
+        rect = Rect(*row['rect'])
+        if not all(math.isfinite(value) for value in (rect.x, rect.y, rect.w, rect.h)) or min(rect.w, rect.h) <= 0:
+            raise ValueError('충돌 영역 치수 오류')
+        collider = Collider(row['id'], rect, row.get('kind', 'wall'), row.get('active', True),
+                            material=row.get('material', 'concrete'), ai_access=row.get('ai_access', True),
+                            visual_layer=row.get('visual_layer', ''), rotation=row.get('rotation', 0))
+        if 'blocks' in row:
+            collider.blocks = tuple(row['blocks'])
+        self.geometry.add(collider)
+        self.collider_index.add(collider.id, rect, collider)
+
+    def update_chunks(self, point):
+        if self.chunks:
+            self.chunks.update(point)
+
+    def detail_loaded(self, point):
+        return self.chunks is None or self.chunks.contains(point)
+
+    def collider_changes(self):
+        if self.chunks:
+            return self.chunks.remember()
+        return {row['id']: self.geometry.objects[row['id']].active for row in self.data['colliders']
+                if self.geometry.objects[row['id']].active != row.get('active', True)}
+
+    def restore_changes(self, changes):
+        for key, active in changes.items():
+            if type(active) is not bool:
+                raise ValueError('잘못된 오브젝트 변경 상태')
+            if self.chunks and ('collider', key) not in self.chunks.static.items:
+                parts = key.split('/')
+                if len(parts) != 4 or parts[0] != 'terrain':
+                    raise ValueError('알 수 없는 지형 오브젝트')
+                candidate = self.chunks.terrain.candidate(int(parts[1]), int(parts[2]))
+                if candidate is None or candidate[3]['id'] != key:
+                    raise ValueError('알 수 없는 지형 오브젝트')
+            if self.chunks:
+                self.chunks.changes[key] = active
+            if key in self.geometry.objects:
+                self.geometry.objects[key].active = active
+            elif not self.chunks:
+                raise ValueError('알 수 없는 충돌 오브젝트')
+        self.revision += bool(changes)
+        self.navigation.invalidate()
 
     def territory_at(self, point):
         return next((key for key, rect in self.territories.items()

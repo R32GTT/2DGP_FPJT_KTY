@@ -9,9 +9,13 @@ from .spatial import BoundsIndex
 class CoverFinder:
     def __init__(self, world):
         self.world = world
+        self.refresh()
+
+    def refresh(self):
+        self.revision = self.world.revision
         self.points = []
         self.index = BoundsIndex()
-        for collider in world.geometry.objects.values():
+        for collider in self.world.geometry.objects.values():
             if collider.kind == "door" or "bullet" not in collider.blocks:
                 continue
             rect = collider.rect
@@ -24,6 +28,8 @@ class CoverFinder:
             self.index.add(index, Rect(point[0] - 0.01, point[1] - 0.01, 0.02, 0.02), point)
 
     def choose(self, actor, threat, occupied=()):
+        if self.revision != self.world.revision:
+            self.refresh()
         nearby = self.index.query(Rect(actor.position.x - 8, actor.position.y - 8, 16, 16))
         for point in sorted(nearby, key=lambda point: math.dist(actor.xy, point)):
             if math.dist(actor.xy, point) >= 8:
