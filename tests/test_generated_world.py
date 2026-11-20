@@ -7,7 +7,7 @@ from campaign.persistence import deserialize_campaign, serialize_campaign
 from campaign.resources import assert_invariants
 from campaign.routes import find_route
 from campaign.simulation import Simulation
-from prototype.generated_world import generate_region, generate_world
+from prototype.generated_world import generate_world, region_seed
 from prototype.movement import move_actor
 from prototype.simulation import PlaySimulation
 from shapely import Point, box
@@ -19,15 +19,13 @@ class GeneratedWorldTests(unittest.TestCase):
     def setUpClass(cls):
         cls.scene = generate_world(42, region_count=2)
 
-    def test_region_ids_seeds_and_layout_are_independent_of_generation_order(self):
+    def test_region_ids_and_seeds_rebuild_from_world_settings(self):
         scene = self.scene
         self.assertEqual(generate_world(**json.loads(json.dumps(scene["generation"]))), scene)
-        recreated = []
-        for row in reversed(scene["generated_regions"]):
-            region = generate_region(42, row["id"], origin=row["origin"], entries=row["entries"])
-            self.assertEqual(region["planned_facilities"], [site for site in scene["planned_facilities"] if site["region_id"] == row["id"]])
-            recreated.append(region)
-        self.assertFalse(set(recreated[0]["navigation"]) & set(recreated[1]["navigation"]))
+        for row in scene["generated_regions"]:
+            self.assertEqual(row["seed"], region_seed(42, row["id"]))
+        ids = [site["id"] for site in scene["planned_facilities"]]
+        self.assertEqual(len(ids), len(set(ids)))
         self.assertNotEqual(*[row["seed"] for row in scene["generated_regions"]])
         single = generate_world(42)
         self.assertEqual(single['generated_regions'][0]['seed'], scene['generated_regions'][0]['seed'])
@@ -51,7 +49,7 @@ class GeneratedWorldTests(unittest.TestCase):
                     x, y, w, h = site['rect']
                     self.assertGreaterEqual(box(x, y, x + w, y + h).distance(center), SAFEHOUSE_FACILITY_RADIUS)
 
-    def test_player_crosses_shared_portal_and_returns_without_resetting_campaign(self):
+    def test_player_crosses_territories_and_returns_without_resetting_campaign(self):
         play = PlaySimulation(self.scene)
         campaign, actor = play.campaign.simulation, play.player
         state = campaign.state
@@ -60,7 +58,9 @@ class GeneratedWorldTests(unittest.TestCase):
         campaign.apply_action({"type": "damage_unit", "unit_id": unit.id, "soldiers": 1})
         spawn = next(site['service_node'] for site in play.world.facilities if site['kind'] == 'safehouse')
         path = find_route(state, spawn, hq.node_id)
-        self.assertIn("portal/1", path)
+        self.assertTrue(path)
+        self.assertEqual(path[0], spawn)
+        self.assertEqual(path[-1], hq.node_id)
 
         def walk(keys):
             for key in keys:
@@ -95,7 +95,6 @@ class GeneratedWorldTests(unittest.TestCase):
                      and op.origin_id in state.facilities
                      and state.facilities[op.origin_id].region_id != state.facilities[op.destination_id].region_id]
         self.assertTrue(delivered)
-        self.assertTrue(all("portal/1" in operation.route for operation in delivered))
         self.assertEqual(play.player.xy, initial_player)
         restored = Simulation(deserialize_campaign(serialize_campaign(state)))
         play.campaign.advance_to(720)

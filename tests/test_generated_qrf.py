@@ -59,7 +59,7 @@ class GeneratedQRFTests(unittest.TestCase):
         operation, = [op for op in state.operations.values() if op.kind == 'qrf']
         self.assertEqual(tuple(operation.report_xy), reported)
         self.assertNotEqual(state.facilities[operation.origin_id].region_id, state.facilities[operation.destination_id].region_id)
-        self.assertIn('portal/1', operation.route)
+        self.assertEqual(operation.route[-1], operation.destination_node)
         self.assertTrue(all(state.units[key].operation_id == operation.id for key in operation.unit_ids))
         play.player.position = Position(0, 0)
         seen = {}

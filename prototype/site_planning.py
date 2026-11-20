@@ -69,7 +69,7 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
     if entries is None:
         sides = ("west", "east") if rng.randrange(2) == 0 else ("north", "south")
         entries = [{"side": side, "offset": rng.randrange(-half // 2, half // 2, 2)} for side in sides]
-    if (not 1 <= len(entries) <= 4
+    if (len(entries) > 4
             or any(entry['side'] not in SIDES or type(entry['offset']) not in (int, float)
                    or not math.isfinite(entry['offset']) or abs(entry['offset']) > half - 12 for entry in entries)
             or any(a['side'] == b['side'] and abs(a['offset'] - b['offset']) < 18

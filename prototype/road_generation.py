@@ -6,7 +6,7 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra, minimum_spanning_tree
-from shapely import LineString, Point, Polygon, box, union_all
+from shapely import LineString, Point, Polygon, STRtree, box, union_all
 from shapely.prepared import prep
 from .road_junctions import build_junctions
 from .road_paths import smooth_path
@@ -65,38 +65,33 @@ def road_surface(network, *, vehicle=False):
     return union_all(parts)
 
 
-def build_roads(bounds, sites, points, gates, stubs, cost, rng):
-    side = cost.shape[0]
-    axis = bounds.x + np.arange(side) * 2
+def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None):
+    rows, columns = cost.shape
+    xs, ys = bounds.x + np.arange(columns) * 2, bounds.y + np.arange(rows) * 2
     free = np.ones_like(cost, dtype=bool)
     free[:2] = free[-2:] = False
     free[:, :2] = free[:, -2:] = False
     for site in sites:
         x, y, width, height = site["rect"]
         margin = math.hypot(VEHICLE_SIZE[0] / 2 + VEHICLE_MARGIN, max(ROAD_WIDTHS.values()) / 2) + 1
-        free[np.ix_((axis >= y - margin) & (axis <= y + height + margin),
-                    (axis >= x - margin) & (axis <= x + width + margin))] = False
+        free[np.ix_((ys >= y - margin) & (ys <= y + height + margin),
+                    (xs >= x - margin) & (xs <= x + width + margin))] = False
     keys = sorted(points)
-    indices = [int(round((points[key][1] - bounds.y) / 2)) * side
+    indices = [int(round((points[key][1] - bounds.y) / 2)) * columns
                + int(round((points[key][0] - bounds.x) / 2)) for key in keys]
+    anchors = {index: tuple(points[key]) for key, index in zip(keys, indices)}
+    if len(anchors) != len(set(map(tuple, points.values()))):
+        raise ValueError("같은 도로 격자에 놓인 진입점")
     if not free.ravel()[indices].all():
         raise ValueError("시설 진입로가 예약 영역에 막힘")
     graph = _grid_graph(cost, free)
-    distances = dijkstra(graph, directed=False, indices=indices)
-    terminal_cost = distances[:, indices]
-    if not np.isfinite(terminal_cost).all():
-        raise ValueError("도로망을 연결할 수 없는 시설 배치")
-    tree = minimum_spanning_tree(terminal_cost).tocoo()
-    pairs = {tuple(sorted((int(a), int(b)))) for a, b in zip(tree.row, tree.col)}
-    order = [keys.index("spawn")]
-    for parent in order:
-        for a, b in sorted(pairs):
-            child = b if a == parent else a if b == parent else None
-            if child is not None and child not in order:
-                order.append(child)
+    if trunks:
+        order = [keys.index(key) for key in trunks]
+        order.extend(index for index, key in enumerate(keys) if key not in trunks)
+    else:
+        order, pairs = _local_road_order(graph, keys, indices)
     specs = {site["id"]: site["road"] for site in sites}
     specs.update({key: MAIN_ROAD for key in keys if key not in specs})
-    order = [order[0]] + sorted(order[1:], key=lambda number: not keys[number].startswith('entry/'))
     paths = []
     used = np.zeros(cost.size, dtype=bool)
     used[indices[order[0]]] = True
@@ -111,7 +106,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
         # 합류점 주변에서만 간격 제한을 풀어 같은 길에 직접 접속한다.
         for cell in joins:
             radius = (width + used_width.max()) / 2 + ROAD_GAP + 4
-            allowed |= (row - cell // side) ** 2 + (col - cell % side) ** 2 <= (radius / 2) ** 2
+            allowed |= (row - cell // columns) ** 2 + (col - cell % columns) ** 2 <= (radius / 2) ** 2
         routed = _grid_graph(cost, free & allowed)
         distance, parents = dijkstra(routed, directed=False, indices=start, return_predecessors=True)
         return _path(parents, start, end) if np.isfinite(distance[end]) else None
@@ -123,7 +118,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
         distance = dijkstra(graph, directed=False, indices=start)
         existing = np.flatnonzero(used)
         join = int(existing[np.argmin(distance[existing])])
-        spec = specs[keys[number]]
+        spec = MAIN_ROAD if trunks and keys[number] in trunks else specs[keys[number]]
         path = spaced_path(start, join, (start, join), spec["width"])
         if path is None:
             raise ValueError("기존 도로와 간격을 확보할 수 없는 진입로")
@@ -133,7 +128,8 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
         paths.append((path, keys[number], spec))
         used[path] = True
         used_width[path] = np.maximum(used_width[path], spec["width"])
-    candidates = [(a, b) for a in range(len(keys)) for b in range(a + 1, len(keys)) if (a, b) not in pairs]
+    candidates = [] if trunks else [(a, b) for a in range(len(keys)) for b in range(a + 1, len(keys))
+                                    if (a, b) not in pairs]
     rng.shuffle(candidates)
     loops = 0
     for a, b in candidates[:8]:
@@ -145,7 +141,8 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
             continue
         old_distance = dijkstra(_grid_graph(np.ones_like(cost), used.reshape(cost.shape)),
                                 directed=False, indices=indices[a])[indices[b]]
-        length = sum(math.hypot((a % side) - (b % side), (a // side) - (b // side)) * 2 for a, b in zip(path, path[1:]))
+        length = sum(math.hypot((a % columns) - (b % columns), (a // columns) - (b // columns)) * 2
+                     for a, b in zip(path, path[1:]))
         if length >= old_distance * .75:
             continue
         paths.append((path, f"loop/{loops}", spec))
@@ -154,7 +151,8 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
         loops += 1
         if loops >= 1:
             break
-    routes = [(LineString([(bounds.x + (cell % side) * 2, bounds.y + (cell // side) * 2) for cell in path]),
+    # 격자로 경로를 찾되 실제 시설 진입점 좌표에서 연결한다.
+    routes = [(LineString([anchors.get(cell, (xs[cell % columns], ys[cell // columns])) for cell in path]),
                {"route": key, **spec}) for path, key, spec in paths]
     routes.extend((LineString(stub), {"route": key, **specs[key]}) for key, stub in zip(gates, stubs))
     merged = union_all([line for line, _ in routes])
@@ -184,7 +182,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
 
     def node(point):
         x, y = (round(float(value), 6) or 0.0 for value in point)
-        key = f"road/{x:g}/{y:g}"
+        key = f"road/{x:.15g}/{y:.15g}" if trunks else f"road/{x:g}/{y:g}"
         nodes[key] = [x, y]
         return key
 
@@ -192,13 +190,30 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
         coords = list(line.simplify(0).coords)
         for a, b in zip(coords, coords[1:]):
             edge = tuple(sorted((node(a), node(b))))
+            if edge[0] == edge[1]:
+                continue
             segments[edge] = {"nodes": list(edge), **owner(LineString([a, b]), routes)}
     terminals = {key: node(point) for key, point in sorted(gates.items())}
-    spawn_node = node(points["spawn"])
+    spawn_node = terminals[next(site["id"] for site in sites if site["kind"] == "safehouse")] if trunks else node(points["spawn"])
     junctions = build_junctions(nodes, [segments[edge] for edge in sorted(segments)], bounds)
     return {"nodes": dict(sorted(nodes.items())), "edges": sorted(segments),
             "segments": [segments[edge] for edge in sorted(segments)], "junctions": junctions,
             "terminals": terminals, "spawn_node": spawn_node}
+
+
+def _local_road_order(graph, keys, indices):
+    distances = dijkstra(graph, directed=False, indices=indices)[:, indices]
+    if not np.isfinite(distances).all():
+        raise ValueError("도로망을 연결할 수 없는 시설 배치")
+    tree = minimum_spanning_tree(distances).tocoo()
+    pairs = {tuple(sorted((int(a), int(b)))) for a, b in zip(tree.row, tree.col)}
+    order = [keys.index("spawn")]
+    for parent in order:
+        for a, b in sorted(pairs):
+            child = b if a == parent else a if b == parent else None
+            if child is not None and child not in order:
+                order.append(child)
+    return [order[0]] + sorted(order[1:], key=lambda number: not keys[number].startswith('entry/')), pairs
 
 
 def build_basic_roads(bounds, sites, gates):
@@ -243,10 +258,15 @@ def validate_roads(network, sites, bounds, colliders):
         raise ValueError("끊어진 도로 연결")
     lines = [(segment, LineString([network["nodes"][key] for key in segment["nodes"]]))
              for segment in network["segments"]]
+    shapes = STRtree([line for _, line in lines])
+    search_distance = max(segment["width"] for segment, _ in lines) + ROAD_GAP
     for index, (segment, line) in enumerate(lines):
         a, b = line.coords
         direction = np.subtract(b, a) / line.length
-        for other_segment, other in lines[index + 1:]:
+        for other_index in shapes.query(line, predicate="dwithin", distance=search_distance):
+            if other_index <= index:
+                continue
+            other_segment, other = lines[other_index]
             gap = (segment["width"] + other_segment["width"]) / 2 + ROAD_GAP
             if (set(segment["nodes"]) & set(other_segment["nodes"])
                     or line.distance(other) >= gap or line.intersects(other)):

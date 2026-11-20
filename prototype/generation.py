@@ -35,6 +35,41 @@ def _sample(field, x, y):
                                  order=1, mode="nearest", prefilter=False)[0])
 
 
+def generation_catalog(prefab_versions):
+    catalog = load_catalog(Path(__file__).resolve().parent.parent)
+    manifest = {path: definition["version"] for path, definition in catalog.items()}
+    if prefab_versions is not None and prefab_versions != manifest:
+        raise ValueError("저장된 프리팹 목록·버전과 현재 생성 카탈로그가 다릅니다")
+    return {path: definition for path, definition in catalog.items() if has_walkable_access(definition)}, manifest
+
+
+def site_colliders(sites, catalog):
+    for site in sites:
+        if site["prefab"]:
+            placement = Placement(site["id"], tuple(site["position"]), site["rotation"] // 90)
+            for row in catalog[site["prefab"]]["colliders"]:
+                yield {"rect": placement.rect(row["rect"])}
+
+
+def site_layers(sites):
+    colors = {"safehouse": [69, 109, 91], "hq": [119, 126, 116], "comms": [102, 119, 126],
+              "warehouse": [135, 125, 95], "garrison": [114, 122, 91], "sam": [126, 103, 101]}
+    return [{"id": f"site/{site['id']}", "rect": site["rect"], "style": "yard", "image": "",
+             "color": colors[site["kind"]]} for site in sites if site["placeholder"]]
+
+
+def site_instances(sites, network):
+    return [{"id": site["id"], "prefab": site["prefab"], "version": site["prefab_version"],
+             "position": site["position"], "rotation": site["rotation"],
+             "road_node": network["terminals"][site["id"]]} for site in sites if not site["placeholder"]]
+
+
+def road_records(network):
+    return [{"id": f"road/{index}", "start": network["nodes"][segment["nodes"][0]],
+             "end": network["nodes"][segment["nodes"][1]], **segment}
+            for index, segment in enumerate(network["segments"])]
+
+
 def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", importance="normal", prefab_versions=None,
                    entries=None, detail=True, basic=False):
     if type(seed) is not int:
@@ -43,11 +78,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
         raise ValueError(f"지원하지 않는 맵 생성 버전: {version}")
     if region_size not in REGION_PROFILES or importance not in IMPORTANCE:
         raise ValueError("지원하지 않는 지역 크기 또는 중요도")
-    catalog = load_catalog(Path(__file__).resolve().parent.parent)
-    manifest = {path: definition["version"] for path, definition in catalog.items()}
-    if prefab_versions is not None and prefab_versions != manifest:
-        raise ValueError("저장된 프리팹 목록·버전과 현재 생성 카탈로그가 다릅니다")
-    catalog = {path: definition for path, definition in catalog.items() if has_walkable_access(definition)}
+    catalog, manifest = generation_catalog(prefab_versions)
     extent = REGION_PROFILES[region_size][0]
     half, scale = extent / 2, (extent / 64) ** 2
     terrain = random.Random(f"terrain:{version}:{seed}")
@@ -64,13 +95,7 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
                                                                catalog=catalog, entries=entries)
                 network = build_roads(bounds, sites, points, gates, stubs, 1 + vegetation * 3 + (1 - soil) * 0.5,
                                       random.Random(f"roads:{version}:{seed}:{attempt}"))
-                placed = []
-                for site in sites:
-                    if site["prefab"]:
-                        placement = Placement(site["id"], tuple(site["position"]), site["rotation"] // 90)
-                        placed.extend({"rect": placement.rect(row["rect"])}
-                                      for row in catalog[site["prefab"]]["colliders"])
-                validate_roads(network, sites, bounds, placed)
+                validate_roads(network, sites, bounds, site_colliders(sites, catalog))
                 break
             except (ValueError, GEOSException) as error:
                 if attempt == GENERATION_ATTEMPTS - 1:
@@ -112,17 +137,9 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
         kind = "tree" if tree else "rock"
         colliders.append({"id": f"{kind}/{index}", "rect": [rect.x, rect.y, rect.w, rect.h],
                           "kind": kind, "material": "tree_trunk" if tree else "concrete"})
-    roads = [{"id": f"road/{index}", "start": network["nodes"][segment["nodes"][0]],
-              "end": network["nodes"][segment["nodes"][1]], **segment}
-             for index, segment in enumerate(network["segments"])]
+    roads = road_records(network)
     layers.extend(road_layers(network))
-    colors = {"safehouse": [69, 109, 91], "hq": [119, 126, 116], "comms": [102, 119, 126],
-              "warehouse": [135, 125, 95], "garrison": [114, 122, 91], "sam": [126, 103, 101]}
-    for site in sites:
-        if not site["placeholder"]:
-            continue
-        layers.append({"id": f"site/{site['id']}", "rect": site["rect"], "style": "yard", "image": "",
-                       "color": colors[site["kind"]]})
+    layers.extend(site_layers(sites))
     if basic or detail:
         validate_roads(network, sites, bounds, colliders)
     return {"format": "revenant.image_scene.v1", "name": f"절차 생성 / {region_size} · {importance}",
@@ -131,8 +148,6 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
             "bounds": [-half, -half, extent, extent], "planned_facilities": sites, "road_network": network,
             "player_spawn": [0, 0], "safehouse_spawn": [0, 0], "supply_point": [0, 0],
             "campaign_facility": "depot_a", "player_weapons": [], "interaction_markers": False,
-            "prefab_instances": [{"id": site["id"], "prefab": site["prefab"], "version": site["prefab_version"],
-                                  "position": site["position"], "rotation": site["rotation"],
-                                  "road_node": network["terminals"][site["id"]]} for site in sites if not site["placeholder"]],
+            "prefab_instances": site_instances(sites, network),
             "layers": layers, "colliders": colliders, "navigation": dict(network["nodes"]), "navigation_edges": list(network["edges"]),
             "guards": [], "facilities": [], "roads": roads}

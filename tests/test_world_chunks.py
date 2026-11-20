@@ -19,8 +19,7 @@ class WorldChunkTests(unittest.TestCase):
 
     def test_neighbor_generation_order_has_no_duplicates_or_spacing_seams(self):
         terrain = ChunkTerrain(self.scene)
-        link = self.scene['region_links'][0]
-        point = self.scene['road_network']['nodes'][link['node']]
+        point = self.scene['player_spawn']
         key = tuple(math.floor(value / CHUNK_SIZE) for value in point)
         keys = [key, (key[0] + 1, key[1])]
         forward = {key: terrain.generate(key) for key in keys}

@@ -10,13 +10,13 @@ from campaign.models import Position
 from campaign.resources import assert_invariants
 from campaign.routes import find_route
 from prototype.actors import Actor
-from prototype.generated_world import generate_region, generate_world
+from prototype.generated_world import generate_world
 from prototype.movement import move_actor
 from prototype.savegame import load_game, save_game
 from prototype.simulation import PlaySimulation
 from prototype.world import World
 from prototype.site_planning import SAFEHOUSE_FACILITY_RADIUS
-from shapely import Point, box
+from shapely import LineString, Point, box
 
 
 def walk(actor, world, points):
@@ -39,7 +39,7 @@ class BranchWorldTests(unittest.TestCase):
                                    region_importances=['normal', 'core', 'normal', 'normal'])
 
     def test_exhausted_candidates_complete_a_walkable_world_with_the_original_seed(self):
-        with patch('prototype.generation.build_roads', side_effect=ValueError('진입로 후보 없음')):
+        with patch('prototype.world_roads.build_roads', side_effect=ValueError('진입로 후보 없음')):
             scene = generate_world(43, region_count=2, region_sizes=['small', 'medium'],
                                    region_importances=['core', 'important'])
         self.assertEqual(scene['generation']['seed'], 43)
@@ -59,20 +59,20 @@ class BranchWorldTests(unittest.TestCase):
             actor = Actor('route_check', Position(*play.world.safehouse))
             walk(actor, play.world, [play.world.navigation.nodes[key] for key in route])
 
-    def test_seed_rebuilds_branch_layout_and_individual_region_contract(self):
+    def test_seed_rebuilds_global_roads_that_cross_region_boundaries(self):
         scene = self.scene
         self.assertEqual(scene, generate_world(**json.loads(json.dumps(scene['generation']))))
-        self.assertIn(len(scene['region_links']), (3, 4))
-        self.assertTrue(any(link['source'] != 'region/1' for link in scene['region_links']))
+        self.assertFalse(scene['generation'].get('basic'))
+        self.assertEqual({key for key in scene['road_network']['terminals'] if '/entry/' in key}, set())
         regions = scene['generated_regions']
         self.assertTrue(all(region['origin'][0] and region['origin'][1] for region in regions[1:]))
         self.assertEqual(regions[1]['region_size'], 'medium')
         self.assertEqual(regions[1]['importance'], 'core')
-        row = regions[1]
-        recreated = generate_region(42, row['id'], origin=row['origin'], entries=row['entries'],
-                                    region_size=row['region_size'], importance=row['importance'])
-        self.assertEqual(recreated['planned_facilities'],
-                         [site for site in scene['planned_facilities'] if site['region_id'] == row['id']])
+        main_roads = [LineString([road['start'], road['end']]) for road in scene['roads']
+                      if road['kind'] == 'main']
+        for region in regions:
+            x, y, w, h = region['bounds']
+            self.assertTrue(any(road.crosses(box(x, y, x + w, y + h)) for road in main_roads))
         for safehouse in (site for site in scene['planned_facilities'] if site['kind'] == 'safehouse'):
             for site in scene['planned_facilities']:
                 if site['id'] != safehouse['id']:
@@ -96,10 +96,7 @@ class BranchWorldTests(unittest.TestCase):
             target = next(f.node_id for f in campaign.state.facilities.values()
                           if f.region_id == f'region/{index}' and 'command' in f.capabilities)
             path = find_route(campaign.state, current, target)
-            ports = {self.scene['road_network']['terminals'][f"region/{index}/entry/{link[side + '_entry']}"]
-                     for link in self.scene['region_links'] for side in ('source', 'destination')
-                     if link[side] == f'region/{index}'}
-            self.assertTrue(ports.intersection(path))
+            self.assertTrue(path)
             walk(play.player, play.world, [(campaign.state.nodes[key].position.x, campaign.state.nodes[key].position.y) for key in path])
             play._sync_guards()
             self.assertEqual(play.world.territory_at(play.player.xy), f'region/{index}')
@@ -149,8 +146,11 @@ class BranchWorldTests(unittest.TestCase):
 
     def test_navigation_can_walk_around_a_tree_between_regions(self):
         world = World(self.scene)
-        link = self.scene['region_links'][0]
-        world.update_chunks(self.scene['road_network']['nodes'][link['node']])
+        point = next(tuple((a + b) / 2 for a, b in zip(road['start'], road['end']))
+                     for road in self.scene['roads'] if road['kind'] == 'main'
+                     and any(world.territory_at(road[end]) for end in ('start', 'end'))
+                     and world.territory_at(road['start']) != world.territory_at(road['end']))
+        world.update_chunks(point)
         for tree in (c for c in list(world.geometry.objects.values()) if c.id.startswith('terrain/') and c.kind == 'tree'
                      and world.territory_at((c.rect.x, c.rect.y)) is None):
             x, y = tree.rect.x + tree.rect.w / 2, tree.rect.y + tree.rect.h / 2
