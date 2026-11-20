@@ -44,6 +44,7 @@ class BranchWorldTests(unittest.TestCase):
                                    region_importances=['core', 'important'])
         self.assertEqual(scene['generation']['seed'], 43)
         self.assertTrue(scene['generation']['basic'])
+        self.assertEqual([row['bounds'][2:] for row in scene['generated_regions']], [[160, 160], [256, 256]])
         self.assertEqual(scene, generate_world(**json.loads(json.dumps(scene['generation']))))
         play = PlaySimulation(scene)
         state = play.campaign.simulation.state

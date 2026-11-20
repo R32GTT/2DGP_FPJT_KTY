@@ -7,6 +7,7 @@ from .site_planning import IMPORTANCE, REGION_PROFILES, LayoutUnavailable
 
 
 REGION_GAP = 32
+WORLD_REGION_EXTENTS = {"small": 160, "medium": 256, "large": 384, "xlarge": 512}
 
 
 def plan_world(seed, version, count, sizes, importances, *, basic=False):
@@ -14,11 +15,11 @@ def plan_world(seed, version, count, sizes, importances, *, basic=False):
             or any(size not in REGION_PROFILES for size in sizes)
             or any(importance not in IMPORTANCE for importance in importances)):
         raise ValueError("지역 수와 지역별 크기·중요도 설정을 확인하세요")
-    regions = [{"id": f"region/{index + 1}", "origin": [0, 0],
+    regions = [{"id": f"region/{index + 1}", "origin": [0, 0], "extent": WORLD_REGION_EXTENTS[size],
                 "region_size": size, "importance": importance}
                for index, (size, importance) in enumerate(zip(sizes, importances))]
     rng = random.Random(f"world-layout:{version}:{seed}")
-    extents = [REGION_PROFILES[size][0] for size in sizes]
+    extents = [region["extent"] for region in regions]
     if basic:
         for index, region in enumerate(regions):
             if index:

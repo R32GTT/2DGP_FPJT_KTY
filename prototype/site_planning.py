@@ -30,10 +30,12 @@ class LayoutUnavailable(ValueError):
     """현재 배치 후보로는 필수 연결을 만들 수 없다."""
 
 
-def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None, entries=None, basic=False):
+def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None, entries=None, basic=False,
+               extent=None):
     if region_size not in REGION_PROFILES or importance not in IMPORTANCE:
         raise ValueError("지원하지 않는 지역 크기 또는 중요도")
-    extent, comms, warehouses, garrisons = REGION_PROFILES[region_size]
+    default_extent, comms, warehouses, garrisons = REGION_PROFILES[region_size]
+    extent = default_extent if extent is None else extent
     rng = random.Random(f"sites:{version}:{seed}:{attempt}")
     if region_size == "medium":
         comms = rng.randint(1, 2)

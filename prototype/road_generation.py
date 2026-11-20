@@ -65,9 +65,9 @@ def road_surface(network, *, vehicle=False):
     return union_all(parts)
 
 
-def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None):
+def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None, step=2):
     rows, columns = cost.shape
-    xs, ys = bounds.x + np.arange(columns) * 2, bounds.y + np.arange(rows) * 2
+    xs, ys = bounds.x + np.arange(columns) * step, bounds.y + np.arange(rows) * step
     free = np.ones_like(cost, dtype=bool)
     free[:2] = free[-2:] = False
     free[:, :2] = free[:, -2:] = False
@@ -77,8 +77,8 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None):
         free[np.ix_((ys >= y - margin) & (ys <= y + height + margin),
                     (xs >= x - margin) & (xs <= x + width + margin))] = False
     keys = sorted(points)
-    indices = [int(round((points[key][1] - bounds.y) / 2)) * columns
-               + int(round((points[key][0] - bounds.x) / 2)) for key in keys]
+    indices = [int(round((points[key][1] - bounds.y) / step)) * columns
+               + int(round((points[key][0] - bounds.x) / step)) for key in keys]
     anchors = {index: tuple(points[key]) for key, index in zip(keys, indices)}
     if len(anchors) != len(set(map(tuple, points.values()))):
         raise ValueError("같은 도로 격자에 놓인 진입점")
@@ -102,11 +102,11 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None):
     def spaced_path(start, end, joins, width):
         distance, nearest = distance_transform_edt(~used.reshape(cost.shape), return_indices=True)
         separation = (width + used_width.reshape(cost.shape)[tuple(nearest)]) / 2 + ROAD_GAP + 2
-        allowed = distance * 2 >= separation
+        allowed = distance * step >= separation
         # 합류점 주변에서만 간격 제한을 풀어 같은 길에 직접 접속한다.
         for cell in joins:
             radius = (width + used_width.max()) / 2 + ROAD_GAP + 4
-            allowed |= (row - cell // columns) ** 2 + (col - cell % columns) ** 2 <= (radius / 2) ** 2
+            allowed |= (row - cell // columns) ** 2 + (col - cell % columns) ** 2 <= (radius / step) ** 2
         routed = _grid_graph(cost, free & allowed)
         distance, parents = dijkstra(routed, directed=False, indices=start, return_predecessors=True)
         return _path(parents, start, end) if np.isfinite(distance[end]) else None
@@ -141,9 +141,9 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None):
             continue
         old_distance = dijkstra(_grid_graph(np.ones_like(cost), used.reshape(cost.shape)),
                                 directed=False, indices=indices[a])[indices[b]]
-        length = sum(math.hypot((a % columns) - (b % columns), (a // columns) - (b // columns)) * 2
+        length = sum(math.hypot((a % columns) - (b % columns), (a // columns) - (b // columns)) * step
                      for a, b in zip(path, path[1:]))
-        if length >= old_distance * .75:
+        if length >= old_distance * (step / 2) * .75:
             continue
         paths.append((path, f"loop/{loops}", spec))
         used[path] = True

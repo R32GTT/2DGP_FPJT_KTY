@@ -21,10 +21,11 @@ def build_world_roads(seed, bounds, sites, *, basic=False):
     points.update((site["id"], site["connector"]["approach"]) for site in sites)
     stubs = [(gate, points[key]) for key, gate in gates.items()]
     extent = int(max(bounds.w, bounds.h))
-    rows, columns = np.indices((int(bounds.h) // 2 + 1, int(bounds.w) // 2 + 1), dtype=float)
-    coords = [rows + (extent - bounds.h) / 4, columns + (extent - bounds.w) / 4]
+    step = 4 if extent > 768 else 2
+    rows, columns = np.indices((int(bounds.h) // step + 1, int(bounds.w) // step + 1), dtype=float)
+    coords = [rows * (step / 2) + (extent - bounds.h) / 4, columns * (step / 2) + (extent - bounds.w) / 4]
     woods = map_coordinates(_density(seed, "world-vegetation", extent), coords, order=1, prefilter=False)
     soil = map_coordinates(_density(seed, "world-soil", extent), coords, order=1, prefilter=False)
     trunks = ["entry/0", *(site["id"] for site in hqs), "entry/1"]
     return build_roads(bounds, sites, points, gates, stubs, 1 + 3 * woods + .5 * (1 - soil),
-                       random.Random(seed), trunks=trunks)
+                       random.Random(seed), trunks=trunks, step=step)

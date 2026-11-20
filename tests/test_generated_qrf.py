@@ -2,7 +2,7 @@ import math
 import unittest
 
 from campaign.resources import assert_invariants
-from campaign.routes import position
+from campaign.routes import FOOT_SPEED_MPS, position, road_between
 from campaign.models import Position
 from prototype.actors import Actor
 from prototype.generated_world import generate_world
@@ -31,10 +31,10 @@ class GeneratedQRFTests(unittest.TestCase):
         play.events.emit('killed', play.time, casualty)
         play._dispatch()
         remaining = unit.soldiers
-        play.player.position.x = 128
+        play.player.position = Position(*self.scene['generated_regions'][1]['origin'])
         play._sync_guards()
         self.assertNotIn(casualty.home_node, play.roster.active_nodes)
-        play.player.position.x = 0
+        play.player.position = Position(*play.world.safehouse)
         play._sync_guards()
         self.assertIs(play.roster.by_id[casualty.id], casualty)
         self.assertEqual(casualty.hp, 0)
@@ -64,7 +64,9 @@ class GeneratedQRFTests(unittest.TestCase):
         play.player.position = Position(0, 0)
         seen = {}
         held = False
-        while state.world_time < 150:
+        distance = sum(road_between(state, a, b).length_m for a, b in zip(operation.route, operation.route[1:]))
+        deadline = math.ceil(distance / FOOT_SPEED_MPS) + 60
+        while state.world_time < deadline:
             second = state.world_time + 1
             play.time = float(second)
             play.campaign.advance_to(second)

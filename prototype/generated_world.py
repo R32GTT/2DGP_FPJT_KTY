@@ -17,7 +17,7 @@ from .world_layout import plan_world
 from .world_roads import build_world_roads
 
 
-WORLD_VERSION = 5
+WORLD_VERSION = 6
 LAYOUT_VERSION = 3
 
 
@@ -116,7 +116,8 @@ def _assemble_world(settings, plans, catalog, attempt=0, *, basic=False):
         key, origin = plan["id"], plan["origin"]
         local_seed = region_seed(settings["seed"], key, settings["region_version"])
         bounds, local_sites, _, _, _ = plan_sites(local_seed, settings["region_version"], plan["region_size"],
-                                                   plan["importance"], attempt, catalog=catalog, entries=[], basic=basic)
+                                                 plan["importance"], attempt, catalog=catalog, entries=[], basic=basic,
+                                                 extent=plan["extent"])
         dx, dy = origin
         regions.append({**plan, "seed": local_seed, "name": "지역 " + key.rsplit("/", 1)[-1],
                         "bounds": [bounds.x + dx, bounds.y + dy, bounds.w, bounds.h]})
