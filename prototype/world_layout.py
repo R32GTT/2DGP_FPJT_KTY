@@ -3,13 +3,13 @@
 import math
 import random
 
-from .site_planning import IMPORTANCE, REGION_PROFILES, SIDES
+from .site_planning import IMPORTANCE, REGION_PROFILES, SIDES, LayoutUnavailable
 
 
 REGION_GAP = 32
 
 
-def plan_world(seed, version, count, sizes, importances):
+def plan_world(seed, version, count, sizes, importances, *, basic=False):
     if (len(sizes) != count or len(importances) != count
             or any(size not in REGION_PROFILES for size in sizes)
             or any(importance not in IMPORTANCE for importance in importances)):
@@ -19,6 +19,15 @@ def plan_world(seed, version, count, sizes, importances):
                for index, (size, importance) in enumerate(zip(sizes, importances))]
     rng = random.Random(f"world-layout:{version}:{seed}")
     extents = [REGION_PROFILES[size][0] for size in sizes]
+    if basic:
+        for index, region in enumerate(regions):
+            if index:
+                region["origin"][0] = (regions[index - 1]["origin"][0]
+                                       + (extents[index - 1] + extents[index]) / 2 + REGION_GAP)
+            region["entries"] = [{"side": side, "offset": 0} for side in ("west", "east")]
+        return regions, [{"id": f"portal/{index}", "source": regions[index - 1]["id"],
+                          "destination": regions[index]["id"], "source_entry": 1, "destination_entry": 0}
+                         for index in range(1, count)]
     for index in range(1, count):
         for _ in range(256):
             anchor = rng.randrange(index)
@@ -32,7 +41,7 @@ def plan_world(seed, version, count, sizes, importances):
                 regions[index]['origin'] = point
                 break
         else:
-            raise ValueError("지역 간격을 확보할 수 없는 월드 배치")
+            raise LayoutUnavailable("지역 간격을 확보할 수 없는 월드 배치")
     edges = sorted((math.dist(regions[a]['origin'], regions[b]['origin']), a, b)
                    for a in range(count) for b in range(a + 1, count))
     groups, selected = list(range(count)), []
@@ -64,7 +73,7 @@ def plan_world(seed, version, count, sizes, importances):
                                                   for entry in regions[index]['entries']):
                     regions[index]['entries'].append({'side': side, 'offset': value})
                     return len(regions[index]['entries']) - 1
-        raise ValueError("지역 연결점 간격 부족")
+        raise LayoutUnavailable("지역 연결점 간격 부족")
 
     add_entry(0, (-1, 0))
     links = []

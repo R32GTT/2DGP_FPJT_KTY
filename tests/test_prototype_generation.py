@@ -1,6 +1,7 @@
 import json
 import math
 import unittest
+from unittest.mock import patch
 from dataclasses import asdict
 from collections import Counter
 from copy import deepcopy
@@ -13,10 +14,11 @@ from campaign.simulation import Simulation
 from prototype.generation import generate_scene
 from prototype.generated_campaign import SETUP_PATH, build_generated_state
 from prototype.movement import move_actor
+from prototype.prefabs import load_catalog
 from prototype.road_generation import ROAD_GAP, build_junctions, validate_roads
 from prototype.road_visuals import ROAD_STYLES, road_layers
 from prototype.simulation import PlaySimulation
-from prototype.world import World
+from prototype.world import ROOT, World
 
 
 class GeneratedMapTests(unittest.TestCase):
@@ -77,6 +79,18 @@ class GeneratedMapTests(unittest.TestCase):
                 self.assertEqual(play.player.xy, tuple(safehouse['position']))
                 self.assertEqual(play.player.xy, play.world.safehouse)
                 self.assertTrue(play.world.navigation.walkable(play.player.xy))
+
+    def test_blocked_prefab_entry_uses_a_connected_site_instead(self):
+        catalog = load_catalog(ROOT)
+        definition = next(item for item in catalog.values() if item["kind"] == "hq")
+        definition["colliders"].append({"id": "blocked_gate", "rect": [-1, 11, 2, 1]})
+        with patch("prototype.generation.load_catalog", return_value=catalog):
+            scene = generate_scene(42)
+        world = World(scene)
+        hq = next(site for site in scene["planned_facilities"] if site["kind"] == "hq")
+        gate = tuple(hq["connector"]["position"])
+        self.assertTrue(hq["placeholder"])
+        self.assertEqual(world.navigation.route(world.safehouse, gate)[-1], gate)
 
     def test_play_movement_obstacle_collision_and_map_boundary(self):
         simulation = PlaySimulation(self.scene)

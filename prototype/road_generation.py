@@ -14,6 +14,7 @@ from .road_paths import smooth_path
 
 DIRT_WIDTH = 3.0
 ROAD_WIDTHS = {"main": 6.0, "access": 4.5, "service": DIRT_WIDTH}
+MAIN_ROAD = {"kind": "main", "width": ROAD_WIDTHS["main"], "material": "asphalt"}
 ROAD_GAP = 6
 VEHICLE_SIZE = (5.6, 2.4)
 VEHICLE_MARGIN = 0.3
@@ -94,14 +95,13 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
             if child is not None and child not in order:
                 order.append(child)
     specs = {site["id"]: site["road"] for site in sites}
-    main = {"kind": "main", "width": ROAD_WIDTHS["main"], "material": "asphalt"}
-    specs.update({key: main for key in keys if key not in specs})
+    specs.update({key: MAIN_ROAD for key in keys if key not in specs})
     order = [order[0]] + sorted(order[1:], key=lambda number: not keys[number].startswith('entry/'))
     paths = []
     used = np.zeros(cost.size, dtype=bool)
     used[indices[order[0]]] = True
     used_width = np.zeros(cost.size)
-    used_width[indices[order[0]]] = main["width"]
+    used_width[indices[order[0]]] = MAIN_ROAD["width"]
     row, col = np.indices(cost.shape)
 
     def spaced_path(start, end, joins, width):
@@ -199,6 +199,34 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng):
     return {"nodes": dict(sorted(nodes.items())), "edges": sorted(segments),
             "segments": [segments[edge] for edge in sorted(segments)], "junctions": junctions,
             "terminals": terminals, "spawn_node": spawn_node}
+
+
+def build_basic_roads(bounds, sites, gates):
+    # 양쪽 포털을 먼저 연결하고, 부지는 겹치지 않는 직각 진입로로 붙인다.
+    nodes, terminals, segments = {}, {}, []
+
+    def node(x, y):
+        key = f"road/{x:g}/{y:g}"
+        nodes[key] = [x, y]
+        return key
+
+    def connect(a, b, route, spec):
+        segments.append({"nodes": sorted((a, b)), "route": route, **spec})
+
+    for key, point in gates.items():
+        terminals[key] = node(*point)
+    axis = sorted({bounds.x, 0, bounds.right, *(site["connector"]["position"][0] for site in sites)})
+    spine = [node(x, 0) for x in axis]
+    for a, b in zip(spine, spine[1:]):
+        connect(a, b, "spine", MAIN_ROAD)
+    for site in sites:
+        x, _ = site["connector"]["position"]
+        key = site["id"]
+        connect(node(x, 0), terminals[key], key, site["road"])
+    segments.sort(key=lambda segment: segment["nodes"])
+    return {"nodes": dict(sorted(nodes.items())), "edges": [tuple(row["nodes"]) for row in segments],
+            "segments": segments, "junctions": build_junctions(nodes, segments, bounds),
+            "terminals": terminals, "spawn_node": node(0, 0)}
 
 
 def validate_roads(network, sites, bounds, colliders):

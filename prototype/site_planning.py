@@ -26,7 +26,11 @@ SITE_SIZES = {
 }
 
 
-def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None, entries=None):
+class LayoutUnavailable(ValueError):
+    """현재 배치 후보로는 필수 연결을 만들 수 없다."""
+
+
+def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=None, entries=None, basic=False):
     if region_size not in REGION_PROFILES or importance not in IMPORTANCE:
         raise ValueError("지원하지 않는 지역 크기 또는 중요도")
     extent, comms, warehouses, garrisons = REGION_PROFILES[region_size]
@@ -37,6 +41,10 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
     if region_size in {"large", "xlarge"} or importance != "normal":
         kinds.append("sam")
     size_index = tuple(REGION_PROFILES).index(region_size)
+    if basic:
+        kinds = ["safehouse", "hq", "comms", "warehouse"]
+        size_index = 0
+        catalog = {}
     selected = []
     for kind in kinds:
         candidates = [(path, item) for path, item in (catalog or {}).items() if item["kind"] == kind
@@ -49,7 +57,8 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
         else:
             width, height = SITE_SIZES[kind][size_index + 1]
             grade = 0 if kind == "safehouse" else IMPORTANCE.index(importance)
-            width += 4 * rng.randint(grade, grade + 1)
+            if not basic:
+                width += 4 * rng.randint(grade, grade + 1)
             local = Rect(-width / 2, -height / 2, width, height)
             connector = {"position": [0, height / 2], "direction": [0, 1], "width_m": facility_road(kind)["width"]}
         selected.append((kind, path, definition, local, connector))
@@ -79,6 +88,8 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
                              abs(gate[0] - approach[0]) + 12, abs(gate[1] - approach[1]) + 12))
     ordered = sorted(enumerate(selected), key=lambda item: item[1][0] != "safehouse")
     budget = 8000
+    slots = {"safehouse": (-28, -32, 0), "hq": (28, -32, 0),
+             "warehouse": (-28, 32, 2), "comms": (28, 32, 2)}
 
     def place_site(depth):
         nonlocal budget
@@ -90,12 +101,13 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
         local_approach = [local_gate[i] + normal[i] * 12 for i in (0, 1)]
         left, top = min(local.x, local_approach[0]) - 6, min(local.y, local_approach[1]) - 6
         right, bottom = max(local.right, local_approach[0]) + 6, max(local.bottom, local_approach[1]) + 6
-        for _ in range(160):
+        for _ in range(1 if basic else 160):
             if budget <= 0:
                 return False
             budget -= 1
-            placement = Placement(key, (rng.randrange(-half + 12, half - 12, 2),
-                                        rng.randrange(-half + 12, half - 12, 2)), rng.randrange(4))
+            x, y, turns = slots[kind] if basic else (rng.randrange(-half + 12, half - 12, 2),
+                                                    rng.randrange(-half + 12, half - 12, 2), rng.randrange(4))
+            placement = Placement(key, (x, y), turns)
             # 연결 경계에서도 보호 반경을 확보해 이웃 지역 시설의 침범을 막는다.
             if kind == "safehouse" and any(sign * placement.position[axis] > half - SAFEHOUSE_FACILITY_RADIUS
                                            for axis, sign in (SIDES[entry['side']] for entry in entries)):
@@ -133,5 +145,5 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
         return False
 
     if not place_site(0):
-        raise ValueError("시설 간격을 만족하는 배치 후보 부족")
+        raise LayoutUnavailable("시설 간격을 만족하는 배치 후보 부족")
     return bounds, sites, points, gates, stubs

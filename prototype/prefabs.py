@@ -5,6 +5,53 @@ from copy import deepcopy
 import json
 import math
 
+from .actors import Actor
+from .geometry import Rect
+
+
+def has_walkable_access(definition):
+    """차량 진입점에서 보행 입구와 시설 내부까지 플레이어 몸체가 통과할 수 있는지 확인한다."""
+    nodes = definition["navigation"]
+    connectors = definition["connectors"]
+    vehicle = connectors["vehicle"]
+    entrance = connectors.get("pedestrian", vehicle)
+    # 부지 예약 여백(6m) 안에 충돌물과 보행 경로를 함께 유지한다.
+    reserved = Rect(*definition["bounds"]).expanded(5)
+    if any(reserved.segment_entry(point, point) is None
+           for point in (*nodes.values(), entrance["position"])):
+        return False
+    if any(rect.x < reserved.x or rect.y < reserved.y or rect.right > reserved.right
+           or rect.bottom > reserved.bottom for rect in (Rect(*row["rect"]) for row in definition["colliders"])):
+        return False
+    blockers = [Rect(*row["rect"]).expanded(Actor.radius) for row in definition["colliders"]
+                if row.get("kind") != "door" and row.get("active", True)
+                and "movement" in row.get("blocks", ("movement",))]
+
+    def clear(a, b):
+        return all(rect.segment_entry(a, b) is None for rect in blockers)
+
+    start = vehicle["node"]
+    if start not in nodes or math.dist(vehicle["position"], nodes[start]) > 1e-6:
+        return False
+    if entrance["node"] not in nodes or not clear(entrance["position"], nodes[entrance["node"]]):
+        return False
+    graph = {key: [] for key in nodes}
+    for a, b in definition["navigation_edges"]:
+        if a not in nodes or b not in nodes or not clear(nodes[a], nodes[b]):
+            return False
+        graph[a].append(b)
+        graph[b].append(a)
+    pending, visited = [start], {start}
+    for key in pending:
+        for other in graph[key]:
+            if other not in visited:
+                visited.add(other)
+                pending.append(other)
+    return ({entrance["node"], definition["terminal_node"]} <= visited
+            and (definition["kind"] != "safehouse"
+                 or any(clear((0, 0), nodes[key]) for key in visited)))
+
+
 def rotate(point, turns):
     x, y = point
     return ((x, y), (-y, x), (-x, -y), (y, -x))[turns % 4]

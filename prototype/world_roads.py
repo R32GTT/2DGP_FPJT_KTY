@@ -9,10 +9,10 @@ from shapely.prepared import prep
 from .generation import _density, _sample
 from .road_generation import ROAD_WIDTHS, ROAD_GAP
 from .road_paths import smooth_path
-from .site_planning import SIDES
+from .site_planning import SIDES, LayoutUnavailable
 
 
-def connect_regions(seed, regions, links, nodes, bounds):
+def connect_regions(seed, regions, links, nodes, bounds, *, basic=False):
     obstacles = [box(x, y, x + w, y + h) for x, y, w, h in (region['bounds'] for region in regions)]
     blocked = prep(union_all(obstacles).buffer(6 - 1e-6, join_style='mitre'))
     field = _density(seed, 'world-vegetation', math.ceil(max(bounds.w, bounds.h) / 2) * 2)
@@ -21,6 +21,9 @@ def connect_regions(seed, regions, links, nodes, bounds):
     routes = []
     for link in links:
         gates = [tuple(nodes[link['id'] + suffix]) for suffix in ('/a', '/b')]
+        if basic:
+            routes.append((link['id'], LineString(gates)))
+            continue
         outside = []
         for key, entry_key, gate in zip(('source', 'destination'), ('source_entry', 'destination_entry'), gates):
             entry = metadata[link[key]]['entries'][link[entry_key]]
@@ -61,7 +64,7 @@ def connect_regions(seed, regions, links, nodes, bounds):
                     costs[other], parents[other] = candidate, current
                     heapq.heappush(pending, (candidate, other))
         if 1 not in costs:
-            raise ValueError('지역 사이 도로를 연결할 수 없음')
+            raise LayoutUnavailable('지역 사이 도로를 연결할 수 없음')
         path, current = [], 1
         while current != 0:
             path.append(points[current])

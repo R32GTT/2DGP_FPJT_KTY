@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from campaign.models import Position
 from campaign.resources import assert_invariants
@@ -36,6 +37,27 @@ class BranchWorldTests(unittest.TestCase):
     def setUpClass(cls):
         cls.scene = generate_world(42, region_count=4, region_sizes=['small', 'medium', 'small', 'small'],
                                    region_importances=['normal', 'core', 'normal', 'normal'])
+
+    def test_exhausted_candidates_complete_a_walkable_world_with_the_original_seed(self):
+        with patch('prototype.generation.build_roads', side_effect=ValueError('진입로 후보 없음')):
+            scene = generate_world(43, region_count=2, region_sizes=['small', 'medium'],
+                                   region_importances=['core', 'important'])
+        self.assertEqual(scene['generation']['seed'], 43)
+        self.assertTrue(scene['generation']['basic'])
+        self.assertEqual(scene, generate_world(**json.loads(json.dumps(scene['generation']))))
+        play = PlaySimulation(scene)
+        state = play.campaign.simulation.state
+        safehouse = next(site for site in play.world.facilities if site['kind'] == 'safehouse')
+        self.assertEqual(play.player.xy, tuple(safehouse['position']))
+        home = safehouse['service_node']
+        for index in (1, 2):
+            self.assertEqual({site['kind'] for site in scene['planned_facilities'] if site['region_id'] == f'region/{index}'},
+                             {'safehouse', 'hq', 'warehouse', 'comms'})
+        for target in play.world.facilities:
+            route = find_route(state, home, target['service_node'])
+            self.assertTrue(route)
+            actor = Actor('route_check', Position(*play.world.safehouse))
+            walk(actor, play.world, [play.world.navigation.nodes[key] for key in route])
 
     def test_seed_rebuilds_branch_layout_and_individual_region_contract(self):
         scene = self.scene

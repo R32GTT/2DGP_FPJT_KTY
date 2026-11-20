@@ -6,13 +6,14 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter, map_coordinates
 from shapely import box, union_all
+from shapely.errors import GEOSException
 from shapely.prepared import prep
 
 from .geometry import Rect
-from .prefabs import load_catalog
-from .road_generation import build_roads, road_surface, validate_roads
+from .prefabs import Placement, has_walkable_access, load_catalog
+from .road_generation import build_basic_roads, build_roads, road_surface, validate_roads
 from .road_visuals import road_layers
-from .site_planning import IMPORTANCE, REGION_PROFILES, plan_sites
+from .site_planning import IMPORTANCE, REGION_PROFILES, LayoutUnavailable, plan_sites
 
 
 GENERATION_VERSION = 10
@@ -35,7 +36,7 @@ def _sample(field, x, y):
 
 
 def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", importance="normal", prefab_versions=None,
-                   entries=None, detail=True):
+                   entries=None, detail=True, basic=False):
     if type(seed) is not int:
         raise ValueError("월드 시드는 정수여야 합니다")
     if type(version) is not int or version != GENERATION_VERSION:
@@ -46,24 +47,37 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
     manifest = {path: definition["version"] for path, definition in catalog.items()}
     if prefab_versions is not None and prefab_versions != manifest:
         raise ValueError("저장된 프리팹 목록·버전과 현재 생성 카탈로그가 다릅니다")
+    catalog = {path: definition for path, definition in catalog.items() if has_walkable_access(definition)}
     extent = REGION_PROFILES[region_size][0]
     half, scale = extent / 2, (extent / 64) ** 2
     terrain = random.Random(f"terrain:{version}:{seed}")
     obstacles = random.Random(f"obstacles:{version}:{seed}")
     vegetation, soil = _density(seed, "vegetation", extent), _density(seed, "soil", extent)
-    for attempt in range(GENERATION_ATTEMPTS):
-        try:
-            bounds, sites, points, gates, stubs = plan_sites(seed, version, region_size, importance, attempt,
-                                                          catalog=catalog, entries=entries)
-            network = build_roads(bounds, sites, points, gates, stubs, 1 + vegetation * 3 + (1 - soil) * 0.5,
-                                  random.Random(f"roads:{version}:{seed}:{attempt}"))
-            validate_roads(network, sites, bounds, [])
-            break
-        except ValueError as error:
-            if attempt == GENERATION_ATTEMPTS - 1:
-                raise ValueError(f"지역 생성 실패: {error}") from error
-    reserved = prep(union_all([road_surface(network).buffer(1.8)] +
-                              [box(x, y, x + w, y + h) for x, y, w, h in (site["reserved"] for site in sites)]))
+    if basic:
+        entries = [{"side": side, "offset": 0} for side in ("west", "east")]
+        bounds, sites, _, gates, _ = plan_sites(seed, version, region_size, importance, entries=entries, basic=True)
+        network = build_basic_roads(bounds, sites, gates)
+    else:
+        for attempt in range(GENERATION_ATTEMPTS):
+            try:
+                bounds, sites, points, gates, stubs = plan_sites(seed, version, region_size, importance, attempt,
+                                                               catalog=catalog, entries=entries)
+                network = build_roads(bounds, sites, points, gates, stubs, 1 + vegetation * 3 + (1 - soil) * 0.5,
+                                      random.Random(f"roads:{version}:{seed}:{attempt}"))
+                placed = []
+                for site in sites:
+                    if site["prefab"]:
+                        placement = Placement(site["id"], tuple(site["position"]), site["rotation"] // 90)
+                        placed.extend({"rect": placement.rect(row["rect"])}
+                                      for row in catalog[site["prefab"]]["colliders"])
+                validate_roads(network, sites, bounds, placed)
+                break
+            except (ValueError, GEOSException) as error:
+                if attempt == GENERATION_ATTEMPTS - 1:
+                    raise LayoutUnavailable(f"지역 도로와 시설 배치 부족: {error}") from error
+    if detail:
+        reserved = prep(union_all([road_surface(network).buffer(1.8)] +
+                                  [box(x, y, x + w, y + h) for x, y, w, h in (site["reserved"] for site in sites)]))
     layers, colliders = [], []
     for row in range(extent // 16 if detail else 0):
         for col in range(extent // 16):
@@ -109,10 +123,11 @@ def generate_scene(seed=42, *, version=GENERATION_VERSION, region_size="small", 
             continue
         layers.append({"id": f"site/{site['id']}", "rect": site["rect"], "style": "yard", "image": "",
                        "color": colors[site["kind"]]})
-    validate_roads(network, sites, bounds, colliders)
+    if basic or detail:
+        validate_roads(network, sites, bounds, colliders)
     return {"format": "revenant.image_scene.v1", "name": f"절차 생성 / {region_size} · {importance}",
             "generation": {"seed": seed, "version": version, "region_size": region_size, "importance": importance,
-                           "prefab_versions": manifest, "entries": entries},
+                           "prefab_versions": manifest, "entries": entries, **({"basic": True} if basic else {})},
             "bounds": [-half, -half, extent, extent], "planned_facilities": sites, "road_network": network,
             "player_spawn": [0, 0], "safehouse_spawn": [0, 0], "supply_point": [0, 0],
             "campaign_facility": "depot_a", "player_weapons": [], "interaction_markers": False,
