@@ -2,16 +2,17 @@
 
 import os
 import math
+from itertools import chain
 from pathlib import Path
 from time import perf_counter
 
 import pico2d as pico
 
 from campaign.clock import world_clock
+from .geometry import Rect
+from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
-from .road_visuals import ROAD_STYLES
-from .visual_assets import draw_polygon
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -40,6 +41,8 @@ class HUD:
         self.last_message = ""
         self.message_until = 0.0
         self.ai_rows = 0
+        self._map_world = None
+        self._map_batches = {}
 
     def label(self, key, text, size=16, color=(223, 230, 218)):
         if not text:
@@ -351,17 +354,17 @@ class HUD:
             return x0 + 8 + (x - bounds.x) * scale, y0 + height - 8 - (y - bounds.y) * scale
 
         world = simulation.world
+        canvas_height = pico.get_canvas_height()
+        layout = x0, y0, scale, canvas_height
         if world.facilities:
-            self._draw_field_terrain(world, point)
-            for facility in world.facilities:
-                x, y, w, h = facility["rect"]
-                a, b = point(x, y), point(x + w, y + h)
-                pico.draw_rectangle(a[0], b[1], b[0], a[1], 116, 133, 108, filled=True)
+            facilities = ((Rect(*facility["rect"]), (116, 133, 108)) for facility in world.facilities)
+            terrain = chain(self._field_terrain(world), facilities)
+            self._draw_map_batch("mini terrain", world, layout, map_rectangles(terrain, point, canvas_height))
         else:
-            for collider in world.geometry.objects.values():
-                a, b = point(collider.rect.x, collider.rect.y), point(collider.rect.right, collider.rect.bottom)
-                pico.draw_rectangle(a[0], b[1], b[0], a[1], 93, 111, 94, filled=True)
-        self._map_roads(world, point, scale)
+            terrain = ((collider.rect, (93, 111, 94)) for collider in world.geometry.objects.values())
+            self._draw_map_batch("mini obstacles", world, (*layout, world.revision),
+                                 map_rectangles(terrain, point, canvas_height))
+        self._draw_map_batch("mini roads", world, layout, map_roads(world, point, scale, canvas_height, ()))
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp > 0 and (actor.team == "player" or debug or math.dist(actor.xy, simulation.player.xy) < 20):
                 x, y = point(*actor.xy)
@@ -374,36 +377,18 @@ class HUD:
                 x, y = point(convoy.x, convoy.y)
                 pico.draw_rectangle(x - 2, y - 1, x + 2, y + 1, 221, 186, 100, filled=True)
 
-    def _map_roads(self, world, point, scale, blocked=()):
-        commands = []
-        for road in world.roads:
-            color = ((231, 111, 85) if road["id"] in blocked else
-                     (114, 103, 77) if road.get("kind") == "footpath" else
-                     ROAD_STYLES[road["material"]]["map_color"] if "material" in road else (153, 155, 123))
-            a, b = point(*road["start"]), point(*road["end"])
-            dx, dy = b[0] - a[0], b[1] - a[1]
-            length = max(1e-8, math.hypot(dx, dy))
-            half = max(0.5, road.get("width", 4) * scale / 2)
-            x, y = -dy / length * half, dx / length * half
-            corners = ((a[0] + x, a[1] + y), (b[0] + x, b[1] + y),
-                       (b[0] - x, b[1] - y), (a[0] - x, a[1] - y))
-            commands.append((road.get('material', ''), corners, color, None))
-        network = world.data.get("road_network", {})
-        for junction in network.get("junctions", ()):
-            for surface in junction['surfaces']:
-                color = ROAD_STYLES[surface['material']]["map_color"]
-                points = surface['triangles']
-                commands.append((surface['material'], [point(*vertex) for vertex in points], color, range(len(points))))
-        for _, points, color, indices in sorted(commands, key=lambda command: command[0] == 'asphalt'):
-            draw_polygon(self.backend, points, color, indices)
+    def _draw_map_batch(self, name, world, layout, triangles):
+        if self._map_world is not world:
+            self._map_world = world
+            self._map_batches.clear()
+        entry = self._map_batches.get(name)
+        if entry is None or entry[0] != layout:
+            entry = self._map_batches[name] = layout, MapBatch(self.backend, triangles)
+        entry[1].draw(self.backend)
 
     @staticmethod
-    def _draw_field_terrain(world, point):
-        for layer in world.layers:
-            if layer.role in {"water", "roof"}:
-                rect = layer.rect
-                a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
-                pico.draw_rectangle(a[0], b[1], b[0], a[1], *layer.color, filled=True)
+    def _field_terrain(world):
+        return ((layer.rect, layer.color) for layer in world.map_layers if layer.role in {"water", "roof"})
 
     def draw_search_overlay(self, simulation, view):
         world = simulation.world
@@ -473,24 +458,22 @@ class HUD:
 
         right, bottom = point(world.bounds.right, world.bounds.bottom)
         pico.draw_rectangle(left, bottom, right, top, 34, 49, 43, filled=True)
-        self._draw_field_terrain(world, point)
+        canvas_height = pico.get_canvas_height()
+        layout = left, top, scale, canvas_height
+        self._draw_map_batch("full field", world, layout, map_rectangles(self._field_terrain(world), point, canvas_height))
         state = simulation.campaign.simulation.state
         controlled_roads = {control["road"] for control in world.road_controls}
         for control in world.road_controls:
             x, y = point(*control["position"])
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 241, 211, 135, filled=True)
         if not world.facilities or generated:
-            for layer in world.map_layers:
-                if layer.role.startswith("road") or layer.role == "pavement":
-                    continue
-                a, b = point(layer.rect.x, layer.rect.y), point(layer.rect.right, layer.rect.bottom)
-                pico.draw_rectangle(a[0], b[1], b[0], a[1], *layer.color, filled=True)
-            for collider in world.geometry.objects.values():
-                rect = collider.rect
-                a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
-                color = (242, 190, 65) if collider.kind == "door" else (36, 43, 41)
-                pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=collider.active)
-        self._map_roads(world, point, scale, {key for key in controlled_roads if state.roads[key].blocked})
+            ground = ((layer.rect, layer.color) for layer in world.map_layers
+                      if not layer.role.startswith("road") and layer.role != "pavement")
+            self._draw_map_batch("full terrain", world, layout, map_rectangles(ground, point, canvas_height))
+            self._draw_map_batch("full obstacles", world, (*layout, world.revision),
+                                 map_colliders(world.geometry.objects.values(), point, canvas_height))
+        blocked = frozenset(key for key in controlled_roads if state.roads[key].blocked)
+        self._draw_map_batch("full roads", world, (*layout, blocked), map_roads(world, point, scale, canvas_height, blocked))
         for key, rect in world.territories.items():
             a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
             pico.draw_rectangle(a[0], b[1], b[0], a[1], 90, 122, 110)
@@ -531,6 +514,8 @@ class HUD:
         self.text("map_size", camera.width - (230 if not world.facilities else 350), 245)
 
     def close(self):
+        self._map_batches.clear()
+        self._map_world = None
         self.labels.clear()
         for font in self.fonts.values():
             self.backend.TTF_CloseFont(font.font)
