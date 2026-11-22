@@ -1,0 +1,51 @@
+{
+  "format": "revenant.facility_prefab.v1",
+  "id": "field_warehouse_01",
+  "version": 1,
+  "name": "물류창고",
+  "kind": "warehouse",
+  "minimum_extent": 160,
+  "bounds": [-24, -19, 48, 38],
+  "terminal_node": "supplies",
+  "connectors": {
+    "vehicle": {"position": [0, 19], "direction": [0, 1], "width_m": 3, "node": "gate"},
+    "pedestrian": {"position": [1, 8], "direction": [0, 1], "width_m": 2, "node": "entry"}
+  },
+  "layers": [
+    {"id": "yard", "rect": [-24, -19, 48, 38], "style": "yard", "image": "", "color": [101, 101, 82]},
+    {"id": "loading", "rect": [-13, 8, 11, 7], "style": "pavement", "image": "", "color": [126, 123, 105]},
+    {"id": "floor", "rect": [-14, -16, 28, 24], "style": "floor", "image": "", "color": [121, 122, 111]}
+  ],
+  "colliders": [
+    {"id": "north", "rect": [-14, -16, 28, 0.3]},
+    {"id": "west", "rect": [-14, -15.7, 0.3, 23.4]},
+    {"id": "east", "rect": [13.7, -15.7, 0.3, 23.4]},
+    {"id": "south_west", "rect": [-14, 7.7, 4, 0.3]},
+    {"id": "shutter", "rect": [-10, 7.7, 4, 0.3], "kind": "door", "material": "metal"},
+    {"id": "south_middle", "rect": [-6, 7.7, 6, 0.3]},
+    {"id": "personnel_door", "rect": [0, 7.7, 2, 0.3], "kind": "door", "material": "wood"},
+    {"id": "south_east", "rect": [2, 7.7, 12, 0.3]},
+    {"id": "west_rack_1", "rect": [-11, -11, 5, 1.2], "kind": "rack", "material": "metal"},
+    {"id": "west_rack_2", "rect": [-11, -5, 5, 1.2], "kind": "rack", "material": "metal"},
+    {"id": "east_rack", "rect": [6, -10, 4.8, 1.2], "kind": "rack", "material": "metal"},
+    {"id": "dock_pallets", "rect": [-10, 11, 2.4, 1.6], "kind": "cover", "material": "wood"}
+  ],
+  "navigation": {
+    "gate": [0, 19], "yard": [1, 13], "entry": [1, 8], "aisle": [1, 2],
+    "supplies": [1, -10], "inside_watch": [4, -5], "gate_watch": [4, 16],
+    "west_front": [-19, 14], "west_back": [-19, -14],
+    "east_front": [19, 14], "east_back": [19, -14]
+  },
+  "navigation_edges": [
+    ["gate", "yard"], ["yard", "entry"], ["entry", "aisle"], ["aisle", "supplies"],
+    ["supplies", "inside_watch"], ["aisle", "inside_watch"], ["yard", "gate_watch"],
+    ["yard", "west_front"], ["west_front", "west_back"],
+    ["yard", "east_front"], ["east_front", "east_back"]
+  ],
+  "guard_posts": [
+    {"route": ["inside_watch"], "facing": [0, 1]},
+    {"route": ["gate_watch"], "facing": [0, 1]},
+    {"route": ["west_front", "west_back"], "facing": [0, -1]},
+    {"route": ["east_back", "east_front"], "facing": [0, 1]}
+  ]
+}

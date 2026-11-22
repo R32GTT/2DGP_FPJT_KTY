@@ -67,7 +67,7 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
     if sum(cargo.values()) < minimum_batch:
         return None
     units = sorted((u for u in state.units.values()
-                    if u.node_id == origin.node_id and u.status == "available" and u.soldiers),
+                    if u.node_id == origin.node_id and u.status == "available" and u.soldiers and u.can_escort),
                    key=lambda unit: (unit.soldiers, unit.id))
     unit_ids, soldiers = [], 0
     for unit in units:

@@ -47,6 +47,12 @@ def has_walkable_access(definition):
             if other not in visited:
                 visited.add(other)
                 pending.append(other)
+    for post in definition.get("guard_posts", ()):
+        route = post["route"]
+        if not route or not set(route) <= visited:
+            return False
+        if not all(clear(nodes[a], nodes[b]) for a, b in zip(route, route[1:] + route[:1])):
+            return False
     return ({entrance["node"], definition["terminal_node"]} <= visited
             and (definition["kind"] != "safehouse"
                  or any(clear((0, 0), nodes[key]) for key in visited)))
@@ -134,10 +140,15 @@ def expand_instances(scene, root):
             if math.dist(scene["navigation"][road_node], scene["navigation"][vehicle_node]) > 1e-6:
                 raise ValueError(f"도로와 프리팹 차량 진입점 불일치: {row['id']}")
             scene["navigation_edges"].append((road_node, vehicle_node))
+        guard_posts = []
+        for post in definition.get("guard_posts", ()):
+            dx, dy = rotate(post["facing"], placement.turns)
+            route = [scene["navigation"][prefix + key] for key in post["route"]]
+            guard_posts.append((route, math.atan2(dy, dx)))
         scene["placed_prefabs"].append({"id": row["id"], "prefab_id": definition["id"],
                                        "version": definition["version"], "kind": definition["kind"],
                                        "rect": placement.rect(definition["bounds"]), "connectors": connectors,
-                                       "terminal": prefix + definition["terminal_node"]})
+                                       "terminal": prefix + definition["terminal_node"], "guard_posts": guard_posts})
     return scene
 
 

@@ -195,6 +195,7 @@ class Brain:
     combat: CombatState = field(default_factory=CombatState)
     search: SearchState = field(default_factory=SearchState)
     look: LookState = field(default_factory=LookState)
+    post_facing: float | None = None
 
     @property
     def visible(self):

@@ -1,5 +1,6 @@
 """캠페인의 병력을 가까운 현장에 같은 멤버 ID로 연결한다."""
 
+from collections import defaultdict
 import math
 
 from campaign.models import FOOT_OPERATIONS, Position
@@ -42,13 +43,14 @@ class CampaignPresence:
         if not self.roster.materialized:
             return
         state = self.bridge.simulation.state
-        for unit in sorted(state.units.values(), key=lambda unit: unit.id):
+        garrisons = defaultdict(list)
+        for unit in sorted(state.units.values(), key=lambda unit: (unit.can_escort, unit.id)):
             if unit.node_id not in self.roster.active_nodes or unit.faction != "enemy" or not unit.soldiers:
                 continue
-            for actor in self.roster.members(unit.id, self.weapon):
-                if actor.id not in self.ai.brains:
-                    self._place(actor, unit.node_id)
-                    self.ai.brains[actor.id] = Brain([actor.xy])
+            garrisons[unit.node_id].extend((actor, unit.status == "reserved")
+                                           for actor in self.roster.members(unit.id, self.weapon))
+        for node, members in garrisons.items():
+            self._guard_posts(node, members)
         for view in self.bridge.convoys(seconds):
             operation = state.operations[view.id]
             if operation.kind not in FOOT_OPERATIONS or operation.phase not in {"outbound", "returning"}:
@@ -67,8 +69,31 @@ class CampaignPresence:
                     point = next(self.world.navigation.nearby_goals(point, False), (view.x, view.y))
                     actor.position = Position(*point)
                     actor.facing = view.heading
-                    brain.patrol = [point]
+                    brain.patrol, brain.waypoint, brain.post_facing = [point], 0, None
                 actor.last_node = ""
+
+    def _guard_posts(self, node, members):
+        posts = iter(self.sites[node]["guard_posts"])
+        home = self.bridge.simulation.state.nodes[node].position
+        for actor, reserved in members:
+            post = None if reserved else next(posts, None)
+            brain = self.ai.brains.get(actor.id)
+            if brain is None:
+                if post and all(math.dist(post[0][0], other.xy) >= .65 for other in self.roster.actors
+                                if other is not actor and other.hp > 0):
+                    actor.position = Position(*post[0][0])
+                    actor.facing = post[1]
+                    self.roster.spawns[actor.id] = actor.xy
+                else:
+                    self._place(actor, node)
+                brain = self.ai.brains[actor.id] = Brain([actor.xy])
+            if not self.sites[node]["guard_posts"]:
+                continue
+            fallback = self.roster.spawns[actor.id] if actor.home_node == node else (home.x, home.y)
+            route, facing = post if post else ([fallback], None)
+            if brain.patrol != route:
+                brain.patrol, brain.waypoint = route, 0
+            brain.post_facing = facing if len(route) == 1 else None
 
     def _in_contact(self, members):
         return any(actor.hp > 0 and (self.ai.brains.get(actor.id) and self.ai.brains[actor.id].visible
@@ -86,7 +111,8 @@ class CampaignPresence:
         if not ready:
             operation.waiting_reason = "local_engagement"
             for actor in members:
-                self.ai.brains[actor.id].patrol = [(point.x, point.y)]
+                brain = self.ai.brains[actor.id]
+                brain.patrol, brain.waypoint = [(point.x, point.y)], 0
         elif operation.waiting_reason.startswith("local_"):
             operation.waiting_reason = ""
         return ready
@@ -112,5 +138,5 @@ class CampaignPresence:
                     brain.memory.reported, brain.memory.reported_at = point, float(operation.created_at)
                     brain.memory.report_source = operation.id
                     brain.combat.combat_alert_until = operation.completed_at + COMBAT_ALERT_SECONDS
-                    brain.patrol = [actor.xy]
+                    brain.patrol, brain.waypoint = [actor.xy], 0
                     self.received.add((operation.id, actor.id))

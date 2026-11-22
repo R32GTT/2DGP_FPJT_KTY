@@ -119,7 +119,8 @@ class GeneratedMapTests(unittest.TestCase):
         warehouse = next(site for site in self.scene["planned_facilities"] if site["kind"] == "warehouse")
         selected = next(site for site in larger["planned_facilities"] if site["kind"] == "warehouse")
         self.assertGreater(selected["rect"][2] * selected["rect"][3], warehouse["rect"][2] * warehouse["rect"][3])
-        self.assertIn("/core/", selected["variant_id"])
+        self.assertEqual(selected["importance"], "core")
+        self.assertEqual(selected["variant_id"], "field_warehouse_01")
 
     def test_roads_reject_disconnection_wrong_entry_direction_and_blocked_vehicle_space(self):
         scene = self.scene

@@ -54,7 +54,8 @@ def deserialize_campaign(text: str) -> CampaignState:
         row["nodes"] = {key: _construct(Node, {**value, "position": _construct(Position, value["position"])})
                         for key, value in row["nodes"].items()}
         for key, cls in (("units", Unit), ("vehicles", Vehicle)):
-            row[key] = {key: _construct(cls, {**value, "position":
+            defaults = {"can_escort": True} if cls is Unit else {}
+            row[key] = {key: _construct(cls, {**defaults, **value, "position":
                         _construct(Position, value["position"]) if value["position"] is not None else None})
                         for key, value in row[key].items()}
         row["source"] = _construct(ExternalSource, row["source"])

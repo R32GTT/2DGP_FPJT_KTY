@@ -22,6 +22,7 @@
     },
     "warehouse": {
       "capabilities": ["logistics"], "units": [2, 2], "vehicles": {"truck": 2},
+      "security_soldiers": 4,
       "inventory": {"supplies": 60, "ammunition": 25, "repair_parts": 10},
       "minimum_stock": {"supplies": 30, "ammunition": 10, "repair_parts": 5},
       "target_stock": {"supplies": 350, "ammunition": 80, "repair_parts": 40}

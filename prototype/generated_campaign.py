@@ -24,7 +24,7 @@ def bind_sites(scene):
         facilities.append({"id": site["id"], "name": name, "kind": site["kind"], "rect": site["rect"],
                            "campaign_id": "" if site["kind"] == "safehouse" else site["id"],
                            "service_node": network["terminals"][site["id"]], "position": site["position"],
-                           "terminal": terminal})
+                           "terminal": terminal, "guard_posts": instance["guard_posts"] if instance else []})
     depot = next(row for row in facilities if row["kind"] == "warehouse")
     safehouse = next(row for row in facilities if row["kind"] == "safehouse")
     return {**scene, "facilities": facilities, "campaign_facility": depot["id"],
@@ -57,6 +57,9 @@ def build_generated_state(scene, setup=None):
         if key == scene["campaign_facility"]:
             facilities[-1]["inventory"] = dict(setup["collection_inventory"])
         assets(key, node, definition)
+        if site["prefab"] and definition.get("security_soldiers"):
+            units.append({"id": f"{key}/security", "soldiers": definition["security_soldiers"],
+                          "node_id": node, "can_escort": False})
     regions = scene.get("generated_regions", [{"id": "generated", "importance": scene["generation"]["importance"]}])
     source = {"id": "external_source", "node_id": scene.get("campaign_entry", network["terminals"].get("entry/0")),
               "inventory": setup["external"]["inventory"]}

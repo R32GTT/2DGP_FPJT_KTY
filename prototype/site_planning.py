@@ -50,6 +50,7 @@ def plan_sites(seed, version, region_size, importance, attempt=0, *, catalog=Non
     selected = []
     for kind in kinds:
         candidates = [(path, item) for path, item in (catalog or {}).items() if item["kind"] == kind
+                      and extent >= item.get("minimum_extent", 0)
                       and region_size in item.get("region_sizes", REGION_PROFILES)
                       and importance in item.get("importance", IMPORTANCE)]
         path, definition = rng.choice(candidates) if candidates else (None, None)

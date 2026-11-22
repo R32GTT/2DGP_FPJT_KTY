@@ -83,6 +83,7 @@ class Unit:
     status: str = "available"
     losses: int = 0
     position: Position | None = None
+    can_escort: bool = True
 
 
 @dataclass
@@ -287,6 +288,7 @@ def validate_state(state: CampaignState) -> None:
     for unit in state.units.values():
         require(type(unit.soldiers) is int and type(unit.losses) is int
                 and unit.soldiers >= 0 and unit.losses >= 0, "잘못된 병력")
+        require(type(unit.can_escort) is bool, "잘못된 병력 호위 설정")
         require((unit.soldiers == 0) == (unit.status == "destroyed"), "병력 격파 상태 불일치")
     for vehicle in state.vehicles.values():
         require(type(vehicle.capacity) is int and vehicle.capacity > 0

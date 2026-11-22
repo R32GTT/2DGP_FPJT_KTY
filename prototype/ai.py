@@ -82,6 +82,8 @@ class EnemyAI:
             return "boarding", actor.boarding_goal
         goal = brain.patrol[brain.waypoint] if brain.patrol else actor.xy
         if not brain.patrol or len(brain.patrol) == 1 and math.dist(actor.xy, goal) < 0.25:
+            if brain.post_facing is not None:
+                actor.facing = brain.post_facing
             return "idle", None
         if (math.dist(actor.xy, goal) < 0.25
                 or brain.motion.arrived(goal, self.world.revision)):
