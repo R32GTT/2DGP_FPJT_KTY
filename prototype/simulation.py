@@ -199,7 +199,7 @@ class PlaySimulation:
                     if actor.hp > 0 and math.dist(actor.xy, self.player.xy) < 24), default=0.0)
 
     def step(self, direction=(0, 0), aim=None, firing=False, sprint=False, *, aiming=False,
-             trigger_pressed=False, walking=False):
+             trigger_pressed=False, walking=False, aim_offset=None):
         if self.respawn_target is not None:
             current = self.campaign.simulation.state.world_time
             self.campaign.simulation.advance_to(min(self.respawn_target, current + 60))
@@ -221,7 +221,9 @@ class PlaySimulation:
         self.world.update_chunks(self.player.xy)
         if trigger_pressed and self.player.weapon is not None and self.player.weapon.reloading:
             self.cancel_reload()
-        if aim is not None and self.player.hp > 0:
+        if aim_offset is not None and self.player.hp > 0:
+            self.player.facing = math.atan2(aim_offset[1], aim_offset[0])
+        elif aim is not None and self.player.hp > 0:
             self.player.facing = math.atan2(aim[1] - self.player.position.y, aim[0] - self.player.position.x)
         for actor in [self.player, *self.guards]:
             if actor.hp > 0 and actor.weapon is not None:

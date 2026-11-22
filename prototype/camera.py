@@ -1,5 +1,7 @@
 """플레이어 추적과 월드·화면 좌표 변환."""
 
+import math
+
 from .geometry import Rect
 
 
@@ -11,6 +13,7 @@ class PlayCamera:
     def __init__(self, width=CANVAS_SIZE[0], height=CANVAS_SIZE[1], zoom=1.0):
         self.width, self.height = width, height
         self.offset_x, self.offset_y = 0.0, 0.0
+        self.look_x, self.look_y = 0.0, 0.0
         self.set_zoom(zoom)
 
     def screen(self, x: float, y: float) -> tuple[float, float]:
@@ -26,11 +29,28 @@ class PlayCamera:
     def set_zoom(self, zoom):
         self.scale = PIXELS_PER_METER * max(0.5, min(4.0, zoom))
 
-    def follow(self, position, mouse=None):
-        ahead_x = max(-2, min(2, (mouse[0] - self.width / 2) / self.scale * 0.2)) if mouse else 0
-        ahead_y = max(-2, min(2, (mouse[1] - self.height / 2) / self.scale * 0.2)) if mouse else 0
-        self.offset_x = self.width / 2 - (position[0] + ahead_x) * self.scale
-        self.offset_y = self.height / 2 - (position[1] + ahead_y) * self.scale
+    def follow(self, position, mouse=None, *, aiming=False, dt=None):
+        half_w, half_h = self.width / 2, self.height / 2
+        limit_x, limit_y = (6.0, 6.0) if aiming else (2.0, 3.5)
+        limit_x = min(limit_x, max(0.0, half_w - 24) / self.scale)
+        limit_y = min(limit_y, max(0.0, half_h - 24) / self.scale)
+        mx, my = mouse if mouse is not None else (half_w, half_h)
+        if aiming:
+            target_x = max(-1.0, min(1.0, (mx - half_w) / half_w)) * limit_x
+        else:
+            target_x = max(-limit_x, min(limit_x, (mx - half_w) / self.scale * 0.2))
+        target_y = max(-1.0, min(1.0, (my - half_h) / half_h)) * limit_y
+        blend = 1.0 if dt is None else -math.expm1(-12.0 * dt)
+        self.look_x += (target_x - self.look_x) * blend
+        self.look_y += (target_y - self.look_y) * blend
+        self.recenter(position)
+
+    def recenter(self, position):
+        # 줌인 직후에도 부드럽게 남아 있는 오프셋이 플레이어를 화면 밖으로 밀지 않게 한다.
+        limit_x = max(0.0, self.width / 2 - 24) / self.scale
+        limit_y = max(0.0, self.height / 2 - 24) / self.scale
+        self.offset_x = self.width / 2 - (position[0] + max(-limit_x, min(limit_x, self.look_x))) * self.scale
+        self.offset_y = self.height / 2 - (position[1] + max(-limit_y, min(limit_y, self.look_y))) * self.scale
 
     def visible(self, rect):
         x0, y0 = self.world(0, 0)

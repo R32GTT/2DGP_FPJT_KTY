@@ -92,7 +92,12 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         simulation.player.weapon.automatic = not simulation.player.weapon.automatic
                     elif action == "respawn":
                         simulation.request_respawn()
-            camera.follow(simulation.player.xy, controls.mouse)
+            aiming = controls.aiming and not (controls.paused or controls.map_open)
+            camera.follow(simulation.player.xy, None if controls.map_open else controls.mouse, aiming=aiming, dt=elapsed)
+            aim_offset = None
+            if not controls.map_open:
+                aim_x, aim_y = camera.world(*controls.mouse)
+                aim_offset = aim_x - simulation.player.position.x, aim_y - simulation.player.position.y
             if controls.paused:
                 accumulator = 0.0
                 controls.trigger_pending = False
@@ -102,9 +107,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                 while accumulator >= FIXED_DT and steps < 6:
                     pressed = controls.consume_trigger()
                     simulation.step((0, 0) if controls.map_open else controls.direction,
-                                    None if controls.map_open else camera.world(*controls.mouse),
-                                    not controls.map_open and (controls.firing or pressed),
-                                    controls.sprint, aiming=controls.aiming and not controls.map_open,
+                                    aim_offset=aim_offset, firing=not controls.map_open and (controls.firing or pressed),
+                                    sprint=controls.sprint, aiming=aiming,
                                     trigger_pressed=pressed and not controls.map_open, walking=controls.walking)
                     accumulator -= FIXED_DT
                     steps += 1
@@ -114,7 +118,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         accumulator = 0.0
                         simulation.message = f"{simulation.stack_title} 완료 · P 통과 재개"
                         break
-            camera.follow(simulation.player.xy, controls.mouse)
+            camera.recenter(simulation.player.xy)
             update_ms = (perf_counter() - started) * 1000
             renderer.render(simulation, camera, debug=controls.debug, paused=controls.paused,
                             update_ms=update_ms, mouse=controls.mouse, map_open=controls.map_open)
