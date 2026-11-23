@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 import math
-from shapely import LineString, MultiPoint, Point
+from shapely import LineString, Point, box, linestrings
 
 from .spatial import BoundsIndex
 
@@ -81,10 +81,23 @@ class SpatialIndex:
         del self.objects[key]
         self.index.remove(key)
 
+    def sight_count(self, origin, targets):
+        return sum(self.sight_flags(origin, targets))
+
+    def sight_flags(self, origin, targets):
+        if len(targets) <= 3:
+            return [self.raycast(origin, target, category="sight") is None for target in targets]
+        rays = linestrings([(origin, point) for point in targets])
+        blocked = {row for row, collider in self.index.intersections(rays)
+                   if collider.active and "sight" in collider.blocks
+                   and collider.rect.segment_entry(origin, targets[row]) is not None}
+        return [index not in blocked for index in range(len(targets))]
+
     def raycast(self, start, end, *, padding=0.0, category="sight", ignore_doors=False, ignore_ids=()):
         if padding:
-            shape = MultiPoint([(x + dx, y + dy) for x, y in (start, end)
-                                for dx in (-padding, padding) for dy in (-padding, padding)]).convex_hull
+            # 넓은 후보 조회 뒤 기존 선분 판정에서 실제 충돌과 순서를 결정한다.
+            shape = box(min(start[0], end[0]) - padding, min(start[1], end[1]) - padding,
+                        max(start[0], end[0]) + padding, max(start[1], end[1]) + padding)
         else:
             shape = Point(start) if start == end else LineString((start, end))
         nearest = None

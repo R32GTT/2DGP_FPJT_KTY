@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from campaign.models import Position
 from prototype.actors import Actor
@@ -18,6 +19,21 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_fixed_sight_reuses_squad_geometry_but_updates_on_door_change(self):
+        geometry = SpatialIndex()
+        door = Collider("door", Rect(2, -1, .2, 2), kind="door")
+        geometry.add(door)
+        sweep = IndoorSweep(None, (0, 0), 0)
+        samples = [(3, 0), (3, .5), (3, -.5), (0, 1)]
+        with patch.object(geometry, "sight_flags", wraps=geometry.sight_flags) as query:
+            self.assertEqual(sweep.fixed_view_count((0, 0), samples, geometry, 1), 1)
+            self.assertEqual(sweep.fixed_view_count((0, 0), list(reversed(samples)), geometry, 1), 1)
+            self.assertEqual(query.call_count, 1)
+            door.active = False
+            self.assertEqual(sweep.fixed_view_count((0, 0), samples, geometry, 2), 4)
+            self.assertEqual(query.call_count, 2)
+        self.assertFalse(sweep.checked)
+
     def test_indoor_gaze_starts_turning_immediately_and_brakes_before_reversing(self):
         actor = Actor("guard", Position(0, 0))
         brain = Brain([])

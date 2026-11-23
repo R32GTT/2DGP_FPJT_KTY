@@ -16,6 +16,10 @@ from . import ai_config as config
 class SearchController:
     def __init__(self, world, brains, incidents):
         self.world, self.brains, self.incidents = world, brains, incidents
+        self.view_budget = None
+
+    def begin_tick(self):
+        self.view_budget = 3
 
     def refresh_failure(self, actor, brain):
         failure = brain.search.failed_clue
@@ -163,6 +167,13 @@ class SearchController:
             search.cover = None
         lease = task.sweep or (None if direct else self.incidents.get(brain.incident))
         if task.target is None:
+            if task.sweep is not None and self.view_budget is not None:
+                if task.sweep.complete:
+                    return None, True
+                if time < task.select_at or not self.view_budget:
+                    return None, False
+                task.select_at = time + 0.1
+                self.view_budget -= 1
             task.target = self.next_view(actor, brain, time, lease)
         if task.target is None:
             return None, task.sweep.complete if task.sweep else not task.points
@@ -197,7 +208,8 @@ class SearchController:
                     return point
             return None
         sweep, area = task.sweep, task.sweep.area
-        available = {p for p in (*area.points, *area.observations) if p not in sweep.reserved(actor.id, time)
+        reserved = sweep.reserved(actor.id, time)
+        available = {p for p in (*area.points, *area.observations) if p not in reserved
                      and task.blocked.get(p) != revision and sweep.observed_from.get(p) != revision}
         pending = sweep.pending_for(actor.id, None)
         previous_room = task.scan_origin[1] if task.scan_origin else None
@@ -212,11 +224,11 @@ class SearchController:
         if task.scan_origin != (actor.xy, room, revision) and sweep.can_scan_here(actor.xy, remaining, self.world.geometry):
             return target
         authored = (p for p in area.observations if p in available and area.observations[p] == room
-                    and sweep.can_scan_here(p, remaining, self.world.geometry))
+                    and sweep.fixed_view_count(p, remaining, self.world.geometry, revision))
         candidates = [p for p in area.room_points[room] if p in available]
         return min(authored, key=lambda p: math.dist(actor.xy, p), default=None) or (sweep.observation_point(
             actor.xy, actor.facing if brain.motion.heading is None else brain.motion.heading,
-            candidates, remaining, self.world.navigation) if candidates else None)
+            candidates, remaining, self.world.navigation, revision=revision) if candidates else None)
 
     @staticmethod
     def reset_walking_look(brain):
@@ -374,9 +386,9 @@ class Visit(Sequence):
             return Status.SUCCESS if task.sweep else Status.FAILURE
         if task.sweep is not None:
             room = task.sweep.area.room_of(point)
-            can_watch = not task.staging and task.scan_origin != (actor.xy, room, world.revision) and task.sweep.can_scan_here(
-                actor.xy, task.sweep.pending_for(actor.id, room), world.geometry)
-            arrived = math.dist(actor.xy, point) <= .25 or can_watch
+            arrived = math.dist(actor.xy, point) <= .25 or (
+                not task.staging and task.scan_origin != (actor.xy, room, world.revision)
+                and task.sweep.can_scan_here(actor.xy, task.sweep.pending_for(actor.id, room), world.geometry))
         else:
             assigned = brain.search.arrival
             arrived = math.dist(actor.xy, point) < .35 or brain.motion.arrived(point, world.revision)

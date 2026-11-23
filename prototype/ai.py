@@ -410,6 +410,7 @@ class EnemyAI:
                 face(actor, self.brains[actor.id].look.point)
 
     def update(self, actors, player, time):
+        self.search.begin_tick()
         intents, budget = {}, 1
         approach_looks = {}
         approaches = {}

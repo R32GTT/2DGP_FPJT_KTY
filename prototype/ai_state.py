@@ -134,6 +134,7 @@ class InvestigationState:
     sweep: IndoorSweep | None = None
     staging: bool = False
     target: tuple | None = None
+    select_at: float = 0.0
     sound_cue: SearchCue | None = None
     blocked: dict = field(default_factory=dict)
     execution: object = None

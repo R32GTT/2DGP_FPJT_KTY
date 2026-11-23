@@ -14,11 +14,14 @@ class BoundsIndex:
         self.items[key] = rect, value
         self.tree = None
 
-    def _query(self, shape, predicate=None):
+    def _ensure_tree(self):
         if self.tree is None:
             self.keys = tuple(sorted(self.items))
             self.tree = STRtree([box(rect.x, rect.y, rect.right, rect.bottom)
                                  for rect, _ in (self.items[key] for key in self.keys)])
+
+    def _query(self, shape, predicate=None):
+        self._ensure_tree()
         return sorted(self.tree.query(shape, predicate=predicate))
 
     def remove(self, key):
@@ -27,6 +30,11 @@ class BoundsIndex:
 
     def query_shape(self, shape):
         return [self.items[self.keys[index]][1] for index in self._query(shape, "intersects")]
+
+    def intersections(self, shapes):
+        self._ensure_tree()
+        rows, columns = self.tree.query(shapes, predicate="intersects")
+        return ((row, self.items[self.keys[column]][1]) for row, column in zip(rows, columns))
 
     def query(self, rect):
         return [self.items[self.keys[index]][1]

@@ -48,6 +48,7 @@ def sample_views(xy, facing, samples, geometry, *, stationary=False, include_out
     forward_x, forward_y = math.cos(facing), math.sin(facing)
     scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
     near = 0.15 if stationary else 0.075
+    candidates = []
     for point in samples:
         dx, dy = point[0] - xy[0], point[1] - xy[1]
         distance = math.hypot(dx, dy)
@@ -55,23 +56,26 @@ def sample_views(xy, facing, samples, geometry, *, stationary=False, include_out
             continue
         in_view = distance <= near or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS
         if in_view or include_outside:
-            clear = geometry.raycast(xy, point, category="sight") is None
-            # 시야 밖에 있지만 장애물로 가려지지 않은 표본도 디버그에서 구별한다.
-            yield point, (True if in_view else None) if clear else False
+            candidates.append((point, in_view))
+    flags = geometry.sight_flags(xy, [point for point, _ in candidates])
+    for (point, in_view), clear in zip(candidates, flags):
+        # 시야 밖에 있지만 장애물로 가려지지 않은 표본도 디버그에서 구별한다.
+        yield point, (True if in_view else None) if clear else False
 
 
 def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range=SCAN_RANGE_M,
                 continue_scan=False):
-    visible = []
+    candidates = []
     for point, weight in samples.items():
         dx, dy = point[0] - xy[0], point[1] - xy[1]
         distance = math.hypot(dx, dy)
         if not 0.15 <= distance <= scan_range:
             continue
         offset = math.remainder(math.atan2(dy, dx) - facing, math.tau)
-        if (abs(offset) <= max_offset + SCAN_HALF_CONE
-                and geometry.raycast(xy, point, category="sight") is None):
-            visible.append((point, offset, distance, weight))
+        if abs(offset) <= max_offset + SCAN_HALF_CONE:
+            candidates.append((point, offset, distance, weight))
+    flags = geometry.sight_flags(xy, [row[0] for row in candidates])
+    visible = [row for row, clear in zip(candidates, flags) if clear]
     best = None
     for point, point_angle, distance, _ in visible:
         offset = max(-max_offset, min(max_offset, point_angle))
@@ -216,6 +220,9 @@ class IndoorSweep(Reservations):
     regroup_until: float | None = None
     regroup_retry_at: float = 0.0
     regroup_done: bool = False
+    _sight_revision: int | None = field(default=None, init=False, repr=False)
+    _sight_cache: dict = field(default_factory=dict, init=False, repr=False)
+
     def release(self, actor_id):
         super().release(actor_id)
         self.corner_claims.pop(actor_id, None)
@@ -300,15 +307,27 @@ class IndoorSweep(Reservations):
         scan_range = SCAN_RANGE_M if walking else STATIONARY_SCAN_RANGE_M
         return choose_look(xy, facing, geometry, samples, scan_range=scan_range, continue_scan=continue_scan)
 
-    @staticmethod
-    def _visible_from(origin, point, geometry):
-        return (math.dist(origin, point) <= STATIONARY_SCAN_RANGE_M
-                and geometry.raycast(origin, point, category="sight") is None)
-
     def can_scan_here(self, origin, remaining, geometry):
-        return any(self._visible_from(origin, point, geometry) for point in remaining)
+        nearby = [point for point in remaining if math.dist(origin, point) <= STATIONARY_SCAN_RANGE_M]
+        return (any(geometry.raycast(origin, point, category="sight") is None for point in nearby[:3])
+                or geometry.sight_count(origin, nearby[3:]) > 0)
 
-    def observation_point(self, origin, heading, candidates, remaining, navigation):
+    def fixed_view_count(self, origin, targets, geometry, revision):
+        nearby = [point for point in targets if math.dist(origin, point) <= STATIONARY_SCAN_RANGE_M]
+        if revision is None:
+            return geometry.sight_count(origin, nearby)
+        if revision != self._sight_revision:
+            self._sight_cache.clear()
+            self._sight_revision = revision
+        if origin not in self._sight_cache and len(self._sight_cache) >= 64:
+            self._sight_cache.pop(next(iter(self._sight_cache)))
+        flags = self._sight_cache.setdefault(origin, {})
+        missing = [point for point in nearby if point not in flags]
+        if missing:
+            flags.update(zip(missing, geometry.sight_flags(origin, missing)))
+        return sum(flags[point] for point in nearby)
+
+    def observation_point(self, origin, heading, candidates, remaining, navigation, *, revision=None):
         forward_x, forward_y = math.cos(heading), math.sin(heading)
 
         def travel_cost(point):
@@ -325,7 +344,7 @@ class IndoorSweep(Reservations):
 
         def score(point):
             # 어느 지점에 서야 가구나 벽 뒤의 미확인 공간이 더 많이 드러나는지 비교한다.
-            visible = sum(self._visible_from(point, other, navigation.geometry) for other in samples)
+            visible = self.fixed_view_count(point, samples, navigation.geometry, revision)
             gain = max(visible * stride, int(point in pending))
             # 우회 경로는 공용 경로 탐색에서 계산한다. 후보 평가에는 직행 여부만 사용한다.
             cost = travel_cost(point)

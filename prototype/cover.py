@@ -1,36 +1,27 @@
-"""벽·장애물 형상에서 엄폐 후보를 한 번 추출한다."""
+"""주변 벽과 장애물에서 엄폐 후보를 만든다."""
 
 import math
 
 from .geometry import Rect
-from .spatial import BoundsIndex
 
 
 class CoverFinder:
     def __init__(self, world):
         self.world = world
-        self.refresh()
 
-    def refresh(self):
-        self.revision = self.world.revision
-        self.points = []
-        self.index = BoundsIndex()
-        for collider in self.world.geometry.objects.values():
+    def choose(self, actor, threat, occupied=()):
+        x, y = actor.xy
+        offset = 0.4
+        bounds = Rect(x - 8, y - 8, 16, 16).expanded(offset)
+        nearby = []
+        for collider in self.world.geometry.index.query(bounds):
             if collider.kind == "door" or "bullet" not in collider.blocks:
                 continue
             rect = collider.rect
-            offset = 0.4
-            self.points.extend(((rect.x - offset, rect.y + rect.h / 2),
-                                (rect.right + offset, rect.y + rect.h / 2),
-                                (rect.x + rect.w / 2, rect.y - offset),
-                                (rect.x + rect.w / 2, rect.bottom + offset)))
-        for index, point in enumerate(self.points):
-            self.index.add(index, Rect(point[0] - 0.01, point[1] - 0.01, 0.02, 0.02), point)
-
-    def choose(self, actor, threat, occupied=()):
-        if self.revision != self.world.revision:
-            self.refresh()
-        nearby = self.index.query(Rect(actor.position.x - 8, actor.position.y - 8, 16, 16))
+            nearby.extend(((rect.x - offset, rect.y + rect.h / 2),
+                           (rect.right + offset, rect.y + rect.h / 2),
+                           (rect.x + rect.w / 2, rect.y - offset),
+                           (rect.x + rect.w / 2, rect.bottom + offset)))
         for point in sorted(nearby, key=lambda point: math.dist(actor.xy, point)):
             if math.dist(actor.xy, point) >= 8:
                 continue

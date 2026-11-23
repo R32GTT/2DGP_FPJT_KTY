@@ -59,9 +59,6 @@ class WorldChunkTests(unittest.TestCase):
         self.assertFalse(tree.id in world.geometry.objects)
         self.assertFalse(door.id in world.geometry.objects)
         self.assertTrue(old_chunks - world.chunks.loaded.keys())
-        cover = play.ai.cover_finder
-        cover.choose(play.player, home)
-        self.assertEqual(cover.revision, world.revision)
         play.roster.materialized = False
         play._sync_guards()
         play.campaign.advance_to(600)
