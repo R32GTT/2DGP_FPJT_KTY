@@ -278,6 +278,8 @@ class HUD:
 
         if simulation.respawn_target is not None:
             message = "안전가옥으로 복귀 중"
+        elif simulation.respawn_selecting:
+            return
         elif simulation.player.hp <= 0:
             message = "전투 불능  ·  Enter로 안전가옥 복귀"
         elif now < self.message_until:
@@ -293,6 +295,22 @@ class HUD:
         pico.draw_rectangle(center - half_width - 12, y - 15, center + half_width + 12, y + 15,
                             15, 24, 27, 218, filled=True)
         self.text(key, center - half_width, y)
+
+    def _draw_respawn_options(self, simulation, width, height):
+        sites = simulation.respawn_sites.values()
+        x, top = width / 2 - 190, height / 2 + 62
+        panel_height = 70 + len(sites) * 27
+        self.panel(x, top - panel_height, 380, panel_height)
+        self.label("respawn_title", "복귀할 안전가옥 선택", 20)
+        self.text("respawn_title", x + 18, top - 22)
+        for number, site in enumerate(sites, 1):
+            stored = simulation.safehouse_stash.get(site["id"])
+            loadout = f"  ·  보관 {stored.spec.name}" if stored else ""
+            key = f"respawn_option/{number}"
+            self.label(key, f"[{number}] {site['name']}{loadout}", 16)
+            self.text(key, x + 18, top - 28 - number * 27)
+        self.label("respawn_help", "C 닫기", 13)
+        self.text("respawn_help", x + 18, top - panel_height + 15)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
                cache_count=0, search_counts=None):
@@ -350,6 +368,8 @@ class HUD:
             self._minimap(simulation, camera, debug)
         if map_open:
             self._region_map(simulation, camera, debug)
+        if simulation.respawn_selecting and not paused:
+            self._draw_respawn_options(simulation, width, height)
 
     def _minimap(self, simulation, camera, debug=False):
         width, height = 180, 126

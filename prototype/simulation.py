@@ -89,6 +89,9 @@ class PlaySimulation:
         if self.world.territories:
             self.message = "M 지도에서 동서 보급로 확인 · 차단기 가까이에서 E"
         self.respawn_target = None
+        self.respawn_site_id = None
+        self.respawn_selecting = False
+        self.respawn_sites = {site["id"]: site for site in self.world.facilities if site["kind"] == "safehouse"}
         self.dropped = []
         self.safehouse_stash = {}
         self.kit_available = True
@@ -208,8 +211,10 @@ class PlaySimulation:
             self.campaign.simulation.advance_to(min(self.respawn_target, current + 60))
             self.time = float(self.campaign.simulation.state.world_time)
             if self.time >= self.respawn_target:
+                site = self.respawn_sites.get(self.respawn_site_id)
                 self.respawn_target = None
-                self.player.position = Position(*self.world.safehouse)
+                self.respawn_site_id = None
+                self.player.position = Position(*(site["position"] if site else self.world.safehouse))
                 self.player.hp, self.player.armor = 100, 0
                 self.roster.materialized = True
                 self.ai.reset()
@@ -217,7 +222,7 @@ class PlaySimulation:
                 for actor in self.guard_records:
                     if actor.hp > 0 and actor.weapon is not None:
                         actor.weapon.tick(21600)
-                self.message = "무장 없이 안전가옥 복귀 — E: 훈련용 키트, 또는 바닥의 무기 회수"
+                self.message = f"{site['name'] if site else '안전가옥'}에 무장 없이 복귀"
             self.feedback.update(FIXED_DT, 0)
             return
         self.time += FIXED_DT
@@ -350,11 +355,20 @@ class PlaySimulation:
             return
         self.message = exchange_safehouse_weapon(self, facility)
 
-    def request_respawn(self):
-        if self.player.hp <= 0 and self.respawn_target is None:
-            self._drop_equipment()
-            self.combat.traces.clear()
-            self.roster.materialized = False
-            self._sync_guards()
-            self.respawn_target = self.campaign.simulation.state.world_time + 21600
-            self.message = "안전가옥으로 복귀 중 — 실제 군수 세계 시간 6시간 진행"
+    def request_respawn(self, slot=None):
+        if self.player.hp > 0 or self.respawn_target is not None:
+            return
+        if slot is None and len(self.respawn_sites) > 1:
+            self.respawn_selecting = True
+            return
+        sites = tuple(self.respawn_sites)
+        if slot is not None and not 0 <= slot < len(sites):
+            return
+        self.respawn_selecting = False
+        self.respawn_site_id = sites[slot or 0] if sites else None
+        self._drop_equipment()
+        self.combat.traces.clear()
+        self.roster.materialized = False
+        self._sync_guards()
+        self.respawn_target = self.campaign.simulation.state.world_time + 21600
+        self.message = "안전가옥으로 복귀 중 — 실제 군수 세계 시간 6시간 진행"

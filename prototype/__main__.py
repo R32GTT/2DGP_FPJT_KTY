@@ -80,6 +80,13 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     controls.debug = controls.paused = True
                     continue
                 if not controls.paused:
+                    if simulation.respawn_selecting:
+                        if action.startswith("slot_"):
+                            simulation.request_respawn(int(action[-1]))
+                            controls.map_open = False
+                        elif action == "cancel":
+                            simulation.respawn_selecting = False
+                        continue
                     if (controls.firing or controls.map_open) and action in {"door", "supplies", "safehouse_stash"}:
                         simulation.message = "지도를 닫은 뒤 상호작용" if controls.map_open else "사격 중에는 상호작용할 수 없음"
                         continue
@@ -93,11 +100,12 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         simulation.reload()
                     elif action == "cancel":
                         simulation.cancel_reload()
-                    elif action.startswith("weapon_"):
-                        simulation.switch_weapon(int(action[-1]) - 1)
+                    elif action in {"slot_0", "slot_1"}:
+                        simulation.switch_weapon(int(action[-1]))
                     elif action == "fire_mode" and simulation.player.weapon:
                         simulation.player.weapon.automatic = not simulation.player.weapon.automatic
-                    elif action == "respawn":
+                    elif action == "respawn" and simulation.player.hp <= 0:
+                        controls.map_open = False
                         simulation.request_respawn()
             aiming = controls.aiming and not (controls.paused or controls.map_open)
             camera.follow(simulation.player.xy, None if controls.map_open else controls.mouse, aiming=aiming, dt=elapsed)

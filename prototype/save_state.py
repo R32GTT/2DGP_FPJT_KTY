@@ -54,6 +54,7 @@ def capture(play):
                        "checked": list(brain.search.checked),
                        "priority": asdict(brain.search.priority_cue) if brain.search.priority_cue else None}
     return {"runtime": {key: getattr(play, key) for key in RUNTIME}, "player": actor_state(play.player),
+            "respawn_site_id": play.respawn_site_id,
             "actors": [actor_state(actor) for actor in roster.actors], "brains": brains,
             "roster": {"spawns": roster.spawns, "deaths": sorted(roster.local_deaths),
                        "seated_deaths": sorted(roster.seated_deaths), "materialized": roster.materialized},
@@ -77,6 +78,9 @@ def restore(play, row):
     if not math.isfinite(play.time) or int(play.time + 1e-8) != state.world_time:
         raise ValueError("현장·캠페인 시각 불일치")
     play.player = restore_actor(row["player"], play.specs)
+    play.respawn_site_id = row.get("respawn_site_id")
+    if play.respawn_site_id is not None and (play.respawn_target is None or play.respawn_site_id not in play.respawn_sites):
+        raise ValueError("잘못된 안전가옥 복귀 지점")
     play.world.update_chunks(play.player.xy)
     roster.actors[:] = [restore_actor(actor, play.specs) for actor in row["actors"]]
     roster.by_id = {actor.id: actor for actor in roster.actors}
@@ -112,9 +116,8 @@ def restore(play, row):
                                       {aid: tuple(point) for aid, point in trip["exits"].items()}, trip["stopped_at"])
                              for key, trip in row["trips"].items()}
     play.dropped = [(tuple(point), restore_weapons(loadout, play.specs)) for point, loadout in row["dropped"]]
-    safehouse_ids = {f["id"] for f in play.world.facilities if f["kind"] == "safehouse"}
     for key, slot in row.get("safehouse_stash", {}).items():
-        if key not in safehouse_ids or len(slot) != 1:
+        if key not in play.respawn_sites or len(slot) != 1:
             raise ValueError("잘못된 안전가옥 보관함")
         play.safehouse_stash[key] = next(iter(restore_weapons(slot, play.specs).values()))
     play.combat.random.setstate(tuples(row["random"]))

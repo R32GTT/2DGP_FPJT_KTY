@@ -44,11 +44,12 @@ class Controls:
                     self.map_open = not self.map_open
                 elif key == sdl2.SDLK_e and event.key.keysym.mod & sdl2.KMOD_SHIFT:
                     actions.append("safehouse_stash")
+                elif sdl2.SDLK_1 <= key <= sdl2.SDLK_4:
+                    actions.append(f"slot_{key - sdl2.SDLK_1}")
                 elif key in (sdl2.SDLK_f, sdl2.SDLK_e, sdl2.SDLK_r, sdl2.SDLK_c,
-                             sdl2.SDLK_v, sdl2.SDLK_1, sdl2.SDLK_2, sdl2.SDLK_RETURN):
+                             sdl2.SDLK_v, sdl2.SDLK_RETURN):
                     actions.append({sdl2.SDLK_f: "door", sdl2.SDLK_e: "supplies", sdl2.SDLK_r: "reload",
-                                    sdl2.SDLK_c: "cancel", sdl2.SDLK_v: "fire_mode", sdl2.SDLK_1: "weapon_1",
-                                    sdl2.SDLK_2: "weapon_2", sdl2.SDLK_RETURN: "respawn"}[key])
+                                    sdl2.SDLK_c: "cancel", sdl2.SDLK_v: "fire_mode", sdl2.SDLK_RETURN: "respawn"}[key])
                 elif key in (sdl2.SDLK_EQUALS, sdl2.SDLK_PLUS, sdl2.SDLK_KP_PLUS):
                     camera.set_zoom(camera.magnification * 1.2)
                 elif key in (sdl2.SDLK_MINUS, sdl2.SDLK_KP_MINUS):

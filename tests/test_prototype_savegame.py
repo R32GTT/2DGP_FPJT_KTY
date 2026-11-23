@@ -54,16 +54,25 @@ class PlaySaveTests(unittest.TestCase):
             path = Path(directory) / 'play.json.gz'
             save_game(play, path)
             restored = load_game(path)
-        restored.player.hp = 0
-        restored.request_respawn()
+            restored.player.hp = 0
+            restored.request_respawn()
+            self.assertTrue(restored.respawn_selecting)
+            self.assertIsNone(restored.respawn_target)
+            restored.request_respawn(slot=1)
+            self.assertFalse(restored.respawn_selecting)
+            self.assertEqual(restored.respawn_target, 21600)
+            save_game(restored, path)
+            restored = load_game(path)
+        self.assertEqual(restored.respawn_site_id, second['id'])
         for _ in range(360):
             restored.step()
-        self.assertEqual(restored.player.xy, restored.world.safehouse)
+        self.assertEqual(restored.player.xy, tuple(second['position']))
+        self.assertEqual(restored.campaign.simulation.state.world_time, 21600)
         self.assertIsNone(restored.player.weapon)
         restored.use_safehouse_stash()
-        self.assertEqual(vars(restored.player.weapon), vars(stored))
-        self.assertNotIn(first['id'], restored.safehouse_stash)
-        self.assertIn(second['id'], restored.safehouse_stash)
+        self.assertEqual(restored.player.weapon.spec.id, 'ar_a')
+        self.assertNotIn(second['id'], restored.safehouse_stash)
+        self.assertEqual(vars(restored.safehouse_stash[first['id']]), vars(stored))
 
     def test_world_changes_losses_weapons_and_clock_survive_real_entry(self):
         play = PlaySimulation(self.scene)
