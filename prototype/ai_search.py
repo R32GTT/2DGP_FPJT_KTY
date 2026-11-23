@@ -175,6 +175,7 @@ class SearchController:
                 task.select_at = time + 0.1
                 self.view_budget -= 1
             task.target = self.next_view(actor, brain, time, lease)
+            task.probe_at = time
         if task.target is None:
             return None, task.sweep.complete if task.sweep else not task.points
         if task.execution is None:
@@ -386,9 +387,12 @@ class Visit(Sequence):
             return Status.SUCCESS if task.sweep else Status.FAILURE
         if task.sweep is not None:
             room = task.sweep.area.room_of(point)
-            arrived = math.dist(actor.xy, point) <= .25 or (
-                not task.staging and task.scan_origin != (actor.xy, room, world.revision)
-                and task.sweep.can_scan_here(actor.xy, task.sweep.pending_for(actor.id, room), world.geometry))
+            arrived = math.dist(actor.xy, point) <= .25
+            if (not arrived and not task.staging and self.time >= task.probe_at
+                    and task.scan_origin != (actor.xy, room, world.revision)):
+                # 이동 중 관찰 지점으로 전환할 수 있는지만 검사한다. 실제 시야 확인은 기존 주기를 쓴다.
+                task.probe_at = self.time + .05
+                arrived = task.sweep.can_scan_here(actor.xy, task.sweep.pending_for(actor.id, room), world.geometry)
         else:
             assigned = brain.search.arrival
             arrived = math.dist(actor.xy, point) < .35 or brain.motion.arrived(point, world.revision)

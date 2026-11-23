@@ -48,9 +48,12 @@ class CrowdMotion:
                 continue
             length = math.hypot(*intent.direction)
             dx, dy = (value / length for value in intent.direction)
-            if not all(self.world.navigation.clear(actor.xy, (x + dx * forward - dy * side,
-                                                               y + dy * forward + dx * side))
-                       for forward in (0, min(0.8, length)) for side in (-0.75, 0.75)):
+            walls = self.world.geometry.query(Rect(x - reach, y - reach, reach * 2, reach * 2))
+            probes = [(x + dx * forward - dy * side, y + dy * forward + dx * side)
+                      for forward in (0, min(0.8, length)) for side in (-0.75, 0.75)]
+            # 네 이동 검사와 ORCA 장애물에 같은 주변 충돌체를 사용한다.
+            padded_walls = (wall.rect.expanded(self.world.navigation.clearance) for wall in walls)
+            if any(rect.segment_entry((x, y), point) is not None for rect in padded_walls for point in probes):
                 continue
             behavior = self.behavior
             reload_scale = actor.weapon.spec.reload_move_multiplier if actor.weapon and actor.weapon.reloading else 1
@@ -70,7 +73,7 @@ class CrowdMotion:
                     obstacles.append(core.Disc(position, other.radius))
             state.neighbors, state.static_obstacles = neighbors, obstacles
             lines = []
-            for collider in self.world.geometry.query(Rect(x - reach, y - reach, reach * 2, reach * 2)):
+            for collider in walls:
                 rect = collider.rect
                 points = [(rect.x - x, rect.y - y), (rect.right - x, rect.y - y),
                           (rect.right - x, rect.bottom - y), (rect.x - x, rect.bottom - y)]

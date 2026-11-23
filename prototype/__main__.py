@@ -11,6 +11,10 @@ from .savegame import CampaignSaveError, DEFAULT_SAVE, load_game, save_game
 from .world import DEFAULT_SCENE
 
 
+SIMULATION_FRAME_BUDGET_S = 0.012
+MAX_SIMULATION_BACKLOG_S = 0.1
+
+
 def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_open=False):
     import pico2d
     from .camera import CANVAS_SIZE, PlayCamera
@@ -30,10 +34,11 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
         controls.map_open = map_open
         camera.follow(simulation.player.xy)
         previous, accumulator, count = perf_counter(), 0.0, 0
+        last_step_s = FIXED_DT
         stack_previewed = False
         while controls.running and (not frames or count < frames):
             started = perf_counter()
-            elapsed, previous = min(0.1, started - previous), started
+            elapsed, previous = min(MAX_SIMULATION_BACKLOG_S, started - previous), started
             for action in controls.poll(camera):
                 if action in {"save", "load"}:
                     try:
@@ -102,14 +107,18 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                 accumulator = 0.0
                 controls.trigger_pending = False
             else:
-                accumulator += elapsed
+                accumulator = min(MAX_SIMULATION_BACKLOG_S, accumulator + elapsed)
                 steps = 0
                 while accumulator >= FIXED_DT and steps < 6:
+                    step_started = perf_counter()
+                    if steps and step_started - started + last_step_s > SIMULATION_FRAME_BUDGET_S:
+                        break
                     pressed = controls.consume_trigger()
                     simulation.step((0, 0) if controls.map_open else controls.direction,
                                     aim_offset=aim_offset, firing=not controls.map_open and (controls.firing or pressed),
                                     sprint=controls.sprint, aiming=aiming,
                                     trigger_pressed=pressed and not controls.map_open, walking=controls.walking)
+                    last_step_s = perf_counter() - step_started
                     accumulator -= FIXED_DT
                     steps += 1
                     if (simulation.stack_drill and not stack_previewed

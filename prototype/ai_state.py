@@ -135,6 +135,7 @@ class InvestigationState:
     staging: bool = False
     target: tuple | None = None
     select_at: float = 0.0
+    probe_at: float = 0.0
     sound_cue: SearchCue | None = None
     blocked: dict = field(default_factory=dict)
     execution: object = None
