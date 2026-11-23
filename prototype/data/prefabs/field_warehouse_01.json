@@ -1,7 +1,7 @@
 {
   "format": "revenant.facility_prefab.v1",
   "id": "field_warehouse_01",
-  "version": 1,
+  "version": 2,
   "name": "물류창고",
   "kind": "warehouse",
   "minimum_extent": 160,
@@ -13,8 +13,12 @@
   },
   "layers": [
     {"id": "yard", "rect": [-24, -19, 48, 38], "style": "yard", "image": "", "color": [101, 101, 82]},
-    {"id": "loading", "rect": [-13, 8, 11, 7], "style": "pavement", "image": "", "color": [126, 123, 105]},
-    {"id": "floor", "rect": [-14, -16, 28, 24], "style": "floor", "image": "", "color": [121, 122, 111]}
+    {"id": "vehicle_lane", "rect": [-2, 8, 4, 11], "style": "pavement", "image": "", "color": [118, 110, 87]},
+    {"id": "loading", "rect": [-14, 8, 12, 10], "style": "pavement", "image": "", "color": [132, 128, 108]},
+    {"id": "outdoor_storage", "rect": [8, 8, 9, 6], "style": "pavement", "image": "", "color": [115, 115, 100]},
+    {"id": "floor_storage", "rect": [-14, -16, 28, 16], "style": "floor", "image": "", "color": [112, 115, 107]},
+    {"id": "floor_receiving", "rect": [-14, 0, 21, 8], "style": "floor", "image": "", "color": [133, 128, 108]},
+    {"id": "floor_office", "rect": [7, 0, 7, 8], "style": "floor", "image": "", "color": [126, 107, 87]}
   ],
   "colliders": [
     {"id": "north", "rect": [-14, -16, 28, 0.3]},
@@ -25,20 +29,41 @@
     {"id": "south_middle", "rect": [-6, 7.7, 6, 0.3]},
     {"id": "personnel_door", "rect": [0, 7.7, 2, 0.3], "kind": "door", "material": "wood"},
     {"id": "south_east", "rect": [2, 7.7, 12, 0.3]},
-    {"id": "west_rack_1", "rect": [-11, -11, 5, 1.2], "kind": "rack", "material": "metal"},
-    {"id": "west_rack_2", "rect": [-11, -5, 5, 1.2], "kind": "rack", "material": "metal"},
-    {"id": "east_rack", "rect": [6, -10, 4.8, 1.2], "kind": "rack", "material": "metal"},
-    {"id": "dock_pallets", "rect": [-10, 11, 2.4, 1.6], "kind": "cover", "material": "wood"}
+    {"id": "office_north", "rect": [7, 0, 6.7, 0.25]},
+    {"id": "office_west_north", "rect": [7, 0.25, 0.25, 1.95]},
+    {"id": "office_door", "rect": [7, 2.2, 0.25, 1.6], "kind": "door", "material": "wood", "rotation": 90},
+    {"id": "office_west_south", "rect": [7, 3.8, 0.25, 3.9]},
+    {"id": "office_desk", "rect": [10.2, 1, 2.4, 0.7], "kind": "desk", "material": "wood"},
+    {"id": "office_files", "rect": [11, 5.8, 1.7, 0.8], "kind": "rack", "material": "metal"},
+    {"id": "west_rack_1", "rect": [-12, -12, 8, 1.2], "kind": "rack", "material": "metal"},
+    {"id": "west_rack_2", "rect": [-12, -7, 8, 1.2], "kind": "rack", "material": "metal"},
+    {"id": "west_rack_3", "rect": [-12, -2, 8, 1.2], "kind": "rack", "material": "metal"},
+    {"id": "east_rack_1", "rect": [6, -11, 6, 1.2], "kind": "rack", "material": "metal"},
+    {"id": "east_rack_2", "rect": [7, -6, 5, 1.2], "kind": "rack", "material": "metal"},
+    {"id": "supply_stack", "rect": [-0.2, -13, 2.4, 1.2], "kind": "cover", "material": "wood"},
+    {"id": "receiving_stack", "rect": [-11, 1.8, 3.8, 1.7], "kind": "cover", "material": "wood"},
+    {"id": "dock_pallets_west", "rect": [-13.2, 10.5, 2.5, 1.5], "kind": "cover", "material": "wood"},
+    {"id": "dock_pallets_east", "rect": [-5.2, 10.5, 2.2, 1.5], "kind": "cover", "material": "wood"},
+    {"id": "staged_pallets", "rect": [-14, 15.4, 5.2, 1.8], "kind": "cover", "material": "wood"},
+    {"id": "yard_stack_1", "rect": [9, 9.2, 3.2, 2.6], "kind": "cover", "material": "wood"},
+    {"id": "yard_stack_2", "rect": [14, 9.2, 2.1, 2.6], "kind": "cover", "material": "wood"},
+    {"id": "yard_west_barrier", "rect": [-23, 5, 1, 4], "kind": "cover"},
+    {"id": "yard_east_barrier", "rect": [22, 3, 1, 5], "kind": "cover"}
   ],
   "navigation": {
     "gate": [0, 19], "yard": [1, 13], "entry": [1, 8], "aisle": [1, 2],
     "supplies": [1, -10], "inside_watch": [4, -5], "gate_watch": [4, 16],
+    "dock_walk": [-8, 13.6], "shutter_entry": [-8, 8], "receiving_west": [-8, 5.8],
+    "receiving_middle": [-2, 5.8], "office_outside": [5, 3], "office_inside": [9.5, 3],
     "west_front": [-19, 14], "west_back": [-19, -14],
     "east_front": [19, 14], "east_back": [19, -14]
   },
   "navigation_edges": [
     ["gate", "yard"], ["yard", "entry"], ["entry", "aisle"], ["aisle", "supplies"],
     ["supplies", "inside_watch"], ["aisle", "inside_watch"], ["yard", "gate_watch"],
+    ["yard", "dock_walk"], ["dock_walk", "shutter_entry"], ["shutter_entry", "receiving_west"],
+    ["receiving_west", "receiving_middle"], ["receiving_middle", "aisle"],
+    ["aisle", "office_outside"], ["office_outside", "office_inside"],
     ["yard", "west_front"], ["west_front", "west_back"],
     ["yard", "east_front"], ["east_front", "east_back"]
   ],
