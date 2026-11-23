@@ -290,9 +290,14 @@ class PlaySimulation:
                         and self.combat.fire(actor, self.world, self.time)):
                     self.ai.brains[actor.id].combat.fire_at = self.time + 0.7
             elif intent.fire:
-                fired = (self.combat.clear_fire_line(actor, self.player, self.world)
-                         and self.combat.fire(actor, self.world, self.time))
-                self.ai.combat.record_attempt(actor, self.player.xy, self.time, fired)
+                if self.combat.clear_fire_line(actor, self.player, self.world):
+                    if self.combat.fire(actor, self.world, self.time):
+                        self.ai.combat.record_shot(actor, self.time)
+                else:
+                    self.ai.combat.record_blocked_shot(
+                        actor, self.player.xy, self.time,
+                        lambda point: self.combat.clear_fire_line(actor, self.player, self.world, origin=point),
+                    )
         self._dispatch()
         if self.transports.try_resume(self.time) and self.player.hp > 0:
             self.message = "생존 호위가 운전석에 복귀 · 수송 재출발"

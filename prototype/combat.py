@@ -27,12 +27,16 @@ class Combat:
         self.shots = self.hits = 0
         self.random = random.Random(42)
 
-    def clear_fire_line(self, actor, target, world):
+    def clear_fire_line(self, actor, target, world, *, origin=None):
         floor = actor.position.floor
         if target.position.floor != floor:
             return False
-        muzzle = weapon_pose(actor)[1]
-        if world.geometry.raycast(actor.xy, muzzle, category="bullet") is not None:
+        if origin is None:
+            origin, muzzle = actor.xy, weapon_pose(actor)[1]
+        else:
+            facing = math.atan2(target.xy[1] - origin[1], target.xy[0] - origin[0])
+            muzzle = weapon_pose(actor, origin=origin, facing=facing)[1]
+        if world.geometry.raycast(origin, muzzle, category="bullet") is not None:
             return False
         if world.geometry.raycast(muzzle, target.xy, category="bullet") is not None:
             return False

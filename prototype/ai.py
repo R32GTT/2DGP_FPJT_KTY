@@ -192,9 +192,9 @@ class EnemyAI:
         goal = brain.combat.action_goal
         if brain.combat.action in {"cover", "retreat", "pin", "reload", "peek_return"}:
             actor.state = "retreat"
-        elif (time >= brain.combat.fire_at and time >= actor.equip_until and actor.weapon and not actor.weapon.reloading
+        if (time >= brain.combat.fire_at and time >= actor.equip_until and actor.weapon and not actor.weapon.reloading
               and time >= actor.weapon.next_shot
-              and actor.weapon.chambered and brain.combat.action in {"fire", "advance", "peek"}):
+              and actor.weapon.chambered and brain.combat.action in {"fire", "advance", "peek", "flank", "reposition", "pin"}):
             intent.fire = True
         return ActionPlan(goal, approach="advance" if brain.combat.action == "advance" else None)
 
@@ -246,7 +246,7 @@ class EnemyAI:
         if cover_context and self.combat.continue_cover(actor, brain, actors, point, time):
             actor.state = "retreat"
             return ActionPlan(combat.action_goal, point)
-        if priority and situation.urgent:
+        if combat.suppression >= 0.55 or (priority and situation.urgent):
             search.task.cue = None
             self.combat.choose(actor, brain, actors, point, time)
             actor.state = "retreat"

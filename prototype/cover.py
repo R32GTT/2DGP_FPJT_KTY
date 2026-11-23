@@ -35,7 +35,19 @@ class CoverFinder:
                 return point
         return None
 
-    def peek(self, actor, threat):
+    def withdraw(self, actor, threat, occupied):
+        x, y = actor.xy
+        away = math.atan2(y - threat[1], x - threat[0])
+        nav = self.world.navigation
+        for distance in (3.5, 1.5):
+            for angle in (away, away + math.pi / 3, away - math.pi / 3):
+                point = (x + math.cos(angle) * distance, y + math.sin(angle) * distance)
+                if (nav.walkable(point) and nav.clear(actor.xy, point)
+                        and all(math.dist(point, other) >= 0.7 for other in occupied)):
+                    return point
+        return None
+
+    def peek(self, actor, threat, *, clear_from=None):
         x, y = actor.xy
         distance = math.dist(actor.xy, threat)
         if distance < 0.1:
@@ -45,7 +57,8 @@ class CoverFinder:
         for offset in (0.65, 1.1, 1.7, 2.3):
             for side in (-1, 1):
                 point = (x - side * dy * offset, y + side * dx * offset)
-                if (nav.walkable(point) and nav.clear(actor.xy, point)
-                        and self.world.geometry.raycast(point, threat, category="bullet") is None):
+                if not (nav.walkable(point) and nav.clear(actor.xy, point)):
+                    continue
+                if (clear_from(point) if clear_from else self.world.geometry.raycast(point, threat, category="bullet") is None):
                     return point
         return None

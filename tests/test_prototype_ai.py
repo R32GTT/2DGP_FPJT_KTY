@@ -115,6 +115,26 @@ class PrototypeAITests(unittest.TestCase):
         self.assertEqual((simulation.combat.shots, brain.combat.burst), (1, 1))
         self.assertGreater(brain.combat.fire_at, simulation.time)
 
+    def test_guards_fire_once_their_lines_open_during_a_flank(self):
+        simulation, guards = field_approach(3, distance=7)
+        for index, guard in enumerate(guards):
+            guard.position = Position(-7 - index * 0.65, -65)
+        with patch.object(simulation.combat, "_damage", return_value=False):
+            for _ in range(105):
+                simulation.step()
+        self.assertTrue(all(simulation.ai.brains[guard.id].combat.fired_at > 0 for guard in guards))
+
+    def test_suppressed_guard_withdraws_when_exposed_without_cover(self):
+        simulation, (guard,) = field_approach(1, y=-74, distance=7)
+        start = math.dist(guard.xy, simulation.player.xy)
+        self.assertIsNone(simulation.ai.cover_finder.choose(guard, simulation.player.xy))
+        simulation.events.emit("pressure", simulation.time, guard, strength=0.8, caliber=25,
+                               incoming=0.0, hit=False, close=True)
+        for _ in range(40):
+            simulation.step()
+        self.assertEqual(simulation.ai.brains[guard.id].combat.action, "retreat")
+        self.assertGreater(math.dist(guard.xy, simulation.player.xy), start + 0.5)
+
     def test_sight_and_hitscan_only_consider_actors_on_the_same_floor(self):
         world = SimpleNamespace(geometry=SpatialIndex())
         player = Actor("player", Position(0, 0, 0), team="player", active_weapon="ar_a")

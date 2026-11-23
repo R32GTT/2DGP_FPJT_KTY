@@ -20,25 +20,29 @@ class CombatController:
                    and math.dist(other.xy, threat) <= other.weapon.spec.range_m
                    for other in actors)
 
-    def record_attempt(self, actor, threat, time, fired):
+    def record_blocked_shot(self, actor, threat, time, clear_from):
         combat = self.brains[actor.id].combat
-        if fired:
-            combat.blocked_fire_at = None
-            self.record_shot(actor, time)
-        elif combat.blocked_fire_at is None:
+        if combat.blocked_fire_at is None:
             combat.blocked_fire_at = time
-        elif time - combat.blocked_fire_at >= 0.4:
-            goal = self.cover_finder.peek(actor, threat)
-            combat.action, combat.action_goal = ("reposition", goal) if goal is not None else ("wait", None)
-            combat.action_until = time + (1.0 if goal is not None else 0.5)
-            combat.blocked_fire_at = None
+            return
+        if (time - combat.blocked_fire_at < 0.4 or combat.action == "pin"
+                or (combat.action == "reposition" and time < combat.action_until)):
+            return
+        goal = self.cover_finder.peek(actor, threat, clear_from=clear_from)
+        if goal is None and combat.action in {"advance", "flank"}:
+            combat.blocked_fire_at = time
+            return
+        combat.action, combat.action_goal = ("reposition", goal) if goal is not None else ("wait", None)
+        combat.action_until = time + (math.dist(actor.xy, goal) / actor.speed + 0.5 if goal is not None else 0.5)
+        combat.blocked_fire_at = None
 
     def record_shot(self, actor, time):
-        brain = self.brains[actor.id]
-        burst_size = 2 if brain.combat.suppression >= 0.3 or brain.combat.action == "peek" else 4
-        brain.combat.burst = (brain.combat.burst + 1) % burst_size
-        delay = 0.20 if brain.combat.burst else 0.58
-        brain.combat.fire_at = time + delay * (1 + brain.combat.suppression * 2)
+        combat = self.brains[actor.id].combat
+        combat.blocked_fire_at = None
+        burst_size = 2 if combat.suppression >= 0.3 or combat.action == "peek" else 4
+        combat.burst = (combat.burst + 1) % burst_size
+        delay = 0.20 if combat.burst else 0.58
+        combat.fire_at = time + delay * (1 + combat.suppression * 2)
 
     def cover_exposed(self, brain, threat):
         combat = brain.combat
@@ -55,7 +59,7 @@ class CombatController:
         route_failed = combat.action_goal is not None and combat.action_goal == brain.motion.goal and brain.motion.route_failed
         safe_action = combat.action in {"cover", "retreat", "pin"}
         needs_reload = weapon is not None and (weapon.reloading or not weapon.chambered)
-        if combat.action == "reposition" and combat.action_goal is not None and math.dist(actor.xy, combat.action_goal) <= 0.15:
+        if combat.action in {"reposition", "retreat"} and combat.action_goal is not None and math.dist(actor.xy, combat.action_goal) <= 0.15:
             combat.action_until = time
         if combat.action == "cover" and combat.action_goal is not None and not route_failed:
             if self.cover_exposed(brain, threat):
@@ -76,7 +80,8 @@ class CombatController:
         combat.action_goal = None
         if urgent or needs_reload:
             occupied = [ally.combat.action_goal for other in actors if other.id != actor.id and other.hp > 0
-                        and (ally := self.brains[other.id]).combat.action == "cover"
+                        and other.team == actor.team and other.position.floor == actor.position.floor
+                        and (ally := self.brains[other.id]).combat.action in {"cover", "retreat"}
                         and ally.combat.action_goal is not None and other.state == "retreat"]
             if rejected is not None:
                 occupied.append(rejected)
@@ -85,13 +90,15 @@ class CombatController:
                 combat.action, combat.action_goal = "cover", cover
                 combat.cover_threat = threat
                 combat.cover_revision = self.world.revision
-            elif empty or actor.hp < 20:
-                combat.action = "retreat"
-                combat.action_goal = max(brain.patrol, key=lambda point: math.dist(point, threat), default=None)
             elif not urgent:
                 combat.action = "reload"
             else:
-                combat.action = "pin"
+                retreat = self.cover_finder.withdraw(actor, threat, occupied)
+                if retreat is None and (empty or actor.hp < 20):
+                    retreat = max((point for point in brain.patrol
+                                   if point != rejected and math.dist(point, threat) > math.dist(actor.xy, threat)),
+                                  key=lambda point: math.dist(point, threat), default=None)
+                combat.action, combat.action_goal = ("retreat", retreat) if retreat else ("pin", None)
             combat.action_until = time + 1.65
             return
 

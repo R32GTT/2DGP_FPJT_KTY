@@ -255,13 +255,15 @@ def rotated_offset(position, offset, facing):
             position[1] + offset[0] * sine + offset[1] * cosine)
 
 
-def weapon_pose(actor):
+def weapon_pose(actor, *, origin=None, facing=None):
+    origin = actor.xy if origin is None else origin
+    facing = actor.facing if facing is None else facing
     weapon = actor.weapon
     if weapon is None:
-        return actor.xy, actor.xy
+        return origin, origin
     spec = weapon.spec
     center = (spec.mount[0] + (0.5 - spec.grip[0]) * spec.size_m[0],
               spec.mount[1] + (0.5 - spec.grip[1]) * spec.size_m[1])
     muzzle = (spec.mount[0] + (spec.muzzle[0] - spec.grip[0]) * spec.size_m[0],
               spec.mount[1] + (spec.muzzle[1] - spec.grip[1]) * spec.size_m[1])
-    return rotated_offset(actor.xy, center, actor.facing), rotated_offset(actor.xy, muzzle, actor.facing)
+    return rotated_offset(origin, center, facing), rotated_offset(origin, muzzle, facing)
