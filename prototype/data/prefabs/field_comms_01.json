@@ -1,0 +1,43 @@
+{
+  "format": "revenant.facility_prefab.v1",
+  "id": "field_comms_01",
+  "version": 1,
+  "name": "통신시설",
+  "kind": "comms",
+  "minimum_extent": 160,
+  "bounds": [-12, -11, 24, 22],
+  "terminal_node": "console",
+  "connectors": {
+    "vehicle": {"position": [0, 11], "direction": [0, 1], "width_m": 3, "node": "gate"},
+    "pedestrian": {"position": [0, 4], "direction": [0, 1], "width_m": 1.8, "node": "doorway"}
+  },
+  "layers": [
+    {"id": "yard", "rect": [-12, -11, 24, 22], "style": "yard", "image": "", "color": [91, 99, 88]},
+    {"id": "mast_pad", "rect": [7, -8, 4, 6], "style": "pavement", "image": "", "color": [111, 120, 119]},
+    {"id": "radio_room", "rect": [-6, -6, 12, 10], "style": "floor", "image": "", "color": [104, 122, 123]}
+  ],
+  "colliders": [
+    {"id": "north", "rect": [-6, -6, 12, 0.25]},
+    {"id": "west", "rect": [-6, -5.75, 0.25, 9.5]},
+    {"id": "east", "rect": [5.75, -5.75, 0.25, 9.5]},
+    {"id": "south_west", "rect": [-6, 3.75, 5.1, 0.25]},
+    {"id": "door", "rect": [-0.9, 3.75, 1.8, 0.25], "kind": "door", "material": "wood"},
+    {"id": "south_east", "rect": [0.9, 3.75, 5.1, 0.25]},
+    {"id": "radio_rack", "rect": [-4.7, -4.8, 2.6, 0.8], "kind": "rack", "material": "metal"},
+    {"id": "console_desk", "rect": [0.6, -4.8, 3, 1], "kind": "desk", "material": "wood"},
+    {"id": "antenna", "rect": [7.5, -7, 3, 3], "kind": "antenna", "material": "metal"}
+  ],
+  "navigation": {
+    "gate": [0, 11], "yard": [0, 6.5], "doorway": [0, 4], "inside": [0, 1],
+    "console": [2.1, -2.5], "gate_watch": [3.5, 8], "west_front": [-8, 6],
+    "west_back": [-8, -5]
+  },
+  "navigation_edges": [
+    ["gate", "yard"], ["yard", "doorway"], ["doorway", "inside"], ["inside", "console"],
+    ["yard", "gate_watch"], ["yard", "west_front"], ["west_front", "west_back"]
+  ],
+  "guard_posts": [
+    {"route": ["gate_watch"], "facing": [0, 1]},
+    {"route": ["west_front", "west_back"], "facing": [0, -1]}
+  ]
+}
