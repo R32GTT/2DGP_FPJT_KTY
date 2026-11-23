@@ -328,6 +328,10 @@ class HUD:
                 prompt = f"[Shift+E] {action}"
                 if simulation.kit_available and not simulation.player.loadout:
                     prompt = f"[E] 예비 키트 · {prompt}"
+            elif facility_here and facility_here["kind"] == "warehouse":
+                damage = simulation.campaign.simulation.state.facilities[facility_here["campaign_id"]].damage
+                prompt = (f"[E] 물자 확보 · [Shift+E] 파괴 공작 ({damage}%)" if damage < 100
+                          else "물류창고 무력화")
             control = nearby_road_control(simulation.world, simulation.player.xy)
             if control and not prompt:
                 road = simulation.campaign.simulation.state.roads[control["road"]]

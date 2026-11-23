@@ -224,8 +224,11 @@ class Simulation:
                          operation_id=operation_id, position=position_report)
         elif kind == "damage_facility":
             damage = action["damage"]
+            destroy_inventory = action.get("destroy_inventory", False)
             if type(damage) is not int or damage < 0:
                 raise ValueError("시설 피해는 음수가 아닌 정수여야 함")
+            if type(destroy_inventory) is not bool:
+                raise ValueError("시설 재고 파괴 여부는 bool이어야 함")
             facility = state.facilities[action["facility_id"]]
             facility.damage = min(100, facility.damage + damage)
             if facility.damage == 100:
@@ -233,6 +236,8 @@ class Simulation:
                     if ((operation.origin_id == facility.id and operation.kind != "withdrawal")
                             or (operation.destination_id == facility.id and operation.kind == "supply")):
                         cancel(state, operation.id)
+                if destroy_inventory and any(facility.inventory.values()):
+                    remove(state, facility.inventory, facility.inventory, outcome="destroyed", owner_id=facility.id)
         elif kind == "report_facility_damage":
             facility = state.facilities[action["facility_id"]]
             if facility.damage and state.regions[facility.region_id].owner == "enemy":

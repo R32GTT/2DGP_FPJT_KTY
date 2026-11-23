@@ -94,8 +94,11 @@ class CampaignBridge:
                                           "amount": {"supplies": amount}})
         return amount
 
-    def damage_facility(self, facility_id, damage=25):
-        self.simulation.apply_action({"type": "damage_facility", "facility_id": facility_id, "damage": damage})
+    def damage_facility(self, facility_id, damage=25, *, destroy_inventory=False):
+        action = {"type": "damage_facility", "facility_id": facility_id, "damage": damage}
+        if destroy_inventory:
+            action["destroy_inventory"] = True
+        self.simulation.apply_action(action)
         return self.simulation.state.facilities[facility_id].damage
 
     def lose_soldier(self, unit_id, *, driver_vehicle_id=None, progress_m=None):

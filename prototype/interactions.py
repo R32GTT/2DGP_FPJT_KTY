@@ -48,7 +48,7 @@ def exchange_safehouse_weapon(simulation, facility):
     return f"{equipped.spec.name} 보관"
 
 
-def use_facility(simulation, facility):
+def use_facility(simulation, facility, *, sabotage=False):
     player, bridge = simulation.player, simulation.campaign
     kind, key = facility["kind"], facility["campaign_id"]
     if kind == "safehouse":
@@ -58,15 +58,17 @@ def use_facility(simulation, facility):
             player.active_weapon, simulation.kit_available = "ar_a", False
             return "안전가옥 예비 무장 확보"
         return "안전가옥 · Shift+E: 무기 보관함"
-    if kind == "warehouse":
-        amount = bridge.take_supplies(key)
-        return f"{facility['name']}에서 실제 보급품 {amount}개 확보"
     if key:
         current = bridge.simulation.state.facilities[key].damage
         if current >= 100:
             return f"{facility['name']} 기능이 이미 무력화됨"
-        damage = bridge.damage_facility(key)
+        if kind == "warehouse" and not sabotage:
+            amount = bridge.take_supplies(key)
+            return f"{facility['name']}에서 실제 보급품 {amount}개 확보"
+        damage = bridge.damage_facility(key, destroy_inventory=kind == "warehouse")
         simulation.events.emit("noise", simulation.time, player, radius=14, strength=1.0, reason="sabotage")
         simulation.events.emit("facility_damaged", simulation.time, player, facility=key, damage=damage)
+        if kind == "warehouse" and damage == 100:
+            return f"{facility['name']} 무력화 · 재고 파괴"
         return f"{facility['name']} 피해 {damage}% — 실제 캠페인 상태 반영"
     return facility["name"]

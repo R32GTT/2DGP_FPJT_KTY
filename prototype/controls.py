@@ -43,7 +43,7 @@ class Controls:
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
                 elif key == sdl2.SDLK_e and event.key.keysym.mod & sdl2.KMOD_SHIFT:
-                    actions.append("safehouse_stash")
+                    actions.append("facility_alternate")
                 elif sdl2.SDLK_1 <= key <= sdl2.SDLK_4:
                     actions.append(f"slot_{key - sdl2.SDLK_1}")
                 elif key in (sdl2.SDLK_f, sdl2.SDLK_e, sdl2.SDLK_r, sdl2.SDLK_c,

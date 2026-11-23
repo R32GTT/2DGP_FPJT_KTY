@@ -28,7 +28,7 @@ class PlaySaveTests(unittest.TestCase):
         first, second = [site for site in play.world.facilities if site['kind'] == 'safehouse']
         play.player.loadout = {key: WeaponState.ready(play.specs[key]) for key in ('ar_a', 'ar_b')}
         play.player.active_weapon = 'ar_a'
-        play.use_safehouse_stash()
+        play.use_facility_alternate()
         self.assertEqual(play.safehouse_stash[first['id']].spec.id, 'ar_a')
         self.assertEqual(play.player.active_weapon, 'ar_b')
 
@@ -36,17 +36,17 @@ class PlaySaveTests(unittest.TestCase):
         stored.magazine = 5
         play.reload()
         stored.tick(stored.spec.reload_stages[0].duration)
-        play.use_safehouse_stash()
+        play.use_facility_alternate()
         self.assertEqual(play.player.active_weapon, 'ar_a')
         self.assertEqual(stored.stage, 1)
         self.assertFalse(stored.reloading)
 
         play.player.position = Position(0, 0)
-        play.use_safehouse_stash()
+        play.use_facility_alternate()
         self.assertIs(play.player.weapon, play.player.loadout['ar_a'])
         self.assertIs(play.safehouse_stash[first['id']], stored)
         play.player.position = Position(*second['terminal'])
-        play.use_safehouse_stash()
+        play.use_facility_alternate()
         self.assertIsNone(play.player.weapon)
         self.assertEqual(play.safehouse_stash[second['id']].spec.id, 'ar_a')
 
@@ -69,10 +69,48 @@ class PlaySaveTests(unittest.TestCase):
         self.assertEqual(restored.player.xy, tuple(second['position']))
         self.assertEqual(restored.campaign.simulation.state.world_time, 21600)
         self.assertIsNone(restored.player.weapon)
-        restored.use_safehouse_stash()
+        restored.use_facility_alternate()
         self.assertEqual(restored.player.weapon.spec.id, 'ar_a')
         self.assertNotIn(second['id'], restored.safehouse_stash)
         self.assertEqual(vars(restored.safehouse_stash[first['id']]), vars(stored))
+
+    def test_warehouse_sabotage_destroys_stock_and_stops_dispatch(self):
+        play = PlaySimulation(self.scene)
+        state = play.campaign.simulation.state
+        key = state.demand.collection_facility_id
+        site = next(site for site in play.world.facilities if site['campaign_id'] == key)
+        facility = state.facilities[key]
+        scheduled = [op for op in state.operations.values() if op.origin_id == key and op.phase == 'loading']
+        self.assertTrue(scheduled)
+
+        play.player.position = Position(*site['terminal'])
+        play.take_supplies()
+        self.assertEqual(state.player_stock['supplies'], 10)
+        remaining = facility.inventory.copy()
+        play.use_facility_alternate()
+        self.assertEqual(facility.damage, 25)
+        self.assertEqual(facility.inventory, remaining)
+        for _ in range(3):
+            play.use_facility_alternate()
+        self.assertEqual(facility.damage, 100)
+        self.assertFalse(any(facility.inventory.values()))
+        self.assertEqual(state.ledger.destroyed, remaining)
+        self.assertTrue(all(op.phase == 'cancelled' for op in scheduled))
+        play.take_supplies()
+        play.use_facility_alternate()
+        self.assertEqual(state.player_stock['supplies'], 10)
+        self.assertEqual(state.ledger.destroyed, remaining)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'play.json.gz'
+            save_game(play, path)
+            restored = load_game(path)
+        campaign = restored.campaign.simulation
+        campaign.advance_to(300)
+        self.assertEqual(campaign.state.facilities[key].damage, 100)
+        self.assertTrue(all(op.phase == 'cancelled' for op in campaign.state.operations.values()
+                            if op.origin_id == key or op.destination_id == key))
+        assert_invariants(campaign.state)
 
     def test_world_changes_losses_weapons_and_clock_survive_real_entry(self):
         play = PlaySimulation(self.scene)

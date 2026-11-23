@@ -87,15 +87,15 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         elif action == "cancel":
                             simulation.respawn_selecting = False
                         continue
-                    if (controls.firing or controls.map_open) and action in {"door", "supplies", "safehouse_stash"}:
+                    if (controls.firing or controls.map_open) and action in {"door", "supplies", "facility_alternate"}:
                         simulation.message = "지도를 닫은 뒤 상호작용" if controls.map_open else "사격 중에는 상호작용할 수 없음"
                         continue
                     if action == "door":
                         simulation.use_door()
                     elif action == "supplies":
                         simulation.take_supplies()
-                    elif action == "safehouse_stash":
-                        simulation.use_safehouse_stash()
+                    elif action == "facility_alternate":
+                        simulation.use_facility_alternate()
                     elif action == "reload":
                         simulation.reload()
                     elif action == "cancel":

@@ -346,14 +346,17 @@ class PlaySimulation:
         else:
             self.message = "보급 상자·무기 가까이에서 E"
 
-    def use_safehouse_stash(self):
+    def use_facility_alternate(self):
         if self.player.hp <= 0:
             return
         facility = nearby_facility(self.world, self.player.xy)
-        if facility is None or facility["kind"] != "safehouse":
-            self.message = "안전가옥 단말 가까이에서 Shift+E"
-            return
-        self.message = exchange_safehouse_weapon(self, facility)
+        kind = facility["kind"] if facility else None
+        if kind == "safehouse":
+            self.message = exchange_safehouse_weapon(self, facility)
+        elif kind == "warehouse":
+            self.message = use_facility(self, facility, sabotage=True)
+        else:
+            self.message = "안전가옥 또는 물류창고 단말 가까이에서 Shift+E"
 
     def request_respawn(self, slot=None):
         if self.player.hp > 0 or self.respawn_target is not None:
