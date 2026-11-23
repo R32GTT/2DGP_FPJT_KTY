@@ -107,10 +107,11 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     elif action == "respawn" and simulation.player.hp <= 0:
                         controls.map_open = False
                         simulation.request_respawn()
-            aiming = controls.aiming and not (controls.paused or controls.map_open)
-            camera.follow(simulation.player.xy, None if controls.map_open else controls.mouse, aiming=aiming, dt=elapsed)
+            map_open = controls.map_open or (simulation.respawn_selecting and not controls.paused)
+            aiming = controls.aiming and not (controls.paused or map_open)
+            camera.follow(simulation.player.xy, None if map_open else controls.mouse, aiming=aiming, dt=elapsed)
             aim_offset = None
-            if not controls.map_open:
+            if not map_open:
                 aim_x, aim_y = camera.world(*controls.mouse)
                 aim_offset = aim_x - simulation.player.position.x, aim_y - simulation.player.position.y
             if controls.paused:
@@ -124,10 +125,10 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     if steps and step_started - started + last_step_s > SIMULATION_FRAME_BUDGET_S:
                         break
                     pressed = controls.consume_trigger()
-                    simulation.step((0, 0) if controls.map_open else controls.direction,
-                                    aim_offset=aim_offset, firing=not controls.map_open and (controls.firing or pressed),
+                    simulation.step((0, 0) if map_open else controls.direction,
+                                    aim_offset=aim_offset, firing=not map_open and (controls.firing or pressed),
                                     sprint=controls.sprint, aiming=aiming,
-                                    trigger_pressed=pressed and not controls.map_open, walking=controls.walking)
+                                    trigger_pressed=pressed and not map_open, walking=controls.walking)
                     last_step_s = perf_counter() - step_started
                     accumulator -= FIXED_DT
                     steps += 1
@@ -140,7 +141,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             camera.recenter(simulation.player.xy)
             update_ms = (perf_counter() - started) * 1000
             renderer.render(simulation, camera, debug=controls.debug, paused=controls.paused,
-                            update_ms=update_ms, mouse=controls.mouse, map_open=controls.map_open)
+                            update_ms=update_ms, mouse=controls.mouse, map_open=map_open)
             count += 1
             # VSync가 없는 환경에서도 무제한 바쁜 루프가 되지 않게 한다.
             sleep(max(0, FIXED_DT - (perf_counter() - started)))

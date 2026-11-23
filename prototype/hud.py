@@ -296,21 +296,19 @@ class HUD:
                             15, 24, 27, 218, filled=True)
         self.text(key, center - half_width, y)
 
-    def _draw_respawn_options(self, simulation, width, height):
-        sites = simulation.respawn_sites.values()
-        x, top = width / 2 - 190, height / 2 + 62
-        panel_height = 70 + len(sites) * 27
-        self.panel(x, top - panel_height, 380, panel_height)
-        self.label("respawn_title", "복귀할 안전가옥 선택", 24)
-        self.text("respawn_title", x + 18, top - 22)
-        for number, site in enumerate(sites, 1):
+    def _draw_respawn_options(self, simulation, camera, point):
+        for number, site in enumerate(simulation.respawn_sites.values(), 1):
+            x, y = point(*site["position"])
+            marker = f"respawn_marker/{number}"
+            self.label(marker, str(number), 16, (17, 28, 31))
+            half_width = self.labels[marker][1].w / 2
+            pico.draw_rectangle(x - 10, y - 10, x + 10, y + 10, 118, 215, 191, filled=True)
+            self.text(marker, x - half_width, y)
             stored = simulation.safehouse_stash.get(site["id"])
             loadout = f"  ·  보관 {stored.spec.name}" if stored else ""
             key = f"respawn_option/{number}"
             self.label(key, f"[{number}] {site['name']}{loadout}", 16)
-            self.text(key, x + 18, top - 28 - number * 27)
-        self.label("respawn_help", "C 닫기", 13)
-        self.text("respawn_help", x + 18, top - panel_height + 15)
+            self.text(key, camera.width - 350, camera.height - 168 - number * 32)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
                cache_count=0, search_counts=None):
@@ -371,9 +369,7 @@ class HUD:
         if debug or not map_open:
             self._minimap(simulation, camera, debug)
         if map_open:
-            self._region_map(simulation, camera, debug)
-        if simulation.respawn_selecting and not paused:
-            self._draw_respawn_options(simulation, width, height)
+            self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused)
 
     def _minimap(self, simulation, camera, debug=False):
         width, height = 180, 126
@@ -473,13 +469,16 @@ class HUD:
                     pico.draw_rectangle(*box, *color)
         return (checked_count, total, blocked_count) if total else None
 
-    def _region_map(self, simulation, camera, debug):
+    def _region_map(self, simulation, camera, debug, *, selecting=False):
         self.panel(60, 166, camera.width - 120, camera.height - 246)
-        self.text("map_title", 84, camera.height - 111)
-        self.text("map_help", 84, camera.height - 140)
+        if selecting:
+            self.label("respawn_title", "복귀할 안전가옥 선택", 24, (118, 215, 191))
+            self.label("respawn_help", "숫자 키로 선택 · C 닫기", 13)
+        self.text("respawn_title" if selecting else "map_title", 84, camera.height - 111)
+        self.text("respawn_help" if selecting else "map_help", 84, camera.height - 140)
         world = simulation.world
         generated = bool(world.data.get("generation"))
-        columns = 2 if len(world.facilities) > 10 else 1
+        columns = 2 if not selecting and len(world.facilities) > 10 else 1
         plan_width = camera.width - (168 if not world.facilities else 750 if columns == 2 else 480)
         scale = min(plan_width / world.bounds.w, (camera.height - 370) / world.bounds.h)
         left = 84 + (plan_width - world.bounds.w * scale) / 2
@@ -514,7 +513,7 @@ class HUD:
                 self.text('territory/' + key, a[0] + 3, a[1] + 9)
         for site in world.data.get("planned_facilities", ()):
             x, y, w, h = site["rect"]
-            if len(world.territories) <= 2:
+            if not selecting and len(world.territories) <= 2:
                 self.label("planned/" + site["id"], site["name"] + (" · 예약" if site["placeholder"] else ""), 13, (226, 221, 176))
                 self.text("planned/" + site["id"], *point(x, y + h))
             gate, approach = site["connector"]["position"], site["connector"]["approach"]
@@ -528,8 +527,9 @@ class HUD:
             if not generated:
                 pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=True)
                 self.text("site/" + facility["id"], a[0], b[1] - 13)
-            self.text("site_info/" + facility["id"], camera.width - (650 if columns == 2 else 350) + index // rows * 315,
-                      camera.height - 200 - index % rows * row_step)
+            if not selecting:
+                self.text("site_info/" + facility["id"], camera.width - (650 if columns == 2 else 350) + index // rows * 315,
+                          camera.height - 200 - index % rows * row_step)
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp <= 0 or (actor.team != "player" and not debug):
                 continue
@@ -544,6 +544,8 @@ class HUD:
             x, y = point(convoy.x, convoy.y)
             pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, 221, 186, 100, filled=True)
         self.text("map_size", camera.width - (230 if not world.facilities else 350), 245)
+        if selecting:
+            self._draw_respawn_options(simulation, camera, point)
 
     def close(self):
         self._map_batches.clear()
