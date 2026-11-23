@@ -301,7 +301,7 @@ class HUD:
         x, top = width / 2 - 190, height / 2 + 62
         panel_height = 70 + len(sites) * 27
         self.panel(x, top - panel_height, 380, panel_height)
-        self.label("respawn_title", "복귀할 안전가옥 선택", 20)
+        self.label("respawn_title", "복귀할 안전가옥 선택", 24)
         self.text("respawn_title", x + 18, top - 22)
         for number, site in enumerate(sites, 1):
             stored = simulation.safehouse_stash.get(site["id"])
