@@ -61,6 +61,8 @@ def capture(play):
                             "exits": trip.exits, "stopped_at": trip.stopped_at}
                       for key, trip in play.transports.trips.items()},
             "dropped": [[point, weapons(loadout)] for point, loadout in play.dropped],
+            "safehouse_stash": {key: weapons({weapon.spec.id: weapon})
+                                for key, weapon in play.safehouse_stash.items()},
             "random": play.combat.random.getstate(), "reports": play.campaign._reports,
             "resumed_at": play.campaign._resumed_at,
             "received": sorted(play.presence.received)}
@@ -110,6 +112,11 @@ def restore(play, row):
                                       {aid: tuple(point) for aid, point in trip["exits"].items()}, trip["stopped_at"])
                              for key, trip in row["trips"].items()}
     play.dropped = [(tuple(point), restore_weapons(loadout, play.specs)) for point, loadout in row["dropped"]]
+    safehouse_ids = {f["id"] for f in play.world.facilities if f["kind"] == "safehouse"}
+    for key, slot in row.get("safehouse_stash", {}).items():
+        if key not in safehouse_ids or len(slot) != 1:
+            raise ValueError("잘못된 안전가옥 보관함")
+        play.safehouse_stash[key] = next(iter(restore_weapons(slot, play.specs).values()))
     play.combat.random.setstate(tuples(row["random"]))
     play.campaign._reports, play.campaign._resumed_at = row["reports"], row["resumed_at"]
     play.presence.received = set(map(tuple, row["received"]))

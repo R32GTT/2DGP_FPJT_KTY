@@ -20,6 +20,34 @@ def use_road_control(bridge, control):
     return f"{control['name']} · {'수송 차단' if blocked else '수송 재개'}"
 
 
+def exchange_safehouse_weapon(simulation, facility):
+    player, stash = simulation.player, simulation.safehouse_stash
+    key = facility["id"]
+    equipped, stored = player.weapon, stash.get(key)
+    if equipped is None and stored is None:
+        return "안전가옥 보관함이 비어 있음"
+    if stored and stored.spec.id in player.loadout and stored.spec.id != player.active_weapon:
+        return "같은 종류의 무기를 이미 휴대 중입니다. 해당 무기를 장착한 뒤 교체하세요"
+
+    if equipped:
+        simulation.cancel_reload()
+        stash[key] = player.loadout.pop(player.active_weapon)
+    else:
+        stash.pop(key)
+    if stored:
+        player.loadout[stored.spec.id] = stored
+        player.active_weapon = stored.spec.id
+    else:
+        player.active_weapon = next(iter(player.loadout), "")
+    if player.weapon:
+        player.equip_until = simulation.time + 0.25
+    if equipped and stored:
+        return f"{equipped.spec.name} 보관 · {stored.spec.name} 회수"
+    if stored:
+        return f"{stored.spec.name} 회수"
+    return f"{equipped.spec.name} 보관"
+
+
 def use_facility(simulation, facility):
     player, bridge = simulation.player, simulation.campaign
     kind, key = facility["kind"], facility["campaign_id"]
@@ -29,7 +57,7 @@ def use_facility(simulation, facility):
             player.loadout = {"ar_a": WeaponState.ready(simulation.specs["ar_a"])}
             player.active_weapon, simulation.kit_available = "ar_a", False
             return "안전가옥 예비 무장 확보"
-        return "안전가옥 · 복귀 거점 / 예비 키트는 무장 없이 사용"
+        return "안전가옥 · Shift+E: 무기 보관함"
     if kind == "warehouse":
         amount = bridge.take_supplies(key)
         return f"{facility['name']}에서 실제 보급품 {amount}개 확보"

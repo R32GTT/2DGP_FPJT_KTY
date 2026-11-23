@@ -19,7 +19,9 @@ def bind_sites(scene):
     facilities = []
     for site in scene["planned_facilities"]:
         instance = placed.get(site["id"])
-        terminal = scene["navigation"][instance["terminal"]] if instance else site["connector"]["position"]
+        terminal = site["position"] if site["kind"] == "safehouse" else site["connector"]["position"]
+        if instance:
+            terminal = scene["navigation"][instance["terminal"]]
         name = (names[site["region_id"]] + " · " if site.get("region_id") in names else "") + site["name"]
         facilities.append({"id": site["id"], "name": name, "kind": site["kind"], "rect": site["rect"],
                            "campaign_id": "" if site["kind"] == "safehouse" else site["id"],

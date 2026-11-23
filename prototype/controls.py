@@ -42,6 +42,8 @@ class Controls:
                     actions.append("save" if key == sdl2.SDLK_F5 else "load")
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
+                elif key == sdl2.SDLK_e and event.key.keysym.mod & sdl2.KMOD_SHIFT:
+                    actions.append("safehouse_stash")
                 elif key in (sdl2.SDLK_f, sdl2.SDLK_e, sdl2.SDLK_r, sdl2.SDLK_c,
                              sdl2.SDLK_v, sdl2.SDLK_1, sdl2.SDLK_2, sdl2.SDLK_RETURN):
                     actions.append({sdl2.SDLK_f: "door", sdl2.SDLK_e: "supplies", sdl2.SDLK_r: "reload",

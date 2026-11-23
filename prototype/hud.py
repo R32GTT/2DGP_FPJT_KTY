@@ -302,6 +302,14 @@ class HUD:
             self.next_update = now + 0.2
             facility_here = nearby_facility(simulation.world, simulation.player.xy)
             prompt = f"[E] {facility_here['name']} 사용" if facility_here else ""
+            if facility_here and facility_here["kind"] == "safehouse":
+                stored = simulation.safehouse_stash.get(facility_here["id"])
+                action = "무기 보관" if simulation.player.weapon else "보관함 비어 있음"
+                if stored:
+                    action = f"{stored.spec.name} {'교체' if simulation.player.weapon else '회수'}"
+                prompt = f"[Shift+E] {action}"
+                if simulation.kit_available and not simulation.player.loadout:
+                    prompt = f"[E] 예비 키트 · {prompt}"
             control = nearby_road_control(simulation.world, simulation.player.xy)
             if control and not prompt:
                 road = simulation.campaign.simulation.state.roads[control["road"]]

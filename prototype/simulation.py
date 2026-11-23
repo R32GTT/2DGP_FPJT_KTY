@@ -13,7 +13,9 @@ from .door_layout import DoorLayout
 from .events import EventBus
 from .feedback import Feedback
 from .movement import move_actor
-from .interactions import nearby_facility, nearby_road_control, use_facility, use_road_control
+from .interactions import (
+    exchange_safehouse_weapon, nearby_facility, nearby_road_control, use_facility, use_road_control,
+)
 from .roster import CampaignRoster
 from .transport import TransportCrew
 from .campaign_presence import CampaignPresence
@@ -88,6 +90,7 @@ class PlaySimulation:
             self.message = "M 지도에서 동서 보급로 확인 · 차단기 가까이에서 E"
         self.respawn_target = None
         self.dropped = []
+        self.safehouse_stash = {}
         self.kit_available = True
         self.ai_scenario, self.ai_hint = ai_scenario, ""
         if self.presence:
@@ -337,6 +340,15 @@ class PlaySimulation:
             self.message = f"실제 창고에서 보급품 {self.campaign.take_supplies()}개 확보"
         else:
             self.message = "보급 상자·무기 가까이에서 E"
+
+    def use_safehouse_stash(self):
+        if self.player.hp <= 0:
+            return
+        facility = nearby_facility(self.world, self.player.xy)
+        if facility is None or facility["kind"] != "safehouse":
+            self.message = "안전가옥 단말 가까이에서 Shift+E"
+            return
+        self.message = exchange_safehouse_weapon(self, facility)
 
     def request_respawn(self):
         if self.player.hp <= 0 and self.respawn_target is None:

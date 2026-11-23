@@ -23,6 +23,48 @@ class PlaySaveTests(unittest.TestCase):
     def setUpClass(cls):
         cls.scene = generate_world(42, region_count=2)
 
+    def test_safehouse_stash_survives_save_and_respawn(self):
+        play = PlaySimulation(self.scene)
+        first, second = [site for site in play.world.facilities if site['kind'] == 'safehouse']
+        play.player.loadout = {key: WeaponState.ready(play.specs[key]) for key in ('ar_a', 'ar_b')}
+        play.player.active_weapon = 'ar_a'
+        play.use_safehouse_stash()
+        self.assertEqual(play.safehouse_stash[first['id']].spec.id, 'ar_a')
+        self.assertEqual(play.player.active_weapon, 'ar_b')
+
+        stored = play.player.weapon
+        stored.magazine = 5
+        play.reload()
+        stored.tick(stored.spec.reload_stages[0].duration)
+        play.use_safehouse_stash()
+        self.assertEqual(play.player.active_weapon, 'ar_a')
+        self.assertEqual(stored.stage, 1)
+        self.assertFalse(stored.reloading)
+
+        play.player.position = Position(0, 0)
+        play.use_safehouse_stash()
+        self.assertIs(play.player.weapon, play.player.loadout['ar_a'])
+        self.assertIs(play.safehouse_stash[first['id']], stored)
+        play.player.position = Position(*second['terminal'])
+        play.use_safehouse_stash()
+        self.assertIsNone(play.player.weapon)
+        self.assertEqual(play.safehouse_stash[second['id']].spec.id, 'ar_a')
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'play.json.gz'
+            save_game(play, path)
+            restored = load_game(path)
+        restored.player.hp = 0
+        restored.request_respawn()
+        for _ in range(360):
+            restored.step()
+        self.assertEqual(restored.player.xy, restored.world.safehouse)
+        self.assertIsNone(restored.player.weapon)
+        restored.use_safehouse_stash()
+        self.assertEqual(vars(restored.player.weapon), vars(stored))
+        self.assertNotIn(first['id'], restored.safehouse_stash)
+        self.assertIn(second['id'], restored.safehouse_stash)
+
     def test_world_changes_losses_weapons_and_clock_survive_real_entry(self):
         play = PlaySimulation(self.scene)
         state = play.campaign.simulation.state
