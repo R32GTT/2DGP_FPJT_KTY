@@ -17,32 +17,40 @@ def draw_polygon(backend, points, color, indices=None):
 
 
 class Painter:
-    def __init__(self, backend):
+    def __init__(self, backend, renderer):
         self.backend = backend
+        self.renderer = renderer
 
     def rect(self, x, y, w, h, color):
         backend = self.backend
-        backend.SDL_SetRenderDrawColor(backend.renderer, *color[:3], color[3] if len(color) > 3 else 255)
-        backend.SDL_RenderFillRect(backend.renderer, backend.SDL_Rect(int(x), int(y), max(1, int(w)), max(1, int(h))))
+        backend.SDL_SetRenderDrawColor(self.renderer, *color[:3], color[3] if len(color) > 3 else 255)
+        backend.SDL_RenderFillRect(self.renderer, backend.SDL_Rect(int(x), int(y), max(1, int(w)), max(1, int(h))))
 
 
 def painted_image(backend, width, height, paint):
-    texture = backend.SDL_CreateTexture(backend.renderer, backend.SDL_PIXELFORMAT_RGBA8888,
-                                        backend.SDL_TEXTUREACCESS_TARGET, width, height)
+    # Direct3D는 창 크기가 바뀌면 렌더 타깃의 내용을 잃는다. 완성된 그림은 정적 텍스처로 보관한다.
+    surface = backend.SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, backend.SDL_PIXELFORMAT_RGBA32)
+    if not surface:
+        raise RuntimeError("임시 그래픽 표면 생성 실패")
+    try:
+        renderer = backend.SDL_CreateSoftwareRenderer(surface)
+        if not renderer:
+            raise RuntimeError("임시 그래픽 소프트웨어 렌더러 생성 실패")
+        try:
+            backend.SDL_SetRenderDrawBlendMode(renderer, backend.SDL_BLENDMODE_BLEND)
+            backend.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0)
+            backend.SDL_RenderClear(renderer)
+            paint(Painter(backend, renderer))
+            if backend.SDL_RenderFlush(renderer) < 0:
+                raise RuntimeError("임시 그래픽 그리기 실패")
+        finally:
+            backend.SDL_DestroyRenderer(renderer)
+        texture = backend.SDL_CreateTextureFromSurface(backend.renderer, surface)
+    finally:
+        backend.SDL_FreeSurface(surface)
     if not texture:
         raise RuntimeError("임시 그래픽 텍스처 생성 실패")
-    previous = backend.SDL_GetRenderTarget(backend.renderer)
-    try:
-        backend.SDL_SetTextureBlendMode(texture, backend.SDL_BLENDMODE_BLEND)
-        backend.SDL_SetRenderTarget(backend.renderer, texture)
-        backend.SDL_SetRenderDrawColor(backend.renderer, 0, 0, 0, 0)
-        backend.SDL_RenderClear(backend.renderer)
-        paint(Painter(backend))
-    except Exception:
-        backend.SDL_DestroyTexture(texture)
-        raise
-    finally:
-        backend.SDL_SetRenderTarget(backend.renderer, previous)
+    backend.SDL_SetTextureBlendMode(texture, backend.SDL_BLENDMODE_BLEND)
     return pico2d.Image(texture)
 
 
