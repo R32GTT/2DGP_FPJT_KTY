@@ -11,7 +11,7 @@ from .ai_config import RADIO_GRACE_SECONDS, RADIO_TRANSMIT_SECONDS
 from .geometry import Rect
 from .camera import CANVAS_SIZE
 from .hud import HUD
-from .lighting import Lighting, smooth
+from .lighting import Lighting, incident_light, smooth
 from .map_images import MapImages
 from .perception import INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS
 from .transport import TRUCK_SIZE
@@ -165,6 +165,37 @@ class Renderer:
         if progress > 0:
             pico.draw_rectangle(x - 15, y - 1, x - 15 + 30 * progress, y + 1, *color, filled=True)
 
+    @staticmethod
+    def _enemy_visibility(world, player, enemies, sky, lights, night_vision):
+        origin = player.xy
+        centers = world.geometry.sight_flags(origin, [actor.xy for actor in enemies])
+        visible = [actor for actor, clear in zip(enemies, centers) if clear]
+        blocked = [actor for actor, clear in zip(enemies, centers) if not clear]
+        sides = []
+        for actor in blocked:
+            dx, dy = actor.xy[0] - origin[0], actor.xy[1] - origin[1]
+            scale = actor.radius / (math.hypot(dx, dy) or 1)
+            sides.extend(((actor.xy[0] - dy * scale, actor.xy[1] + dx * scale),
+                          (actor.xy[0] + dy * scale, actor.xy[1] - dx * scale)))
+        if sides:
+            flags = world.geometry.sight_flags(origin, sides)
+            visible.extend(actor for actor, left, right in zip(blocked, flags[::2], flags[1::2]) if left or right)
+
+        result = {}
+        ambient = sum(sky.ambient) / 765 * (1.9 if night_vision else 1.0)
+        ambient_clear = max(3, 1 + 30 * min(1.0, ambient))
+        for actor in visible:
+            distance = math.dist(origin, actor.xy)
+            alpha = 1.0
+            if sky.daylight < 1 and distance > ambient_clear:
+                visible_light, infrared = incident_light(world, actor.xy, sky, lights)
+                brightness = visible_light * 1.9 + infrared if night_vision else visible_light
+                limit = 3 + 30 * min(1.0, brightness)
+                alpha = smooth((limit - distance) / 2)
+            if alpha >= 1 / 255:
+                result[actor.id] = alpha
+        return result
+
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False):
         started = perf_counter()
         view = copy(camera)
@@ -274,31 +305,50 @@ class Renderer:
             self._draw_navigation(world.navigation, view)
             if not map_open:
                 search_counts = self.hud.draw_search_overlay(simulation, view)
-        awareness = []
-        for actor in [*simulation.guards, simulation.player]:
+        sky = simulation.sky
+        player = simulation.player
+        night_vision = player.night_vision and player.hp > 0
+        floor = player.position.floor
+        lights = tuple(simulation.light_sources(sky, floor, infrared=night_vision))
+        candidates = []
+        for actor in (*simulation.guards, player):
+            if actor.position.floor != floor:
+                continue
             body_angle = actor.facing + BODY_FORWARD_OFFSET
             body_bounds = self._rotated_bounds(actor.xy, BODY_SIZE_M, body_angle)
-            weapon = actor.weapon
-            center, muzzle = weapon_pose(actor)
+            weapon = actor.weapon if actor.hp > 0 else None
+            center, _ = weapon_pose(actor)
             gun_bounds = self._rotated_bounds(center, weapon.spec.size_m, actor.facing) if weapon else body_bounds
-            if not (view.visible(body_bounds) or view.visible(gun_bounds)):
+            if view.visible(body_bounds) or view.visible(gun_bounds):
+                candidates.append((actor, body_angle, weapon, center, gun_bounds))
+        seen_enemies = self._enemy_visibility(world, player,
+                                              [actor for actor, *_ in candidates if actor.team != player.team],
+                                              sky, lights, night_vision)
+        awareness = []
+        for actor, body_angle, weapon, center, gun_bounds in candidates:
+            alpha = 1.0 if actor.team == player.team else seen_enemies.get(actor.id, 0)
+            if alpha == 0:
                 continue
             x, y = view.pico(*actor.xy)
             image = self.sprites["player" if actor.team == "player" else "guard"]
-            if actor.hp <= 0:
-                image.opacify(0.35)
+            body_alpha = alpha if actor.hp > 0 else 0.35 * alpha
+            if body_alpha < 1:
+                image.opacify(body_alpha)
             image.rotate_draw(-body_angle, x, y, BODY_SIZE_M[0] * view.scale, BODY_SIZE_M[1] * view.scale)
-            image.opacify(1.0)
-            if actor.hp > 0 and weapon:
+            if body_alpha < 1:
+                image.opacify(1.0)
+            if weapon:
                 gun_x, gun_y = view.pico(*center)
                 gun = self.guns[weapon.spec.id]
+                if alpha < 1:
+                    gun.opacify(alpha)
                 gun.rotate_draw(-actor.facing, gun_x, gun_y,
                                 weapon.spec.size_m[0] * view.scale, weapon.spec.size_m[1] * view.scale)
+                if alpha < 1:
+                    gun.opacify(1.0)
             brain = simulation.ai.brains.get(actor.id)
-            if (not map_open and brain and actor.hp > 0
-                    and (brain.radio.started_at is not None or brain.memory.recognition > 0)
-                    and actor.position.floor == simulation.player.position.floor
-                    and world.geometry.raycast(simulation.player.xy, actor.xy) is None):
+            if (not map_open and brain and actor.hp > 0 and alpha >= 0.5
+                    and (brain.radio.started_at is not None or brain.memory.recognition > 0)):
                 awareness.append((brain, x, y + max(12, 0.45 * view.scale)))
             if debug:
                 self._rect(view, Rect(actor.position.x - actor.radius, actor.position.y - actor.radius,
@@ -323,12 +373,7 @@ class Renderer:
                         sx, sy = view.pico(*brain.memory.last_sound)
                         pico.draw_line(sx - 5, sy, sx + 5, sy, 244, 184, 88)
                         pico.draw_line(sx, sy - 5, sx, sy + 5, 244, 184, 88)
-        sky = simulation.sky
-        player = simulation.player
-        night_vision = player.night_vision and player.hp > 0
-        floor = player.position.floor
-        self.lighting.draw(world, view, simulation.light_sources(sky, floor, infrared=night_vision),
-                           sky, night_vision=night_vision, floor=floor)
+        self.lighting.draw(world, view, lights, sky, night_vision=night_vision, floor=floor)
         for point in simulation.laser_targets(sky, view.viewport()):
             x, y = view.pico(*point)
             alpha = round(230 * sky.infrared)
@@ -360,7 +405,8 @@ class Renderer:
             self.vignette.draw(camera.width / 2, camera.height / 2, camera.width, camera.height)
         self.hud.render(simulation, camera, paused=paused, debug=debug,
                         update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=map_open,
-                        cache_count=len(self.map_images.cache), search_counts=search_counts)
+                        cache_count=len(self.map_images.cache), search_counts=search_counts,
+                        seen_enemies=seen_enemies)
         self.last_draw_ms = (perf_counter() - started) * 1000
         pico.update_canvas()
 

@@ -369,7 +369,7 @@ class HUD:
             self.text(key, camera.width - 350, camera.height - 168 - number * 32)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
-               cache_count=0, search_counts=None):
+               cache_count=0, search_counts=None, seen_enemies=()):
         self._update_text_scale(camera)
         now = perf_counter()
         self._track_message(simulation, now)
@@ -426,7 +426,7 @@ class HUD:
             self.panel(width / 2 - 150, 168, 300, 36)
             self.text("prompt", width / 2 - 132, 186)
         if debug or not map_open:
-            self._minimap(simulation, camera, debug)
+            self._minimap(simulation, camera, debug, seen_enemies)
         if map_open:
             self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused)
         territory = simulation.world.territory_at(simulation.player.xy)
@@ -438,7 +438,7 @@ class HUD:
             self.label("region_alarm", f"지역 경보  ·  {math.ceil(alarm.until - simulation.time)}초", 16, (255, 133, 107))
             self._draw_notice("region_alarm", width / 2, height - (80 if paused else 28))
 
-    def _minimap(self, simulation, camera, debug=False):
+    def _minimap(self, simulation, camera, debug=False, seen_enemies=()):
         width, height = 180, 126
         x0, y0 = (camera.width - 196, 12) if debug else (12, camera.height - height - 12)
         self.panel(x0, y0, width, height)
@@ -461,7 +461,7 @@ class HUD:
                                  map_rectangles(terrain, point, canvas_height))
         self._draw_map_batch("mini roads", world, layout, map_roads(world, point, scale, canvas_height, ()))
         for actor in [*simulation.guards, simulation.player]:
-            if actor.hp > 0 and (actor.team == "player" or debug or math.dist(actor.xy, simulation.player.xy) < 20):
+            if actor.hp > 0 and (actor.team == "player" or debug or actor.id in seen_enemies):
                 x, y = point(*actor.xy)
                 color = (108, 213, 197) if actor.team == "player" else (218, 131, 100)
                 pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *color, filled=True)
