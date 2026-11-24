@@ -282,7 +282,17 @@ class Renderer:
                         sx, sy = view.pico(*brain.memory.last_sound)
                         pico.draw_line(sx - 5, sy, sx + 5, sy, 244, 184, 88)
                         pico.draw_line(sx, sy - 5, sx, sy + 5, 244, 184, 88)
-        self.lighting.draw(world, view, simulation.light_sources())
+        sky = simulation.sky
+        player = simulation.player
+        night_vision = player.night_vision and player.hp > 0
+        floor = player.position.floor
+        self.lighting.draw(world, view, simulation.light_sources(sky, floor, infrared=night_vision),
+                           sky, night_vision=night_vision, floor=floor)
+        for point in simulation.laser_targets(sky, view.viewport()):
+            x, y = view.pico(*point)
+            alpha = round(230 * sky.infrared)
+            pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, 90, 225, 125, alpha // 2, filled=True)
+            pico.draw_rectangle(x - 1, y - 1, x + 1, y + 1, 191, 255, 195, alpha, filled=True)
         for alarm in simulation.alarms.values():
             x, y = alarm.position
             beacon = Rect(x - 0.23, y - 0.23, 0.46, 0.46)

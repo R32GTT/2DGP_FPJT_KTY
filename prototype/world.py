@@ -78,6 +78,11 @@ class World:
             from .road_generation import validate_roads
             validate_roads(self.data["road_network"], self.data["planned_facilities"], self.bounds, self.data["colliders"])
         self.search_areas = build_search_areas(self)
+        self.light_roofs = BoundsIndex()
+        roofs = {layer.rect for layer in self.layers if layer.role in {"floor", "roof"}}
+        roofs.update(rect for area in self.search_areas for rect in area.floors)
+        for index, rect in enumerate(sorted(roofs, key=lambda item: (item.x, item.y, item.w, item.h))):
+            self.light_roofs.add(index, rect, rect)
         self.map_layers = self.layers
         self.chunks = None
         if self.data.get('stream_terrain'):

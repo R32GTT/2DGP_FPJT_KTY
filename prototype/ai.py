@@ -128,7 +128,7 @@ class EnemyAI:
                     face(actor, look)
                     actor.facing = turn_toward(previous_facing[actor.id], actor.facing, 1 / 60)
                     sample = sight_sample(actor, player, self.world.geometry, memory)
-                light = self.light_at(player.position) if sample is not None and self.light_at else 1.0
+                light = self.light_at(actor, player.position) if sample is not None and self.light_at else 1.0
                 update_vision(player, memory, time, sample,
                               alert=situation.investigating or situation.confirmed or memory.suspicion >= 0.3,
                               reacquire=situation.confirmed and (memory.last_seen is not None or fresh_incoming),

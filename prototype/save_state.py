@@ -6,6 +6,7 @@ import math
 from campaign.models import Position
 from .actors import Actor
 from .ai_state import Brain, CombatState, Incident, RadioState, SearchCue
+from .lighting import OPTICS_MODES
 from .perception import Knowledge
 from .simulation import RegionAlarm
 from .transport import Trip
@@ -39,6 +40,7 @@ def restore_actor(row, specs):
                      "boarding_goal": tuples(row["boarding_goal"])})
     if (not all(math.isfinite(value) for value in (*actor.xy, actor.hp, actor.facing, actor.radius, actor.speed))
             or actor.hp < 0 or actor.radius <= 0 or actor.speed <= 0
+            or actor.lamp not in OPTICS_MODES or type(actor.night_vision) is not bool or type(actor.ir_laser) is not bool
             or actor.active_weapon and actor.active_weapon not in actor.loadout):
         raise ValueError("잘못된 현장 개체 상태")
     return actor

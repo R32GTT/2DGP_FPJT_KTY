@@ -80,6 +80,10 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     controls.debug = controls.paused = True
                     continue
                 if not controls.paused:
+                    if action in {"lamp", "night_vision", "ir_laser"}:
+                        if not controls.map_open and not simulation.respawn_selecting:
+                            simulation.toggle_optics(action)
+                        continue
                     if simulation.respawn_selecting:
                         if action.startswith("slot_"):
                             simulation.request_respawn(int(action[-1]))

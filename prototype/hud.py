@@ -224,7 +224,13 @@ class HUD:
         show_reload = weapon is not None and (weapon.reloading or weapon.stage > 0)
         bottom = base + 32 if show_reload else base
         x = left + 12
-        pico.draw_rectangle(left, base, left + width, bottom + 112, 15, 24, 27, 218, filled=True)
+        pico.draw_rectangle(left, base, left + width, bottom + 134, 15, 24, 27, 218, filled=True)
+        lamp = {"off": "꺼짐", "white": "백색", "infrared": "IR"}[player.lamp]
+        if player.lamp == "infrared" and not simulation.sky.infrared:
+            lamp = "IR 주간"
+        optics = f"N 야투 {'켜짐' if player.night_vision else '꺼짐'} · L {lamp} · K 레이저 {'켜짐' if player.ir_laser else '꺼짐'}"
+        self.label("optics", optics, 13)
+        self.text("optics", x, bottom + 117)
         self.text("game_clock", x, bottom + 94)
         self.text("game_vitals", x, bottom + 68)
         pico.draw_rectangle(x, bottom + 52, x + width - 24, bottom + 55, 57, 68, 64, filled=True)

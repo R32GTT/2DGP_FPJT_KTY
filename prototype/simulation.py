@@ -17,7 +17,8 @@ from .movement import move_actor
 from .interactions import (
     exchange_safehouse_weapon, nearby_facility, nearby_road_control, use_facility, use_road_control,
 )
-from .lighting import Light
+from .geometry import Rect
+from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
 from .transport import TransportCrew
 from .campaign_presence import CampaignPresence
@@ -94,8 +95,10 @@ class PlaySimulation:
         self.fixed_lights = tuple(Light(f"facility/{facility['id']}", tuple(facility["terminal"]),
                                         6.5, (255, 221, 167), 0.75)
                                   for facility in self.world.facilities)
+        self._player_exposure = None
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],
-                          can_radio=self._can_radio, report_contact=self._report_contact, emit=self.events.emit)
+                          can_radio=self._can_radio, report_contact=self._report_contact, emit=self.events.emit,
+                          light_at=self._light_at)
         self.presence = (CampaignPresence(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"])
                          if self.world.data.get("generation") else None)
         self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"], self.events)
@@ -265,12 +268,67 @@ class PlaySimulation:
         return max((weights.get(actor.state, 0) for actor in self.guards
                     if actor.hp > 0 and math.dist(actor.xy, self.player.xy) < 24), default=0.0)
 
-    def light_sources(self):
-        yield from self.fixed_lights
-        pulse = 0.5 + 0.5 * math.sin(self.time * math.tau)
-        for key, alarm in self.alarms.items():
-            if alarm.until > self.time:
-                yield Light(f"alarm/{key}", alarm.position, 5.0, (255, 56, 40), 0.35 + pulse * 0.55)
+    @property
+    def sky(self):
+        return sky_at(self.campaign.simulation.state.world_time)
+
+    def light_sources(self, sky, floor, *, infrared=False):
+        if floor == 0:
+            yield from self.fixed_lights
+            if self.alarms:
+                pulse = 0.5 + 0.5 * math.sin(self.time * math.tau)
+                for key, alarm in self.alarms.items():
+                    if alarm.until > self.time:
+                        yield Light(f"alarm/{key}", alarm.position, 5.0, (255, 56, 40), 0.35 + pulse * 0.55)
+        for actor in (self.player, *self.guards):
+            if actor.position.floor != floor:
+                continue
+            lamp, _, _ = actor_optics(actor, sky)
+            if lamp == "white":
+                yield Light(f"actor/{actor.id}", actor.xy, 11.0, (255, 241, 214),
+                            0.95, actor.facing, math.radians(28), floor=floor)
+            elif lamp == "infrared" and infrared and sky.infrared:
+                yield Light(f"actor/{actor.id}", actor.xy, 12.0, (240, 240, 240),
+                            1.0, actor.facing, math.radians(25), infrared=True, floor=floor)
+
+    def laser_targets(self, sky, viewport):
+        if not self.player.night_vision or not sky.infrared or self.player.hp <= 0:
+            return
+        reach = 30.0
+        for actor in (self.player, *self.guards):
+            if (actor.position.floor != self.player.position.floor or not actor_optics(actor, sky)[2]
+                    or not Rect(*actor.xy, 0, 0).expanded(reach).overlaps(viewport)):
+                continue
+            point = beam_end(self.world, actor.xy, actor.facing, reach)
+            if point is None:
+                continue
+            dx, dy = point[0] - self.player.position.x, point[1] - self.player.position.y
+            distance = math.hypot(dx, dy)
+            if distance <= 0.01 or beam_end(self.world, self.player.xy, math.atan2(dy, dx), distance) is None:
+                yield point
+
+    def _light_at(self, observer, position):
+        sky = self.sky
+        if self._player_exposure is None:
+            self._player_exposure = incident_light(self.world, (position.x, position.y), sky,
+                                                   self.light_sources(sky, position.floor, infrared=True))
+        visible, infrared = self._player_exposure
+        if actor_optics(observer, sky)[1]:
+            visible = 1.9 * visible + infrared
+        # 근접한 위협은 어둠에서도 조금씩 식별할 수 있다.
+        close = 0.46 if math.dist(observer.xy, (position.x, position.y)) <= 2 else 0.0
+        return min(1.2, max(0.10, close, visible))
+
+    def toggle_optics(self, action):
+        player = self.player
+        if player.hp <= 0:
+            return
+        if action == "night_vision":
+            player.night_vision = not player.night_vision
+        elif action == "ir_laser":
+            player.ir_laser = not player.ir_laser
+        elif action == "lamp":
+            player.lamp = OPTICS_MODES[(OPTICS_MODES.index(player.lamp) + 1) % len(OPTICS_MODES)]
 
     def step(self, direction=(0, 0), aim=None, firing=False, sprint=False, *, aiming=False,
              trigger_pressed=False, walking=False, aim_offset=None):
@@ -285,6 +343,7 @@ class PlaySimulation:
                 self.respawn_site_id = None
                 self.player.position = Position(*(site["position"] if site else self.world.safehouse))
                 self.player.hp, self.player.armor = 100, 0
+                self.player.lamp, self.player.night_vision, self.player.ir_laser = "off", False, False
                 self.roster.materialized = True
                 self.ai.reset()
                 self._sync_guards(restore=True)
@@ -325,6 +384,7 @@ class PlaySimulation:
                     FIXED_DT, aiming=aiming, movement_speed_mps=moved / FIXED_DT,
                     sprinting=sprint and not walking)
         self._dispatch()
+        self._player_exposure = None
         intents = self.ai.update(self.guards, self.player, self.time, player_motion=player_motion)
         active_guards = [actor for actor in self.guards if actor.hp > 0]
         # 이동 방향과 무관하게 처리 순서가 특정 병사에게 계속 유리하지 않도록 번갈아 적용한다.

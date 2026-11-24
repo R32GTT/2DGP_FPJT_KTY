@@ -42,6 +42,8 @@ class Controls:
                     actions.append("save" if key == sdl2.SDLK_F5 else "load")
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
+                elif key in (sdl2.SDLK_l, sdl2.SDLK_n, sdl2.SDLK_k):
+                    actions.append({sdl2.SDLK_l: "lamp", sdl2.SDLK_n: "night_vision", sdl2.SDLK_k: "ir_laser"}[key])
                 elif key == sdl2.SDLK_e and event.key.keysym.mod & sdl2.KMOD_SHIFT:
                     actions.append("facility_alternate")
                 elif sdl2.SDLK_1 <= key <= sdl2.SDLK_4:

@@ -31,6 +31,9 @@ class Actor:
     present: bool = True
     boarding_goal: tuple | None = None
     transport_boarding: bool = False
+    lamp: str = "off"
+    night_vision: bool = False
+    ir_laser: bool = False
 
     @property
     def xy(self):
