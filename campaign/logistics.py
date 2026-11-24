@@ -2,8 +2,9 @@
 
 from .clock import TRANSFER, schedule
 from .models import CampaignState, Operation, RESOURCE_TYPES, stock
-from .resources import available, minimum, owner, quantities, reserve
-from .routes import find_route, road_between
+from .qrf import external_support_link, regional_command
+from .resources import available, consume, minimum, owner, quantities, reserve
+from .routes import find_route, road_between, transport_provisions
 
 
 EXTERNAL_FRONT = "external_front"
@@ -12,7 +13,7 @@ EXTERNAL_FRONT = "external_front"
 def incoming(state: CampaignState, destination_id: str) -> dict[str, int]:
     result = stock()
     for operation in state.operations.values():
-        if (operation.kind not in {"supply", "export"} or operation.destination_id != destination_id
+        if (operation.kind not in {"supply", "export", "equipment"} or operation.destination_id != destination_id
                 or operation.phase not in {"loading", "outbound", "unloading"}):
             continue
         cargo = (state.reservations[operation.id].cargo if operation.phase == "loading"
@@ -42,15 +43,16 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
         limit = sum(requested.values())
     pool = sorted(v.id for v in state.vehicles.values()
                   if v.node_id == origin.node_id and v.status == "available" and not v.troop_seats)
+    provisions = transport_provisions(state, route) if kind == "equipment" else state.rules["provisions_per_vehicle"]
     vehicle_ids, capacity = [], 0
-    while pool and capacity - len(vehicle_ids) * state.rules["provisions_per_vehicle"] < limit:
+    while pool and capacity - len(vehicle_ids) * provisions < limit:
         chosen = state.choose(pool)
         pool.remove(chosen)
         vehicle_ids.append(chosen)
         capacity += state.vehicles[chosen].capacity
     if not vehicle_ids:
         return None
-    provision_count = len(vehicle_ids) * state.rules["provisions_per_vehicle"]
+    provision_count = len(vehicle_ids) * provisions
     space = min(limit, capacity - provision_count)
     cargo = stock()
     for name in state.resource_priority:
@@ -108,7 +110,7 @@ def plan_supplies(state: CampaignState) -> None:
                 extra["supplies"] += state.rules["export_provision_buffer"]
         needed = {name: max(0, destination.target_stock[name] + extra[name]
                             - available(state, destination.id, name) - inbound[name])
-                  for name in RESOURCE_TYPES}
+                  for name in RESOURCE_TYPES if name != "night_gear"}
         if not any(needed.values()):
             continue
         candidates = []
@@ -137,3 +139,55 @@ def plan_exports(state: CampaignState) -> None:
         plan_transport(state, state.demand.collection_facility_id, EXTERNAL_FRONT,
                        needed, kind="export", reason="외부 전선 출하 수요·일정",
                        minimum_batch=state.rules["minimum_export_batch"])
+
+
+def issue_night_gear(state, facility):
+    limit = state.rules.get("night_kits_per_garrison", 0)
+    if (not limit or "garrison" not in facility.capabilities or facility.damage == 100
+            or state.regions[facility.region_id].owner != "enemy"):
+        return 0
+    units = sorted((unit for unit in state.units.values() if unit.node_id == facility.node_id
+                    and unit.faction == "enemy" and unit.soldiers), key=lambda unit: (unit.mobile, unit.id))
+    assigned = sum(unit.night_kits for unit in units)
+    target = min(limit, sum(unit.soldiers for unit in units))
+    eligible = [unit for unit in units if unit.status == "available"]
+    remaining = min(max(0, target - assigned), available(state, facility.id, "night_gear"),
+                    sum(unit.soldiers - unit.night_kits for unit in eligible))
+    issued = remaining
+    if remaining > 0:
+        consume(state, facility.inventory, {"night_gear": remaining}, reason="garrison_night_gear", owner_id=facility.id)
+        for unit in eligible:
+            count = min(remaining, unit.soldiers - unit.night_kits)
+            unit.night_kits += count
+            remaining -= count
+            if not remaining:
+                break
+    return max(0, target - assigned - issued)
+
+
+def plan_equipment(state):
+    if "night_kits_per_garrison" not in state.rules:
+        return
+    for target in sorted(state.facilities.values(), key=lambda site: (-state.regions[site.region_id].importance, site.id)):
+        needed = issue_night_gear(state, target)
+        if not needed or not regional_command(state, target.region_id):
+            continue
+        if incoming(state, target.id)["night_gear"]:
+            continue
+        candidates = []
+        for origin in state.facilities.values():
+            if (origin is target or "logistics" not in origin.capabilities or origin.damage == 100
+                    or state.regions[origin.region_id].owner != "enemy"
+                    or available(state, origin.id, "night_gear") <= minimum(state, origin.id, "night_gear")):
+                continue
+            if origin.region_id != target.region_id and not all(external_support_link(state, key)
+                                                                for key in (origin.region_id, target.region_id)):
+                continue
+            route = find_route(state, origin.node_id, target.node_id)
+            if route:
+                distance = sum(road_between(state, a, b).length_m for a, b in zip(route, route[1:]))
+                candidates.append((distance, origin.id))
+        for _, origin_id in sorted(candidates):
+            if plan_transport(state, origin_id, target.id, {"night_gear": needed}, kind="equipment",
+                              reason="주둔지 야간 장비 요청") is not None:
+                break

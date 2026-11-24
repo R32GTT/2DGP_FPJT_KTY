@@ -132,8 +132,10 @@ class CampaignBridge:
         self.simulation.apply_action(action)
         return self.simulation.state.facilities[facility_id].damage
 
-    def lose_soldier(self, unit_id, *, driver_vehicle_id=None, progress_m=None):
+    def lose_soldier(self, unit_id, *, driver_vehicle_id=None, progress_m=None, night_kit=None):
         action = {"type": "damage_unit", "unit_id": unit_id, "soldiers": 1}
+        if night_kit:
+            action["night_kit"] = True
         if driver_vehicle_id is not None:
             action.update(driver_vehicle_id=driver_vehicle_id, progress_m=progress_m)
         self.simulation.apply_action(action)

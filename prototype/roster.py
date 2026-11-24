@@ -69,14 +69,19 @@ class CampaignRoster:
                 self.by_id[actor.id] = actor
                 self.spawns[actor.id] = actor.xy
             self.unit_ids.append(unit_id)
-        return [actor for actor in self.actors if actor.source_unit == unit_id and actor.hp > 0][:unit.soldiers]
+        members = [actor for actor in self.actors if actor.source_unit == unit_id and actor.hp > 0][:unit.soldiers]
+        if "night_kits_per_garrison" in state.rules:
+            for index, actor in enumerate(members):
+                actor.night_kit = index < unit.night_kits
+        return members
 
     def transport_members(self, operation, weapon):
         return [actor for unit_id in operation.unit_ids for actor in self.members(unit_id, weapon)]
 
     def record_loss(self, actor, *, seated=False, driver_vehicle_id=None, progress_m=None):
         if actor.source_unit and actor.id not in self.local_deaths:
-            self.bridge.lose_soldier(actor.source_unit, driver_vehicle_id=driver_vehicle_id, progress_m=progress_m)
+            self.bridge.lose_soldier(actor.source_unit, driver_vehicle_id=driver_vehicle_id, progress_m=progress_m,
+                                     night_kit=actor.night_kit)
             self.local_deaths.add(actor.id)
             if seated:
                 self.seated_deaths.add(actor.id)

@@ -4,7 +4,7 @@ from copy import deepcopy
 import math
 
 from . import clock
-from .logistics import plan_exports, plan_supplies
+from .logistics import issue_night_gear, plan_equipment, plan_exports, plan_supplies
 from .models import FOOT_OPERATIONS, QRF_OPERATIONS, TROOP_TRANSPORTS, CampaignState, Event
 from .qrf import dispatch_response, external_support_link, plan_redeployments, regional_command
 from .repair import WORK_SECONDS, finish_repair, plan_repairs, queue_repairs
@@ -61,6 +61,7 @@ class Simulation:
                             and (operation.kind != "withdrawal"
                             or (region.control_state == "occupied" and target.damage < 100))):
                         finish_relocation(state, operation)
+                        issue_night_gear(state, target)
                     else:
                         request_return(state, operation)
                 elif operation.kind == "repair":
@@ -82,6 +83,7 @@ class Simulation:
         operation = state.operations.get(event.operation_id)
         if event.kind == "planning":
             plan_redeployments(state)
+            plan_equipment(state)
             plan_supplies(state)
             plan_exports(state)
             clock.schedule(state, state.world_time + state.rules["planning_period_s"], "planning")
@@ -105,7 +107,7 @@ class Simulation:
                 if operation.kind != "export":
                     destination = state.facilities[operation.destination_id]
                     invalid = (state.regions[destination.region_id].owner != "enemy"
-                               or (operation.kind in TROOP_TRANSPORTS | {"supply"} and destination.damage == 100))
+                               or (operation.kind in TROOP_TRANSPORTS | {"supply", "equipment"} and destination.damage == 100))
                     if operation.kind == "withdrawal":
                         invalid |= state.regions[destination.region_id].control_state != "occupied" or destination.damage == 100
                 if operation.origin_id != state.source.id:
@@ -126,6 +128,10 @@ class Simulation:
                                 or (origin.region_id != destination.region_id
                                     and not all(external_support_link(state, key)
                                                 for key in (origin.region_id, destination.region_id))))
+                elif operation.kind == "equipment":
+                    invalid |= (not regional_command(state, destination.region_id)
+                                or (origin.region_id != destination.region_id and not all(
+                                    external_support_link(state, key) for key in (origin.region_id, destination.region_id))))
                 if invalid:
                     cancel(state, operation.id)
                 elif self.departure_ready is not None and not self.departure_ready(operation):
@@ -144,6 +150,8 @@ class Simulation:
                     set_route(state, operation)
             elif event.kind == "unload" and operation.phase == "unloading":
                 if handover(state, operation.id):
+                    if operation.kind == "equipment":
+                        issue_night_gear(state, state.facilities[operation.destination_id])
                     clock.schedule(state, state.world_time + state.rules["turnaround_s"],
                                    "begin_return", priority=clock.TRANSFER, operation_id=operation.id)
                 else:
@@ -262,7 +270,8 @@ class Simulation:
             if facility.damage == 100:
                 for operation in list(state.operations.values()):
                     if ((operation.origin_id == facility.id and operation.kind != "withdrawal")
-                            or (operation.destination_id == facility.id and operation.kind in TROOP_TRANSPORTS | {"supply"})):
+                            or (operation.destination_id == facility.id
+                                and operation.kind in TROOP_TRANSPORTS | {"supply", "equipment"})):
                         cancel(state, operation.id)
                 if destroy_inventory and any(facility.inventory.values()):
                     remove(state, facility.inventory, facility.inventory, outcome="destroyed", owner_id=facility.id)
@@ -330,6 +339,7 @@ class Simulation:
         else:
             asset.soldiers -= losses
             asset.losses += losses
+            asset.night_kits = min(asset.soldiers, max(0, asset.night_kits - int(action.get("night_kit") is True)))
             if asset.soldiers == 0:
                 asset.status = "destroyed"
         if asset.status == "destroyed":

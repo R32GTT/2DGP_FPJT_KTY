@@ -5,7 +5,7 @@ import math
 from .clock import TRANSFER, schedule
 from .models import QRF_OPERATIONS, Operation, stock
 from .resources import TERMINAL_PHASES, reserve
-from .routes import find_route, road_between
+from .routes import find_route, road_between, transport_provisions
 
 
 def _working(state, region, capability):
@@ -45,7 +45,7 @@ def _order_troop_transport(state, origin, target, unit, route, kind, reason, del
         return None
     operation = Operation(state.new_id(), reason, kind, origin.id, target.id, route[0], route[-1],
                           [truck.id], [unit.id], state.world_time, route=route, report_xy=report_xy)
-    provisions = state.rules.get("troop_provisions", state.rules["provisions_per_vehicle"])
+    provisions = transport_provisions(state, route)
     try:
         reserve(state, operation, stock(), stock(supplies=provisions))
     except ValueError:

@@ -42,6 +42,7 @@ def restore_actor(row, specs):
                                                  actor.speed, actor.blinded_until))
             or actor.hp < 0 or actor.radius <= 0 or actor.speed <= 0
             or actor.blinded_until < 0
+            or actor.night_kit is not None and type(actor.night_kit) is not bool
             or actor.lamp not in OPTICS_MODES or type(actor.night_vision) is not bool or type(actor.ir_laser) is not bool
             or actor.active_weapon and actor.active_weapon not in actor.loadout):
         raise ValueError("잘못된 현장 개체 상태")

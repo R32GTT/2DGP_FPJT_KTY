@@ -106,6 +106,15 @@ def movement_supply_cost(state, before, distance, vehicle_count):
     return cost, after
 
 
+def transport_provisions(state, route):
+    if "road_cost_distance_m" in state.rules:
+        distance = sum(road_between(state, start, end).length_m for start, end in zip(route, route[1:]))
+        cost, _ = movement_supply_cost(state, 0, 2 * distance, 1)
+    else:
+        cost = 2 * (len(route) - 1) * state.rules["road_cost_per_vehicle"]
+    return max(state.rules["provisions_per_vehicle"], cost)
+
+
 def _pay_distance(state, operation, distance, vehicle_count):
     if "road_cost_distance_m" not in state.rules or not vehicle_count:
         return True

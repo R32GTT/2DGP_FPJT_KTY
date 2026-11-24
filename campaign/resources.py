@@ -295,6 +295,8 @@ def assert_invariants(state: CampaignState) -> None:
             raise ValueError(f"자원 보존 위반: {name}")
     if sum(u.soldiers + u.losses for u in state.units.values()) != state.initial_soldiers:
         raise ValueError("병력 보존 위반")
+    if sum(unit.night_kits for unit in state.units.values()) > state.ledger.consumed["night_gear"]:
+        raise ValueError("지급 야간 장비 보존 위반")
     if sorted(state.vehicles) != state.initial_vehicle_ids:
         raise ValueError("차량 ID 보존 위반")
     for reservation in state.reservations.values():

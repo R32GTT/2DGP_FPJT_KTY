@@ -83,7 +83,7 @@ def evaluate_regions(state):
             region.withdrawal_started_at = state.world_time
             state.record("withdrawal_started", region_id=region.id)
             for operation in local_orders:
-                if operation.kind in QRF_OPERATIONS | {"supply", "export", "redeployment"}:
+                if operation.kind in QRF_OPERATIONS | {"supply", "export", "redeployment", "equipment"}:
                     cancel(state, operation.id)
         on_site = any(op.phase != "loading" and op.route and op.route[op.edge_index] in nodes
                       and any(state.units[key].soldiers for key in op.unit_ids) for op in active)

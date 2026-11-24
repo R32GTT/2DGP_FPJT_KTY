@@ -30,16 +30,22 @@ def build_state(data, *, seed=42, support="finite") -> CampaignState:
              for row in data["nodes"]}
     if len(nodes) != len(data["nodes"]):
         raise ValueError("중복 노드 ID")
-    facilities = indexed(Facility, data["facilities"])
-    source = ExternalSource(**data["source"])
+    facilities = indexed(Facility, ({**row, **{name: {"night_gear": 0, **row[name]}
+                                               for name in ("inventory", "minimum_stock", "target_stock")}}
+                                    for row in data["facilities"]))
+    source = ExternalSource(**{**data["source"], "inventory": {"night_gear": 0, **data["source"]["inventory"]}})
     source.mode = support
+    demand = ExternalDemand(**{**data["demand"], "cargo": {"night_gear": 0, **data["demand"]["cargo"]}})
+    priority = list(data.get("resource_priority", stock()))
+    if "night_gear" not in priority:
+        priority.append("night_gear")
     state = CampaignState(
         seed=seed, nodes=nodes, roads=indexed(Road, data["roads"]),
         regions=indexed(Region, data["regions"]), facilities=facilities,
         units=indexed(Unit, data["units"]), vehicles=indexed(Vehicle, data["vehicles"]),
-        source=source, demand=ExternalDemand(**data["demand"]), rules=data["rules"],
+        source=source, demand=demand, rules=data["rules"],
         rng_state=random.Random(seed).getstate(),
-        resource_priority=data.get("resource_priority", list(stock())),
+        resource_priority=priority,
     )
     for name in stock():
         state.ledger.initial[name] = sum(f.inventory[name] for f in facilities.values())

@@ -82,7 +82,7 @@ def actor_optics(actor, sky):
         return actor.lamp, actor.night_vision, actor.ir_laser
     slot = (actor.member if actor.member >= 0 else sum(actor.id.encode("utf-8"))) % 4
     if sky.infrared > 0.35:
-        if slot == 0:
+        if actor.night_kit is True or (actor.night_kit is None and slot == 0):
             return "infrared", True, actor.state in {"combat", "combat_guard"}
         if slot == 1:
             return "white", False, False

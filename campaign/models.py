@@ -7,7 +7,7 @@ import math
 import random
 
 
-RESOURCE_TYPES = ("supplies", "ammunition", "repair_parts")
+RESOURCE_TYPES = ("supplies", "ammunition", "repair_parts", "night_gear")
 FOOT_OPERATIONS = frozenset({"qrf", "withdrawal"})
 TROOP_TRANSPORTS = frozenset({"redeployment", "motor_qrf"})
 QRF_OPERATIONS = frozenset({"qrf", "motor_qrf"})
@@ -91,6 +91,7 @@ class Unit:
     position: Position | None = None
     can_escort: bool = True
     mobile: bool = False
+    night_kits: int = 0
 
 
 @dataclass
@@ -301,6 +302,7 @@ def validate_state(state: CampaignState) -> None:
         require(type(unit.soldiers) is int and type(unit.losses) is int
                 and unit.soldiers >= 0 and unit.losses >= 0, "잘못된 병력")
         require(type(unit.can_escort) is bool and type(unit.mobile) is bool, "잘못된 병력 배정 설정")
+        require(type(unit.night_kits) is int and 0 <= unit.night_kits <= unit.soldiers, "잘못된 병력 장비 수량")
         require((unit.soldiers == 0) == (unit.status == "destroyed"), "병력 격파 상태 불일치")
     for vehicle in state.vehicles.values():
         require(type(vehicle.capacity) is int and vehicle.capacity > 0
@@ -314,7 +316,7 @@ def validate_state(state: CampaignState) -> None:
         require(asset.node_id is not None or asset.operation_id is not None
                 or asset.position is not None, "자산 위치 누락")
     for operation in state.operations.values():
-        require(operation.kind in {"supply", "export", "repair"} | FOOT_OPERATIONS | TROOP_TRANSPORTS,
+        require(operation.kind in {"supply", "export", "repair", "equipment"} | FOOT_OPERATIONS | TROOP_TRANSPORTS,
                 "잘못된 작전 유형")
         require(operation.kind not in FOOT_OPERATIONS or (not operation.vehicle_ids and bool(operation.unit_ids)),
                 "도보 작전 편성 오류")
