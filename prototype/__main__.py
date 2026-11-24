@@ -13,6 +13,7 @@ from .world import DEFAULT_SCENE
 
 SIMULATION_FRAME_BUDGET_S = 0.012
 MAX_SIMULATION_BACKLOG_S = 0.1
+EQUIPMENT_RANGE_SCENE = DEFAULT_SCENE.with_name("ai_facility.json")
 
 
 def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_open=False):
@@ -26,9 +27,9 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
     try:
         renderer = Renderer(simulation.world)
         facility_test = simulation.world.data.get("training_facility", False)
-        test_mode = facility_test or bool(simulation.ai_scenario)
+        test_mode = (facility_test or bool(simulation.ai_scenario)) and not simulation.equipment_range
         controls = Controls()
-        camera = PlayCamera(zoom=zoom if zoom is not None else 0.55 if test_mode else 1.0)
+        camera = PlayCamera(zoom=zoom if zoom is not None else 0.55 if facility_test or test_mode else 1.0)
         controls.debug = test_mode if debug is None else debug
         controls.paused = test_mode if paused is None else paused
         controls.map_open = map_open
@@ -62,10 +63,21 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         simulation.message = str(error)
                     previous, elapsed, accumulator = perf_counter(), 0.0, 0.0
                     continue
+                if simulation.equipment_range:
+                    if action == "next_ai":
+                        simulation.range_night = not simulation.range_night
+                        simulation.message = "야간" if simulation.range_night else "주간"
+                        continue
+                    if action == "restock_range":
+                        simulation.restock_range()
+                        continue
                 select_drill = action == "next_ai" and "search_drill" in simulation.world.data
                 select_stack = action == "next_ai" and "stack_drill" in simulation.world.data
                 next_scenario = action == "next_ai" and simulation.ai_scenario
-                if (test_mode and action == "restart_ai") or select_drill or select_stack or next_scenario:
+                restart = action == "restart_ai" and (test_mode or simulation.equipment_range)
+                if simulation.equipment_range and action == "respawn" and simulation.player.hp <= 0:
+                    restart = True
+                if restart or select_drill or select_stack or next_scenario:
                     scenario = simulation.ai_scenario
                     if next_scenario:
                         cases = tuple(SCENARIOS)
@@ -73,15 +85,21 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     stack_variant = simulation.stack_variant
                     if select_stack and simulation.stack_drill:
                         stack_variant = (stack_variant + 1) % len(simulation.world.data["stack_drill"]["layouts"])
+                    range_night = simulation.range_night
                     simulation = PlaySimulation(simulation.world.source, ai_scenario=scenario,
                                                 search_drill=select_drill or simulation.search_drill,
                                                 stack_drill=select_stack or simulation.stack_drill,
-                                                stack_variant=stack_variant)
+                                                stack_variant=stack_variant, equipment_range=simulation.equipment_range)
+                    simulation.range_night = range_night
                     stack_previewed = False
                     controls.keys.clear()
                     controls.firing = controls.aiming = controls.trigger_pending = controls.map_open = False
                     controls.inventory_open = False
-                    controls.debug = controls.paused = True
+                    if simulation.equipment_range:
+                        camera.follow(simulation.player.xy)
+                        previous, elapsed, accumulator = perf_counter(), 0.0, 0.0
+                    else:
+                        controls.debug = controls.paused = True
                     continue
                 if not controls.paused:
                     if action == "inventory":
@@ -202,6 +220,7 @@ def main(argv=None):
     scene_options.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
     scene_options.add_argument("--generate", type=int, metavar="SEED", help="시드로 지형·도로·프리팹 시설 생성")
     scene_options.add_argument("--load", type=Path, nargs="?", const=DEFAULT_SAVE, help="생성 월드 이어하기")
+    scene_options.add_argument("--equipment-range", action="store_true", help="장비 시험장 실행")
     parser.add_argument("--region-size", choices=("small", "medium", "large", "xlarge"))
     parser.add_argument("--regions", type=int, choices=(1, 2, 3, 4), help="생성할 지역 수")
     parser.add_argument("--importance", choices=("normal", "important", "core"))
@@ -226,11 +245,11 @@ def main(argv=None):
         parser.error("문 집결 배치 번호는 음수일 수 없습니다")
     if args.generate is None and (args.region_size or args.importance or args.regions or args.region_sizes or args.region_importances):
         parser.error("지역 수·크기·중요도는 --generate와 함께 사용하세요")
-    if args.load and (args.ai_scenario or args.search_drill or args.stack_variant is not None):
-        parser.error("이어하기와 AI 훈련을 함께 사용할 수 없습니다")
+    if (args.load or args.equipment_range) and (args.ai_scenario or args.search_drill or args.stack_variant is not None):
+        parser.error("이어하기·장비 시험장과 AI 훈련을 함께 사용할 수 없습니다")
     if args.ai_scenario and (args.generate is not None or args.scene.resolve() != DEFAULT_SCENE.resolve()):
         parser.error("--ai-scenario는 기본 지역 장면에서 실행하세요")
-    scene = args.scene
+    scene = EQUIPMENT_RANGE_SCENE if args.equipment_range else args.scene
     if args.generate is not None:
         from .generated_world import generate_world
         try:
@@ -243,7 +262,8 @@ def main(argv=None):
     try:
         simulation = load_game(args.load) if args.load else PlaySimulation(
             scene, ai_scenario=args.ai_scenario, search_drill=args.search_drill,
-            stack_drill=args.stack_variant is not None, stack_variant=args.stack_variant or 0)
+            stack_drill=args.stack_variant is not None, stack_variant=args.stack_variant or 0,
+            equipment_range=args.equipment_range)
     except CampaignSaveError as error:
         parser.error(str(error))
     if args.generate is not None:

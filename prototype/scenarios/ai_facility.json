@@ -2,6 +2,13 @@
   "format": "revenant.image_scene.v1",
   "name": "AI 검증 / 실내 시설",
   "training_facility": true,
+  "equipment_range": {
+    "lights": [{"id":"range/entry","position":[7,2],"radius":5.0,"color":[255,221,167],"intensity":0.7}],
+    "guard_optics": {
+      "hall_patrol": {"lamp":"white"},
+      "east_patrol": {"lamp":"infrared","night_vision":true,"ir_laser":true}
+    }
+  },
   "search_areas": {"실내 시설": [[0, 0, 36, 28]]},
   "search_drill": {"last_seen": [3, 7], "observer_spawn": [37.5, 29]},
   "bounds": [-3, -4, 42, 35],

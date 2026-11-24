@@ -12,7 +12,7 @@ import pico2d as pico
 
 from campaign.clock import world_clock
 from .geometry import Rect
-from .inventory import BAG_LIMIT
+from .inventory import BAG_LIMIT, PICKUP_REACH
 from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
@@ -185,7 +185,7 @@ class HUD:
         self.next_debug_update = now + 0.2
         player, weapon = simulation.player, simulation.player.weapon
         self.label("brand", "REVENANT / FIELD PROTOTYPE", 16, (118, 215, 191))
-        self.label("clock", f"{world_clock(simulation.campaign.simulation.state.world_time)}  |  {camera.magnification:.0%}", 13)
+        self.label("clock", f"{world_clock(simulation.lighting_time)}  |  {camera.magnification:.0%}", 13)
         if simulation.world.territories:
             territory = simulation.world.territory_at(player.xy)
             name = simulation.world.data["territories"].get(territory, {}).get("name", "지역 사이 연결로")
@@ -267,8 +267,8 @@ class HUD:
 
     def _draw_gameplay(self, simulation):
         player, weapon = simulation.player, simulation.player.weapon
-        day, time = world_clock(simulation.campaign.simulation.state.world_time).split()
-        self.label("game_clock", f"{time}  ·  {int(day[1:])}일차", 16)
+        day, time = world_clock(simulation.lighting_time).split()
+        self.label("game_clock", time if simulation.equipment_range else f"{time}  ·  {int(day[1:])}일차", 16)
         self.label("game_vitals", f"HP {player.hp:.0f}   ·   방어 {player.armor}", 16)
 
         left, base, width = 12, 12, 236
@@ -346,7 +346,8 @@ class HUD:
         elif simulation.respawn_selecting:
             return
         elif simulation.player.hp <= 0:
-            message = "전투 불능  ·  Enter로 안전가옥 복귀"
+            message = ("전투 불능  ·  Enter로 시험장 초기화" if simulation.equipment_range
+                       else "전투 불능  ·  Enter로 안전가옥 복귀")
         elif now < self.message_until:
             message = self.last_message
         else:
@@ -384,6 +385,8 @@ class HUD:
             self.next_update = now + 0.2
             facility_here = nearby_facility(simulation.world, simulation.player.xy)
             prompt = f"[E] {facility_here['name']} 사용" if facility_here else ""
+            if simulation.equipment_range and math.dist(simulation.player.xy, simulation.world.crate) <= PICKUP_REACH:
+                prompt = "[Tab] 시험장 보급함"
             if facility_here and facility_here["kind"] == "safehouse":
                 stored = simulation.safehouse_stash.get(facility_here["id"])
                 action = "무기 보관" if simulation.player.weapon else "보관함 비어 있음"
@@ -401,7 +404,8 @@ class HUD:
                 road = simulation.campaign.simulation.state.roads[control["road"]]
                 prompt = f"[E] {'수송로 개방' if road.blocked else '수송로 차단'}"
             self.label("prompt", prompt, 16, (241, 211, 135))
-            map_title = simulation.stack_title or simulation.world.data.get("name", "지역 지도")
+            map_title = ("장비 시험장" if simulation.equipment_range else
+                         simulation.stack_title or simulation.world.data.get("name", "지역 지도"))
             map_help = ("P 시작·재개 · F2 다시 보기 · F3 다음 배치 · M 닫기" if simulation.stack_drill
                         else "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보")
             self.label("map_title", map_title, 24, (118, 215, 191))

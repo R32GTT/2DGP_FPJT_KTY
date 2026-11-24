@@ -19,7 +19,7 @@ from .interactions import (
     nearby_watch_post, use_facility, use_road_control,
 )
 from .geometry import Rect
-from .inventory import FieldInventory, weapon_slots
+from .inventory import AMMUNITION, PICKUP_REACH, FieldInventory, weapon_slots
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
 from .throwables import BURST_SECONDS, SmokeCloud, Throwables
@@ -45,8 +45,12 @@ class RegionAlarm:
 
 class PlaySimulation:
     def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False,
-                 stack_drill=False, stack_variant=0, campaign=None, materialized=True):
+                 stack_drill=False, stack_variant=0, campaign=None, materialized=True, equipment_range=False):
         self.world = World(scene)
+        self.equipment_range, self.range_night = equipment_range, False
+        range_setup = self.world.data.get("equipment_range")
+        if equipment_range and (not range_setup or ai_scenario or search_drill or stack_drill):
+            raise ValueError("선택한 장면이나 훈련과 장비 시험장을 함께 사용할 수 없습니다")
         drill = self.world.data.get("search_drill")
         if search_drill and (drill is None or ai_scenario is not None):
             raise ValueError("이 장면에서는 실내 수색 훈련을 시작할 수 없습니다")
@@ -134,7 +138,17 @@ class PlaySimulation:
         self.ai_scenario, self.ai_hint = ai_scenario, ""
         if self.presence:
             self._sync_guards()
-        if ai_scenario:
+        if equipment_range:
+            self.fixed_lights += tuple(Light(**{**row, "position": tuple(row["position"]), "color": tuple(row["color"])})
+                                       for row in range_setup["lights"])
+            for guard in self.guards:
+                optics = range_setup["guard_optics"].get(guard.id, {})
+                guard.lamp = optics.get("lamp", "off")
+                guard.night_vision = optics.get("night_vision", False)
+                guard.ir_laser = optics.get("ir_laser", False)
+            self.restock_range()
+            self.message = "장비 시험장 · F2 초기화 / F3 낮·밤 / F4 보충"
+        elif ai_scenario:
             configure(self, ai_scenario)
         elif search_drill:
             self.ai.start_search_drill(self.guards, tuple(drill["last_seen"]))
@@ -309,8 +323,14 @@ class PlaySimulation:
                     if actor.hp > 0 and math.dist(actor.xy, self.player.xy) < 24), default=0.0)
 
     @property
+    def lighting_time(self):
+        if self.equipment_range:
+            return 0 if self.range_night else 12 * 3600
+        return self.campaign.simulation.state.world_time
+
+    @property
     def sky(self):
-        return sky_at(self.campaign.simulation.state.world_time)
+        return sky_at(self.lighting_time)
 
     def light_sources(self, sky, floor, *, infrared=False):
         if floor == 0:
@@ -567,10 +587,38 @@ class PlaySimulation:
             self.events.emit("door_changed", self.time, self.player, door=collider.id, closed=collider.active)
             self.events.emit("noise", self.time, self.player, radius=4, strength=0.25, reason="door")
 
+    def restock_range(self):
+        if not self.equipment_range:
+            return
+        point = self.world.crate
+        guns = next((loadout for location, loadout in self.dropped if location == point), None)
+        if guns is None:
+            guns = {}
+            if self.player.loadout.keys() != self.specs.keys():
+                self.dropped.append((point, guns))
+        for key, spec in self.specs.items():
+            if key not in self.player.loadout and key not in guns:
+                guns[key] = WeaponState.ready(spec)
+
+        inventory = self.inventory
+        items = next((pile for location, pile in inventory.ground if location == point), None)
+        if items is None:
+            items = {}
+            inventory.ground.append((point, items))
+        stock = {**dict.fromkeys(inventory.parts, 1),
+                 **{f"ammo:{key}": row[2] for key, row in AMMUNITION.items()},
+                 **{f"throwable:{key}": 2 for key in inventory.throwable_specs}}
+        for key, count in stock.items():
+            items[key] = max(items.get(key, 0), count)
+        self.message = "입구 보급함 재고 보충"
+
     def take_supplies(self):
         if self.player.hp <= 0:
             return
         if self.inventory.take_gun():
+            return
+        if self.equipment_range:
+            self.message = "입구 보급함 가까이에서 Tab"
             return
         facility = nearby_facility(self.world, self.player.xy)
         if facility is not None:
@@ -591,7 +639,7 @@ class PlaySimulation:
             self.player.loadout = {"ar_a": WeaponState.ready(self.specs["ar_a"])}
             self.player.active_weapon, self.kit_available = "ar_a", False
             self.message = "장면에 배치된 훈련용 예비 키트 확보"
-        elif math.dist(self.player.xy, self.world.crate) <= 1.5:
+        elif math.dist(self.player.xy, self.world.crate) <= PICKUP_REACH:
             self.message = f"실제 창고에서 보급품 {self.campaign.take_supplies()}개 확보"
         else:
             self.message = "보급 상자·무기 가까이에서 E"

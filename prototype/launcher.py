@@ -24,6 +24,7 @@ SWITCHES = {"장면 기본값": None, "켜기": True, "끄기": False}
 def discover_targets():
     targets = {"generated": {"name": "절차 생성 맵", "kind": "generated", "modes": {"기본": ()}},
                "continue": {"name": "생성 월드 이어하기", "kind": "resume", "modes": {"기본": ()}},
+               "equipment-range": {"name": "장비 시험장", "kind": "play", "modes": {"기본": ("--equipment-range",)}},
                "ai": {"name": "창고 전술 AI", "kind": "play",
                       "modes": {row[0]: ("--ai-scenario", key) for key, row in SCENARIOS.items()}}}
     for path in sorted((ROOT / "prototype/scenarios").glob("*.json")):
