@@ -29,6 +29,7 @@ class EnemyAI:
         self.can_radio = can_radio
         self.report_contact, self.emit = report_contact, emit
         self.light_at = light_at
+        self.resupply = None
         self.exits = {point for key, point in world.navigation.nodes.items() if key.endswith("/outside")}
         self.incidents = {}
         self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.01)
@@ -80,9 +81,14 @@ class EnemyAI:
                     brain.search.look_until = event.time + 0.65
                     brain.sense_at = min(brain.sense_at, event.time)
 
-    def _patrol(self, actor, brain):
+    def _patrol(self, actor, brain, time):
         if actor.boarding_goal is not None:
             return "boarding", actor.boarding_goal
+        if (self.resupply is not None and not brain.visible and time >= brain.combat.combat_alert_until
+                and time >= actor.hurt_until and brain.combat.suppression < 0.3):
+            supply_point = self.resupply(actor, brain, time)
+            if supply_point is not None:
+                return "return", supply_point
         goal = brain.patrol[brain.waypoint] if brain.patrol else actor.xy
         if not brain.patrol or len(brain.patrol) == 1 and math.dist(actor.xy, goal) < 0.25:
             if brain.post_facing is not None:
@@ -371,7 +377,7 @@ class EnemyAI:
                 goal = search.cover = self.cover_finder.choose(actor, point)
                 self.search.watch_visible_space(actor, brain, point, time)
             else:
-                actor.state, goal = self._patrol(actor, brain)
+                actor.state, goal = self._patrol(actor, brain, time)
         elif not priority and (situation.urgent or (combat.action in {"cover", "pin", "retreat"} and time < combat.action_until)):
             self.combat.choose(actor, brain, actors, point, time)
             if combat.action in {"cover", "retreat", "pin"}:
@@ -408,7 +414,7 @@ class EnemyAI:
 
     def _act_patrol(self, actor, brain, actors, intent, situation, time):
         brain.clear_contact()
-        actor.state, goal = self._patrol(actor, brain)
+        actor.state, goal = self._patrol(actor, brain, time)
         return ActionPlan(goal, face=True, approximate=goal not in self.exits)
 
     def _execute_plan(self, actor, brain, intent, plan, situation, time, budget, previous_facing, approaches, approach_looks):
@@ -519,7 +525,7 @@ class EnemyAI:
                 brain.far_at, brain.far_updated = time + 0.5, time
                 brain.memory.visible = False
                 brain.clear_contact()
-                actor.state, goal = self._patrol(actor, brain)
+                actor.state, goal = self._patrol(actor, brain, time)
                 budget = self.motion.move(actor, brain, intent, MoveRequest(goal, approximate=True), time, budget)
             else:
                 decision = self.decisions.get(actor.id)

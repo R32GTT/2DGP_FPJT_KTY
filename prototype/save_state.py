@@ -52,6 +52,7 @@ def capture(play):
     for key, brain in play.ai.brains.items():
         brains[key] = {"patrol": brain.patrol, "waypoint": brain.waypoint, "incident": brain.incident,
                        "radio_at": brain.radio_at, "contact_at": brain.contact_at,
+                       "resupply_at": brain.resupply_at,
                        "radio": asdict(brain.radio),
                        "memory": asdict(brain.memory), "combat": asdict(brain.combat),
                        "search": {key: getattr(brain.search, key) for key in SEARCH},
@@ -112,6 +113,9 @@ def restore(play, row):
         brain = Brain([tuple(point) for point in saved["patrol"]])
         brain.waypoint, brain.incident = saved["waypoint"], saved["incident"]
         brain.radio_at, brain.contact_at, brain.sense_at = saved["radio_at"], saved["contact_at"], play.time
+        brain.resupply_at = saved.get("resupply_at", 0.0)
+        if type(brain.resupply_at) not in {float, int} or not math.isfinite(brain.resupply_at) or brain.resupply_at < 0:
+            raise ValueError("잘못된 탄약 보급 재시도 시각")
         brain.radio = RadioState(**{key: tuples(value) for key, value in saved.get("radio", {}).items()})
         brain.memory = Knowledge(**{key: tuples(value) for key, value in saved["memory"].items()})
         started = brain.radio.started_at

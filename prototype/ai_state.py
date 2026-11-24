@@ -207,6 +207,7 @@ class Brain:
     look: LookState = field(default_factory=LookState)
     radio: RadioState = field(default_factory=RadioState)
     post_facing: float | None = None
+    resupply_at: float = 0.0
 
     @property
     def visible(self):

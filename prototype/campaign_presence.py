@@ -4,9 +4,11 @@ from collections import defaultdict
 import math
 
 from campaign.models import FOOT_OPERATIONS, Position
+from campaign.resources import available, issue_ammunition
 from campaign.routes import position
 from .ai_state import Brain, Incident
 from .ai_config import COMBAT_ALERT_SECONDS
+from .geometry import Rect
 
 
 class CampaignPresence:
@@ -15,7 +17,51 @@ class CampaignPresence:
         self.sites = {site["service_node"]: site for site in world.facilities if site["campaign_id"]}
         self.marches, self.received = {}, set()
         self._orders_at, self.completed = -1, []
+        self._ammo_points = {}
+        ai.resupply = self.resupply
         bridge.simulation.movement_ready = self.can_advance
+
+    def resupply(self, actor, brain, seconds):
+        weapon = actor.weapon
+        if weapon is None or not actor.present or weapon.reloading or seconds < brain.resupply_at:
+            return None
+        spec = weapon.spec
+        rounds_per_issue = min(spec.capacity, spec.reserve)
+        if not rounds_per_issue or spec.reserve - weapon.reserve < rounds_per_issue:
+            return None
+        state = self.bridge.simulation.state
+        unit = state.units.get(actor.source_unit)
+        if unit is None or unit.status != "available" or unit.faction != "enemy" or not unit.soldiers:
+            return None
+        facility = self.bridge.node_facilities.get(unit.node_id)
+        site = self.sites.get(unit.node_id)
+        if (facility is None or site is None or facility.damage == 100 or not facility.inventory["ammunition"]
+                or state.regions[facility.region_id].owner != "enemy"
+                or actor.position.floor != state.nodes[unit.node_id].position.floor):
+            brain.resupply_at = seconds + 5
+            return None
+
+        revision, point = self._ammo_points.get(facility.id, (-1, None))
+        if revision != self.world.revision:
+            bounds = Rect(*site["rect"])
+            point = next((goal for goal in self.world.navigation.nearby_goals(tuple(site["terminal"]), True)
+                          if bounds.segment_entry(goal, goal) is not None), None)
+            self._ammo_points[facility.id] = self.world.revision, point
+        if point is None:
+            brain.resupply_at = seconds + 5
+            return None
+        if math.dist(actor.xy, point) > 1.0 or not self.world.navigation.clear(actor.xy, point, clearance=0):
+            if (not brain.motion.failed(point, self.world.revision)
+                    and (brain.motion.goal == point or available(state, facility.id, "ammunition") > 0)):
+                return point
+            brain.resupply_at = seconds + 5
+            return None
+
+        requested = (spec.reserve - weapon.reserve) // rounds_per_issue
+        granted = issue_ammunition(state, facility.id, requested)
+        weapon.reserve += granted * rounds_per_issue
+        brain.resupply_at = seconds + (2 if granted else 5)
+        return None
 
     def _place(self, actor, node):
         site = self.sites[node]
