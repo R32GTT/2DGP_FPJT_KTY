@@ -54,6 +54,8 @@ class Simulation:
                         operation.waiting_reason = "origin_unavailable"
                     else:
                         finish_return(state, operation_id)
+                elif operation.kind == "withdrawal" and operation.destination_id == state.source.id:
+                    finish_relocation(state, operation)
                 elif operation.kind in FOOT_OPERATIONS | TROOP_TRANSPORTS:
                     target = state.facilities[operation.destination_id]
                     region = state.regions[target.region_id]
@@ -104,7 +106,8 @@ class Simulation:
             if event.kind == "depart" and operation.phase == "loading":
                 origin = owner(state, operation.origin_id)
                 invalid = False
-                if operation.kind != "export":
+                if operation.kind != "export" and not (operation.kind == "withdrawal"
+                                                       and operation.destination_id == state.source.id):
                     destination = state.facilities[operation.destination_id]
                     invalid = (state.regions[destination.region_id].owner != "enemy"
                                or (operation.kind in TROOP_TRANSPORTS | {"supply", "equipment"} and destination.damage == 100))

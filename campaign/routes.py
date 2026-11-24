@@ -91,6 +91,8 @@ def _replan(state: CampaignState, operation: Operation) -> bool:
     if set_route(state, operation, returning=returning):
         return True
     if not returning:
+        if operation.kind == "withdrawal" and state.regions[state.facilities[operation.origin_id].region_id].owner == "player":
+            return False
         # 목적지 단절 시 남은 화물과 자산을 실제 경로로 회수한다.
         state.record("transport_aborted", operation_id=operation.id, reason="route_unavailable")
         return set_route(state, operation, returning=True)

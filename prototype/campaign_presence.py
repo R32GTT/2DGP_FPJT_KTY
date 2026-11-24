@@ -168,6 +168,7 @@ class CampaignPresence:
 
     def prepare(self, seconds, player):
         self.marches = {}
+        previous = set(self.roster.in_transit)
         self.roster.in_transit.clear()
         if not self.roster.materialized:
             return
@@ -183,17 +184,20 @@ class CampaignPresence:
             self._guard_posts(node, members)
         for view in self.bridge.convoys(seconds):
             operation = state.operations[view.id]
-            if operation.kind not in FOOT_OPERATIONS or operation.phase not in {"outbound", "returning"}:
+            marching = operation.kind in FOOT_OPERATIONS and operation.phase in {"outbound", "returning"}
+            stranded = operation.phase == "stranded" and not view.vehicles
+            if not (marching or stranded):
                 continue
             if math.dist((view.x, view.y), player) > 60:
                 continue
             members = self.roster.transport_members(operation, self.weapon)
-            self.marches[operation.id] = members
+            if marching:
+                self.marches[operation.id] = members
             held = operation.waiting_reason.startswith("local_") or self._in_contact(members)
             for index, actor in enumerate(members):
                 brain = self.ai.brains.setdefault(actor.id, Brain([actor.xy]))
                 self.roster.in_transit.add(actor.id)
-                if not held:
+                if (marching and not held) or (stranded and actor.id not in previous):
                     x, y, heading = self.bridge.following_pose(view, index * 0.7)
                     point = next(self.world.navigation.nearby_goals((x, y), False), (view.x, view.y))
                     actor.position = Position(*point)

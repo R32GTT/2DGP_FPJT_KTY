@@ -263,7 +263,7 @@ def finish_relocation(state: CampaignState, operation: Operation) -> None:
     for asset in _assets(state, operation):
         if asset.status != "destroyed":
             asset.node_id, asset.operation_id, asset.status = operation.destination_node, None, "available"
-    destination = state.facilities[operation.destination_id]
+    destination = owner(state, operation.destination_id)
     for name in RESOURCE_TYPES:
         destination.inventory[name] += operation.cargo[name] + operation.provisions[name]
         operation.cargo[name] = operation.provisions[name] = 0

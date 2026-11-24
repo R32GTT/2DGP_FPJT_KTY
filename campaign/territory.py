@@ -3,7 +3,7 @@
 from . import clock
 from .models import QRF_OPERATIONS, Operation, stock
 from .resources import TERMINAL_PHASES, cancel, reserve
-from .routes import find_route, road_between
+from .routes import find_route, position, road_between
 
 
 WITHDRAWAL_DELAY_S = 15
@@ -28,8 +28,6 @@ def _plan_withdrawals(state, region, facilities, stationed):
     refuges = [facility for facility in state.facilities.values() if facility.region_id != region.id
                and state.regions[facility.region_id].control_state == "occupied"
                and facility.damage < 100 and "command" in facility.capabilities]
-    if not refuges:
-        return
     for origin in facilities:
         units = sorted(unit.id for unit in stationed if unit.node_id == origin.node_id and unit.status == "available")
         if not units:
@@ -43,15 +41,35 @@ def _plan_withdrawals(state, region, facilities, stationed):
             if route:
                 distance = sum(road_between(state, a, b).length_m for a, b in zip(route, route[1:]))
                 routes.append((distance, refuge.id, route))
-        if not routes:
-            continue
-        _, target_id, route = min(routes)
+        if routes:
+            _, target_id, route = min(routes)
+        else:
+            target_id = state.source.id
+            route = find_route(state, origin.node_id, state.source.node_id, known_blocked)
+            if not route or len(route) < 2:
+                continue
         operation = Operation(state.new_id(), "지역 유지 불가로 철수", "withdrawal", origin.id, target_id,
                               route[0], route[-1], [], units, state.world_time, route=route,
                               known_blocked=known_blocked)
         reserve(state, operation, stock())
         clock.schedule(state, state.world_time + ASSEMBLY_S, "depart", priority=clock.TRANSFER,
                        operation_id=operation.id)
+
+
+def _has_field_troops(state, region, nodes, operations):
+    for op in operations:
+        if (op.phase == "loading" or not op.route
+                or not any(state.units[key].faction == "enemy" and state.units[key].soldiers for key in op.unit_ids)):
+            continue
+        if region.bounds is None:
+            if op.route[op.edge_index] in nodes:
+                return True
+            continue
+        x, y, width, height = region.bounds
+        point = position(state, op)
+        if x <= point.x < x + width and y <= point.y < y + height:
+            return True
+    return False
 
 
 def evaluate_regions(state):
@@ -85,10 +103,11 @@ def evaluate_regions(state):
             for operation in local_orders:
                 if operation.kind in QRF_OPERATIONS | {"supply", "export", "redeployment", "equipment"}:
                     cancel(state, operation.id)
-        on_site = any(op.phase != "loading" and op.route and op.route[op.edge_index] in nodes
-                      and any(state.units[key].soldiers for key in op.unit_ids) for op in active)
-        if not stationed and not on_site and not any(op.kind == "withdrawal" for op in local_orders):
+        on_site = _has_field_troops(state, region, nodes, active)
+        pending_withdrawal = region.bounds is None and any(op.kind == "withdrawal" for op in local_orders)
+        if not stationed and not on_site and not pending_withdrawal:
             region.owner = "player"
+            region.liberated_at = state.world_time
             region.weak_since = region.withdrawal_started_at = None
             for facility in facilities:
                 state.repair_requests.pop(facility.id, None)

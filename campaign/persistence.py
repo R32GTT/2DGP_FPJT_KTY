@@ -11,7 +11,7 @@ from .models import (CampaignState, Event, ExternalDemand, ExternalSource, Facil
 from .resources import assert_invariants
 
 
-SAVE_VERSION = 2
+SAVE_VERSION = 3
 SAVE_FORMAT = "revenant_lost.campaign"
 
 

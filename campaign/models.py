@@ -53,6 +53,8 @@ class Region:
     importance: int = 1
     weak_since: int | None = None
     withdrawal_started_at: int | None = None
+    bounds: list[float] | None = None
+    liberated_at: int | None = None
 
     @property
     def control_state(self):
@@ -274,8 +276,12 @@ def validate_state(state: CampaignState) -> None:
         require(type(region.minimum_garrison) is int and region.minimum_garrison >= 0,
                 "잘못된 최소 주둔량")
         require(region.owner in {"enemy", "player"}, "잘못된 지역 소유 진영")
-        for time in (region.weak_since, region.withdrawal_started_at):
+        for time in (region.weak_since, region.withdrawal_started_at, region.liberated_at):
             require(time is None or (type(time) is int and 0 <= time <= state.world_time), "잘못된 지역 판정 시각")
+        if region.bounds is not None:
+            require(len(region.bounds) == 4 and all(math.isfinite(axis) for axis in region.bounds)
+                    and min(region.bounds[2:]) > 0, "잘못된 지역 경계")
+        require(region.liberated_at is None or region.owner == "player", "해방 시각과 소유권 불일치")
         if region.withdrawal_started_at is not None:
             require(region.owner == "enemy" and region.weak_since is not None
                     and region.weak_since <= region.withdrawal_started_at, "잘못된 철수 상태")
@@ -334,6 +340,8 @@ def validate_state(state: CampaignState) -> None:
         require(operation.home_node == origin_node, "작전 귀환 위치 불일치")
         if operation.kind == "export":
             require(operation.destination_node == state.demand.node_id, "작전 출하 위치 불일치")
+        elif operation.kind == "withdrawal" and operation.destination_id == state.source.id:
+            require(operation.destination_node == state.source.node_id, "외부 철수 위치 불일치")
         else:
             require(operation.destination_id in state.facilities, "작전 목적지 누락")
             require(operation.destination_node == state.facilities[operation.destination_id].node_id,

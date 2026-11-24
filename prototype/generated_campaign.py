@@ -95,7 +95,8 @@ def build_generated_state(scene, setup=None):
     data = {"nodes": [{"id": key, "position": {"x": point[0], "y": point[1]}} for key, point in network["nodes"].items()],
             "roads": roads, "facilities": facilities, "units": units, "vehicles": vehicles, "source": source,
             "regions": [{"id": region["id"], "facility_ids": [row["id"] for row in facilities if row["region_id"] == region["id"]],
-                         "minimum_garrison": setup["minimum_garrison"], "importance": setup["importance"][region["importance"]]}
+                         "minimum_garrison": setup["minimum_garrison"], "importance": setup["importance"][region["importance"]],
+                         "bounds": region.get("bounds", scene["bounds"])}
                         for region in regions],
             "demand": {**setup["demand"], "node_id": scene.get("campaign_exit", network["terminals"].get("entry/1")),
                        "collection_facility_id": scene["campaign_facility"]},
