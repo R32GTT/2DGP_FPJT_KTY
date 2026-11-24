@@ -13,6 +13,7 @@ import pico2d as pico
 from campaign.clock import world_clock
 from .geometry import Rect
 from .inventory import BAG_LIMIT, PICKUP_REACH
+from .intelligence import OPERATION_NAMES
 from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
@@ -377,7 +378,7 @@ class HUD:
             self.text(key, camera.width - 350, camera.height - 168 - number * 32)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
-               cache_count=0, search_counts=None, seen_enemies=(), inventory_view=None):
+               cache_count=0, search_counts=None, seen_enemies=(), inventory_view=None, intel_index=None):
         self._update_text_scale(camera)
         now = perf_counter()
         self._track_message(simulation, now)
@@ -399,8 +400,11 @@ class HUD:
                 damage = simulation.campaign.simulation.state.facilities[facility_here["campaign_id"]].damage
                 prompt = (f"[E] 물자 확보 · [Shift+E] 파괴 공작 ({damage}%)" if damage < 100
                           else "물류창고 무력화")
+            if (simulation.presence and facility_here and facility_here["kind"] in {"warehouse", "hq"}
+                    and simulation.campaign.simulation.state.facilities[facility_here["campaign_id"]].damage < 100):
+                prompt += " · [Shift+I] 작전 기록"
             control = nearby_road_control(simulation.world, simulation.player.xy)
-            if control and not prompt:
+            if control:
                 road = simulation.campaign.simulation.state.roads[control["road"]]
                 prompt = f"[E] {'수송로 개방' if road.blocked else '수송로 차단'}"
             self.label("prompt", prompt, 16, (241, 211, 135))
@@ -408,6 +412,8 @@ class HUD:
                          simulation.stack_title or simulation.world.data.get("name", "지역 지도"))
             map_help = ("P 시작·재개 · F2 다시 보기 · F3 다음 배치 · M 닫기" if simulation.stack_drill
                         else "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보")
+            if simulation.presence:
+                map_help = "M 닫기 · I 정보 노트 · 지도에서도 세계 시간 진행"
             self.label("map_title", map_title, 24, (118, 215, 191))
             self.label("map_help", map_help, 13)
             self.label("map_size", f"{simulation.world.bounds.w:.0f} × {simulation.world.bounds.h:.0f} m", 13)
@@ -439,7 +445,8 @@ class HUD:
         if debug or not map_open:
             self._minimap(simulation, camera, debug, seen_enemies)
         if map_open:
-            self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused)
+            self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused,
+                             intel_index=intel_index)
         territory = simulation.world.territory_at(simulation.player.xy)
         alarm = simulation.alarms.get(territory)
         if territory not in simulation.campaign.simulation.state.regions:
@@ -495,7 +502,7 @@ class HUD:
                 x, y = point(*actor.xy)
                 color = (108, 213, 197) if actor.team == "player" else (218, 131, 100)
                 pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *color, filled=True)
-        if world.campaign_map:
+        if world.campaign_map and (debug or not simulation.presence):
             for convoy in simulation.campaign.convoys(simulation.time):
                 if not bounds.x <= convoy.x <= bounds.right or not bounds.y <= convoy.y <= bounds.bottom:
                     continue
@@ -566,7 +573,7 @@ class HUD:
                     pico.draw_rectangle(*box, *color)
         return (checked_count, total, blocked_count) if total else None
 
-    def _region_map(self, simulation, camera, debug, *, selecting=False):
+    def _region_map(self, simulation, camera, debug, *, selecting=False, intel_index=None):
         self.panel(60, 166, camera.width - 120, camera.height - 246)
         if selecting:
             self.label("respawn_title", "복귀할 안전가옥 선택", 24, (118, 215, 191))
@@ -575,8 +582,9 @@ class HUD:
         self.text("respawn_help" if selecting else "map_help", 84, camera.height - 140)
         world = simulation.world
         generated = bool(world.data.get("generation"))
+        notes_open = intel_index is not None and generated and not selecting
         columns = 2 if not selecting and len(world.facilities) > 10 else 1
-        plan_width = camera.width - (168 if not world.facilities else 750 if columns == 2 else 480)
+        plan_width = camera.width - (560 if notes_open else 168 if not world.facilities else 750 if columns == 2 else 480)
         scale = min(plan_width / world.bounds.w, (camera.height - 370) / world.bounds.h)
         left = 84 + (plan_width - world.bounds.w * scale) / 2
         top = camera.height - 176
@@ -624,7 +632,7 @@ class HUD:
             if not generated:
                 pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=True)
                 self.text("site/" + facility["id"], a[0], b[1] - 13)
-            if not selecting:
+            if not selecting and not notes_open:
                 self.text("site_info/" + facility["id"], camera.width - (650 if columns == 2 else 350) + index // rows * 315,
                           camera.height - 200 - index % rows * row_step)
         for actor in [*simulation.guards, simulation.player]:
@@ -635,14 +643,70 @@ class HUD:
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *color, filled=True)
             if debug and actor.team != "player":
                 pico.draw_line(x, y, x + 10 * math.cos(actor.facing), y - 10 * math.sin(actor.facing), 246, 246, 236)
-        for convoy in simulation.campaign.convoys(simulation.time):
-            if not world.bounds.x <= convoy.x <= world.bounds.right or not world.bounds.y <= convoy.y <= world.bounds.bottom:
-                continue
-            x, y = point(convoy.x, convoy.y)
-            pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, 221, 186, 100, filled=True)
-        self.text("map_size", camera.width - (230 if not world.facilities else 350), 245)
+        if debug or not generated:
+            for convoy in simulation.campaign.convoys(simulation.time):
+                if not world.bounds.x <= convoy.x <= world.bounds.right or not world.bounds.y <= convoy.y <= world.bounds.bottom:
+                    continue
+                x, y = point(convoy.x, convoy.y)
+                pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, 221, 186, 100, filled=True)
+        if notes_open:
+            self._draw_operation_notes(simulation, camera, intel_index, point)
+        else:
+            self.text("map_size", camera.width - (230 if not world.facilities else 350), 245)
         if selecting:
             self._draw_respawn_options(simulation, camera, point)
+
+    def _draw_operation_notes(self, simulation, camera, index, point):
+        x, top = camera.width - 440, camera.height - 180
+        self.label("intel_title", "정보 노트  ·  ↑↓ 선택  /  I 닫기", 16, (118, 215, 191))
+        self.text("intel_title", x, top)
+        notes = sorted(simulation.operation_notes.values(),
+                       key=lambda note: (-max(note.recorded_at or 0, note.observed_at or 0), note.operation_id))
+        if not notes:
+            self.label("intel_empty", "창고·HQ 단말 또는 보이는 수송대에서 Shift+I", 13)
+            self.text("intel_empty", x, top - 38)
+            return
+        state = simulation.campaign.simulation.state
+        index = min(index, len(notes) - 1)
+        first = min(max(0, index - 3), max(0, len(notes) - 5))
+        for offset, note in enumerate(notes[first:first + 5], first):
+            op = state.operations[note.operation_id]
+            kind = OPERATION_NAMES[op.kind] if note.source else "미확인 차량"
+            y = top - 34 - (offset - first) * 26
+            key = f"intel_row/{offset - first}"
+            if offset == index:
+                pico.draw_rectangle(x - 8, y - 12, x + 344, y + 10, 55, 81, 73, filled=True)
+            self.label(key, f"{offset + 1}. {kind}", 16)
+            self.text(key, x, y)
+
+        note = notes[index]
+        op = state.operations[note.operation_id]
+        details = []
+        if note.source:
+            names = {site["campaign_id"]: site["name"] for site in simulation.world.facilities}
+            names.update({state.source.id: "외부 보급원", "external_front": "외부 전선"})
+            details.extend((f"출발지  {names[op.origin_id]}", f"목적지  {names[op.destination_id]}"))
+            if note.departure_at is not None:
+                details.append(f"{'출발 확인' if note.departed else '출발 예정'}  {world_clock(note.departure_at)}")
+            if note.quantity is not None:
+                detail = f"야간 장비 {note.quantity}세트" if op.kind == "equipment" else f"병력 {note.quantity}명"
+                details.append(detail)
+            details.append(f"{names[note.source]} 기록  {world_clock(note.recorded_at)}")
+        if note.observed_at is not None:
+            details.append(f"마지막 현장 관측  {world_clock(note.observed_at)}")
+        for index, detail in enumerate(details):
+            key = f"intel_detail/{index}"
+            self.label(key, detail, 13)
+            self.text(key, x, top - 173 - 22 * index)
+
+        bounds = simulation.world.bounds
+        route = [(state.nodes[key].position.x, state.nodes[key].position.y) for key in note.route]
+        for start, end in zip(route, route[1:]):
+            if all(bounds.segment_entry(node, node) is not None for node in (start, end)):
+                pico.draw_line(*point(*start), *point(*end), 250, 201, 105)
+        if note.observed_position is not None and bounds.segment_entry(note.observed_position, note.observed_position) is not None:
+            x, y = point(*note.observed_position)
+            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, 118, 215, 191)
 
     def close(self):
         self._map_batches.clear()

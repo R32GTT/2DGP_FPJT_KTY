@@ -233,7 +233,7 @@ class Renderer:
             draw_polygon(self.backend, points, (*color, round(208 * (1 - progress))))
 
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False,
-               inventory_view=None):
+               inventory_view=None, intel_index=None):
         started = perf_counter()
         view = copy(camera)
         shake_x, shake_y = simulation.feedback.offset
@@ -338,6 +338,12 @@ class Renderer:
             if view.visible(pile):
                 self._rect(view, pile, (139, 161, 124))
         if world.campaign_map:
+            roads = simulation.campaign.simulation.state.roads
+            for control in world.road_controls:
+                marker = Rect(*control["position"], 0, 0).expanded(0.24)
+                if view.visible(marker):
+                    self._rect(view, marker, (219, 100, 69) if roads[control["road"]].blocked else (238, 197, 92))
+                    self._rect(view, marker, (47, 52, 48), filled=False)
             for x, y, _ in simulation.campaign.parked(simulation.roster.nodes):
                 if view.visible(Rect(x - 2.8, y - 1.2, 5.6, 2.4)):
                     self.truck.draw(*view.pico(x, y), 5.6 * view.scale, 2.4 * view.scale)
@@ -473,7 +479,7 @@ class Renderer:
         self.hud.render(simulation, camera, paused=paused, debug=debug,
                         update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=map_open,
                         cache_count=len(self.map_images.cache), search_counts=search_counts,
-                        seen_enemies=seen_enemies, inventory_view=inventory_view)
+                        seen_enemies=seen_enemies, inventory_view=inventory_view, intel_index=intel_index)
         self.last_draw_ms = (perf_counter() - started) * 1000
         pico.update_canvas()
 

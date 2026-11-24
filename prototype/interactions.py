@@ -9,8 +9,12 @@ def nearby_facility(world, point, radius=1.8):
 
 
 def nearby_road_control(world, point):
-    return next((control for control in world.road_controls
-                 if math.dist(point, control["position"]) <= 1.8), None)
+    control = min((control for control in world.road_controls if math.dist(point, control["position"]) <= 1.8),
+                  key=lambda item: math.dist(point, item["position"]), default=None)
+    if control is None:
+        return None
+    site = nearby_facility(world, point)
+    return control if site is None or math.dist(point, control["position"]) <= math.dist(point, site["terminal"]) else None
 
 
 def nearby_watch_post(world, point):

@@ -7,6 +7,7 @@ from campaign.models import Position
 from .actors import Actor
 from .ai_state import Brain, CombatState, Incident, RadioState, SearchCue
 from .lighting import OPTICS_MODES
+from .intelligence import restore_notes
 from .perception import Knowledge
 from .simulation import RegionAlarm
 from .transport import Trip
@@ -62,6 +63,7 @@ def capture(play):
                        "checked": list(brain.search.checked),
                        "priority": asdict(brain.search.priority_cue) if brain.search.priority_cue else None}
     return {"runtime": {key: getattr(play, key) for key in RUNTIME}, "player": actor_state(play.player),
+            "operation_notes": [vars(note) for note in play.operation_notes.values()],
             "respawn_site_id": play.respawn_site_id,
             "alarms": {key: asdict(alarm) for key, alarm in play.alarms.items() if alarm.until > play.time},
             "actors": [actor_state(actor) for actor in roster.actors], "brains": brains,
@@ -89,6 +91,7 @@ def restore(play, row):
         setattr(play, key, row["runtime"][key])
     if not math.isfinite(play.time) or int(play.time + 1e-8) != state.world_time:
         raise ValueError("현장·캠페인 시각 불일치")
+    play.operation_notes = restore_notes(state, row["operation_notes"])
     for key, saved in row.get("alarms", {}).items():
         position, until = tuple(saved["position"]), saved["until"]
         if (key not in state.regions or len(position) != 2 or not all(map(math.isfinite, position))

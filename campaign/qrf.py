@@ -103,13 +103,17 @@ def dispatch_response(state, facility_id, *, report_xy=None, sighting=False):
         return "no_command", None
     if not signal:
         return "no_signal", None
-    if sighting:
-        # 목격 위치에서 가까운 아군 시설을 도로 이동의 집결점으로 정한다.
+    if sighting or target.damage == 100:
+        # 도착할 수 있는 아군 시설을 보고 지점 근처의 집결점으로 정한다.
+        location = state.nodes[target.node_id].position
+        incident = report_xy if report_xy is not None else (location.x, location.y)
+
         def rally_distance(key):
             point = state.nodes[state.facilities[key].node_id].position
-            return math.dist(report_xy, (point.x, point.y)), key
+            return math.dist(incident, (point.x, point.y)), key
 
-        target = state.facilities[min(region.facility_ids, key=rally_distance)]
+        usable = (key for key in region.facility_ids if state.facilities[key].damage < 100)
+        target = state.facilities[min(usable, key=rally_distance)]
 
     candidates, motorized = [], []
     for origin in state.facilities.values():

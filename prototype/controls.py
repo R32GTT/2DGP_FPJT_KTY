@@ -16,6 +16,7 @@ class Controls:
         self.debug = False
         self.map_open = False
         self.inventory_open = False
+        self.intel_open = False
 
     def poll(self, camera):
         actions = []
@@ -34,6 +35,8 @@ class Controls:
                 if key == sdl2.SDLK_ESCAPE:
                     if self.inventory_open:
                         self.inventory_open = False
+                    elif self.intel_open:
+                        self.intel_open = self.map_open = False
                     else:
                         self.running = False
                 elif key == sdl2.SDLK_p:
@@ -48,7 +51,11 @@ class Controls:
                     actions.append("save" if key == sdl2.SDLK_F5 else "load")
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
-                    self.inventory_open = False
+                    self.inventory_open = self.intel_open = False
+                elif key == sdl2.SDLK_i:
+                    actions.append("collect_intel" if event.key.keysym.mod & sdl2.KMOD_SHIFT else "intel")
+                elif self.intel_open and key in (sdl2.SDLK_UP, sdl2.SDLK_DOWN):
+                    actions.append("intel_previous" if key == sdl2.SDLK_UP else "intel_next")
                 elif key == sdl2.SDLK_TAB:
                     actions.append("inventory")
                 elif key == sdl2.SDLK_g:

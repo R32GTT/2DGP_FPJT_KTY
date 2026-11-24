@@ -40,9 +40,18 @@ def bind_sites(scene):
                            "terminal": terminal, "guard_posts": posts, "watch_post": watch})
     depot = next(row for row in facilities if row["kind"] == "warehouse")
     safehouse = next(row for row in facilities if row["kind"] == "safehouse")
+    controls = {}
+    for site in facilities:
+        if not site["campaign_id"]:
+            continue
+        road = max((road for road in scene["roads"] if site["service_node"] in road["nodes"]),
+                   key=lambda edge: math.dist(edge["start"], edge["end"]), default=None)
+        if road is not None:
+            point = tuple((a + b) / 2 for a, b in zip(road["start"], road["end"]))
+            controls.setdefault(road["id"], {"road": road["id"], "position": point, "name": site["name"] + " 진입로"})
     return {**scene, "facilities": facilities, "campaign_facility": depot["id"],
             "supply_point": depot["terminal"], "safehouse_spawn": safehouse["position"],
-            "player_spawn": safehouse["position"]}
+            "player_spawn": safehouse["position"], "road_controls": list(controls.values())}
 
 
 def build_generated_state(scene, setup=None):

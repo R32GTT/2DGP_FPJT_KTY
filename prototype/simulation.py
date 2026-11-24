@@ -99,6 +99,7 @@ class PlaySimulation:
         self.roster.track_player(self.player.xy)
         self.guards = self.roster.sync()
         self.events, self.feedback = EventBus(), Feedback()
+        self.operation_notes = {}
         self.alarms = {}
         authored_lights = {instance["id"]: instance["lights"] for instance in self.world.data.get("placed_prefabs", ())
                            if instance.get("lights")}
@@ -615,6 +616,10 @@ class PlaySimulation:
     def take_supplies(self):
         if self.player.hp <= 0:
             return
+        control = nearby_road_control(self.world, self.player.xy)
+        if control is not None:
+            self.message = use_road_control(self.campaign, control)
+            return
         if self.inventory.take_gun():
             return
         if self.equipment_range:
@@ -627,10 +632,6 @@ class PlaySimulation:
         watch = nearby_watch_post(self.world, self.player.xy)
         if watch is not None:
             self.message = disable_watch_post(self, watch)
-            return
-        control = nearby_road_control(self.world, self.player.xy)
-        if control is not None:
-            self.message = use_road_control(self.campaign, control)
             return
         if self.world.facilities:
             self.message = "시설 단말·보급 상자 가까이에서 E"

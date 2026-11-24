@@ -6,6 +6,7 @@ from pathlib import Path
 from time import perf_counter, sleep
 
 from .ai_scenarios import SCENARIOS
+from .intelligence import collect as collect_intel
 from .simulation import FIXED_DT, PlaySimulation
 from .savegame import CampaignSaveError, DEFAULT_SAVE, load_game, save_game
 from .world import DEFAULT_SCENE
@@ -39,6 +40,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
         last_step_s = FIXED_DT
         stack_previewed = False
         inventory_cursor = 0
+        intel_cursor = 0
         while controls.running and (not frames or count < frames):
             started = perf_counter()
             elapsed, previous = min(MAX_SIMULATION_BACKLOG_S, started - previous), started
@@ -58,6 +60,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             controls.keys.clear()
                             controls.firing = controls.aiming = controls.trigger_pending = False
                             controls.inventory_open = False
+                            controls.intel_open = False
+                            intel_cursor = 0
                             controls.paused = True
                     except CampaignSaveError as error:
                         simulation.message = str(error)
@@ -70,6 +74,16 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         continue
                     if action == "restock_range":
                         simulation.restock_range()
+                        continue
+                if simulation.presence and not simulation.respawn_selecting:
+                    if action == "intel":
+                        controls.intel_open = not controls.intel_open
+                        controls.map_open, controls.inventory_open = True, False
+                        controls.firing = controls.aiming = controls.trigger_pending = False
+                        continue
+                    if controls.intel_open and action in {"intel_previous", "intel_next"}:
+                        step = -1 if action == "intel_previous" else 1
+                        intel_cursor = max(0, min(intel_cursor + step, len(simulation.operation_notes) - 1))
                         continue
                 select_drill = action == "next_ai" and "search_drill" in simulation.world.data
                 select_stack = action == "next_ai" and "stack_drill" in simulation.world.data
@@ -105,7 +119,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     if action == "inventory":
                         if simulation.player.hp > 0 and not simulation.respawn_selecting:
                             controls.inventory_open = not controls.inventory_open
-                            controls.map_open = False
+                            controls.map_open = controls.intel_open = False
                             controls.firing = controls.aiming = controls.trigger_pending = False
                             inventory_cursor = 0
                         continue
@@ -136,6 +150,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     if action == "throw":
                         if not controls.map_open and not controls.firing:
                             simulation.throw_selected(camera.world(*controls.mouse))
+                    elif action == "collect_intel" and not controls.map_open and not controls.firing:
+                        collect_intel(simulation)
                     elif action == "door":
                         simulation.use_door()
                     elif action == "supplies":
@@ -198,7 +214,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                 inventory_view = rows, inventory_cursor
             renderer.render(simulation, camera, debug=controls.debug, paused=controls.paused,
                             update_ms=update_ms, mouse=None if inventory_view else controls.mouse,
-                            map_open=map_open, inventory_view=inventory_view)
+                            map_open=map_open, inventory_view=inventory_view,
+                            intel_index=intel_cursor if controls.intel_open else None)
             count += 1
             # 대기가 길어진 오차를 다음 프레임에 누적하지 않는다.
             frame_deadline += FIXED_DT
@@ -267,7 +284,7 @@ def main(argv=None):
     except CampaignSaveError as error:
         parser.error(str(error))
     if args.generate is not None:
-        simulation.message = f"생성 맵 · 시드 {args.generate} · WASD 이동 / M 지도 / F5 저장 / F9 불러오기"
+        simulation.message = f"생성 맵 · 시드 {args.generate} · M 지도 / I 정보 노트 / F5 저장 / F9 불러오기"
     if args.headless:
         for _ in range(args.frames or 120):
             simulation.step()
