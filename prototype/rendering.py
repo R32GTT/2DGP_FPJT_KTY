@@ -11,6 +11,7 @@ from .ai_config import RADIO_GRACE_SECONDS, RADIO_TRANSMIT_SECONDS
 from .geometry import Rect
 from .camera import CANVAS_SIZE
 from .hud import HUD
+from .lighting import Lighting
 from .map_images import MapImages
 from .perception import INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS
 from .visual_assets import actor_image, draw_polygon, prop_image, tree_image, truck_image, vignette_image, weapon_image
@@ -35,6 +36,7 @@ class Renderer:
         self.backend.SDL_ShowCursor(self.backend.SDL_DISABLE)
         self.images, self.missing = {}, []
         self.map_images = MapImages(self.backend)
+        self.lighting = Lighting(self.backend)
         self.layers = {}
         spawn = world.data["player_spawn"]
         self.map_images.prepare(world.visible_layers(Rect(spawn[0] - 20, spawn[1] - 16, 40, 32)), budget=12)
@@ -199,14 +201,6 @@ class Renderer:
             crate = Rect(world.crate[0] - 0.35, world.crate[1] - 0.35, 0.7, 0.7)
             self._rect(view, crate, (183, 156, 76))
             self._rect(view, crate, (228, 205, 137), filled=False)
-        for alarm in simulation.alarms.values():
-            x, y = alarm.position
-            beacon = Rect(x - 0.23, y - 0.23, 0.46, 0.46)
-            if alarm.until > simulation.time and view.visible(beacon):
-                pulse = 0.5 + 0.5 * math.sin(simulation.time * math.tau)
-                glow = 0.45 + pulse * 0.5
-                self._rect(view, Rect(x - glow, y - glow, 2 * glow, 2 * glow), (255, 58, 46, int(35 + 60 * pulse)))
-                self._rect(view, beacon, (255, int(48 + 78 * pulse), 54))
         safe = Rect(world.safehouse[0] - 1.2, world.safehouse[1] - 1.2, 2.4, 2.4)
         if world.data.get("interaction_markers", True) and view.visible(safe):
             self._rect(view, safe, (47, 94, 82))
@@ -239,6 +233,7 @@ class Renderer:
             self._draw_navigation(world.navigation, view)
             if not map_open:
                 search_counts = self.hud.draw_search_overlay(simulation, view)
+        awareness = []
         for actor in [*simulation.guards, simulation.player]:
             body_angle = actor.facing + BODY_FORWARD_OFFSET
             body_bounds = self._rotated_bounds(actor.xy, BODY_SIZE_M, body_angle)
@@ -263,7 +258,7 @@ class Renderer:
                     and (brain.radio.started_at is not None or brain.memory.recognition > 0)
                     and actor.position.floor == simulation.player.position.floor
                     and world.geometry.raycast(simulation.player.xy, actor.xy) is None):
-                self._draw_awareness(brain, x, y + max(12, 0.45 * view.scale), simulation.time)
+                awareness.append((brain, x, y + max(12, 0.45 * view.scale)))
             if debug:
                 self._rect(view, Rect(actor.position.x - actor.radius, actor.position.y - actor.radius,
                                       actor.radius * 2, actor.radius * 2), (244, 211, 119), filled=False)
@@ -287,6 +282,15 @@ class Renderer:
                         sx, sy = view.pico(*brain.memory.last_sound)
                         pico.draw_line(sx - 5, sy, sx + 5, sy, 244, 184, 88)
                         pico.draw_line(sx, sy - 5, sx, sy + 5, 244, 184, 88)
+        self.lighting.draw(world, view, simulation.light_sources())
+        for alarm in simulation.alarms.values():
+            x, y = alarm.position
+            beacon = Rect(x - 0.23, y - 0.23, 0.46, 0.46)
+            if alarm.until > simulation.time and view.visible(beacon):
+                pulse = 0.5 + 0.5 * math.sin(simulation.time * math.tau)
+                self._rect(view, beacon, (255, int(48 + 78 * pulse), 54))
+        for brain, x, y in awareness:
+            self._draw_awareness(brain, x, y, simulation.time)
         for trace in simulation.combat.traces:
             color = (249, 225, 137) if trace.team == "player" else (230, 128, 92)
             pico.draw_line(*view.pico(*trace.start), *view.pico(*trace.end), *color)
@@ -311,6 +315,7 @@ class Renderer:
 
     def close(self):
         self.hud.close()
+        self.lighting.close()
         self.layers.clear()
         self.map_images.close()
         self.sprites.clear()

@@ -17,6 +17,7 @@ from .movement import move_actor
 from .interactions import (
     exchange_safehouse_weapon, nearby_facility, nearby_road_control, use_facility, use_road_control,
 )
+from .lighting import Light
 from .roster import CampaignRoster
 from .transport import TransportCrew
 from .campaign_presence import CampaignPresence
@@ -90,6 +91,9 @@ class PlaySimulation:
         self.guards = self.roster.sync()
         self.events, self.feedback = EventBus(), Feedback()
         self.alarms = {}
+        self.fixed_lights = tuple(Light(f"facility/{facility['id']}", tuple(facility["terminal"]),
+                                        6.5, (255, 221, 167), 0.75)
+                                  for facility in self.world.facilities)
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],
                           can_radio=self._can_radio, report_contact=self._report_contact, emit=self.events.emit)
         self.presence = (CampaignPresence(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"])
@@ -260,6 +264,13 @@ class PlaySimulation:
         weights = {"combat": 1.0, "radio": 0.85, "search": 0.65, "combat_guard": 0.55, "alert": 0.4, "retreat": 0.8}
         return max((weights.get(actor.state, 0) for actor in self.guards
                     if actor.hp > 0 and math.dist(actor.xy, self.player.xy) < 24), default=0.0)
+
+    def light_sources(self):
+        yield from self.fixed_lights
+        pulse = 0.5 + 0.5 * math.sin(self.time * math.tau)
+        for key, alarm in self.alarms.items():
+            if alarm.until > self.time:
+                yield Light(f"alarm/{key}", alarm.position, 5.0, (255, 56, 40), 0.35 + pulse * 0.55)
 
     def step(self, direction=(0, 0), aim=None, firing=False, sprint=False, *, aiming=False,
              trigger_pressed=False, walking=False, aim_offset=None):
