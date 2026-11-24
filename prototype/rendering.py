@@ -82,10 +82,14 @@ class Renderer:
         width, height = size[0] * cosine + size[1] * sine, size[0] * sine + size[1] * cosine
         return Rect(center[0] - width / 2, center[1] - height / 2, width, height)
 
-    def _draw_trees(self, view, colliders, player, debug):
+    def _draw_trees(self, view, colliders, player, sky, night_vision, debug):
         crown_size = 3.6
         crown_px = crown_size * view.scale
         viewport = view.viewport()
+        ambient, direct = self.lighting.sky_colors(sky, night_vision)
+        canopy_color = tuple(min(255, fill + sun) for fill, sun in zip(ambient, direct))
+        self.backend.SDL_SetTextureColorMod(self.tree_canopy.texture, *canopy_color)
+        self.backend.SDL_SetTextureColorMod(self.tree_trunk.texture, *ambient)
         trunks = []
         previous_crown_alpha = 1.0
         for tree in colliders:
@@ -222,7 +226,6 @@ class Renderer:
             elif layer.role != "walls" and not layer.rotation % 90:
                 self._rect(view, layer.rect, layer.color)
         colliders = world.visible_colliders(view.viewport(4))
-        self._draw_trees(view, colliders, simulation.player.xy, debug)
         for collider in colliders:
             if collider.kind in {"building", "terrain", "tree"}:
                 continue
@@ -400,6 +403,8 @@ class Renderer:
                         pico.draw_line(sx - 5, sy, sx + 5, sy, 244, 184, 88)
                         pico.draw_line(sx, sy - 5, sx, sy + 5, 244, 184, 88)
         self.lighting.draw(world, view, lights, sky, night_vision=night_vision, floor=floor)
+        # 지면 조명으로 그려진 그림자 위에 수관을 별도로 합성한다.
+        self._draw_trees(view, colliders, player.xy, sky, night_vision, debug)
         for point in simulation.laser_targets(sky, view.viewport()):
             x, y = view.pico(*point)
             alpha = round(230 * sky.infrared)

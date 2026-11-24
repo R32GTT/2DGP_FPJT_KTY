@@ -305,6 +305,11 @@ class Lighting:
         level = sum(color) / 3 * gain
         return tuple(min(255, round(level * channel)) for channel in (0.62, 1.12, 0.74))
 
+    def sky_colors(self, sky, night_vision):
+        if night_vision:
+            return self._sensor_color(sky.ambient, 2.9), self._sensor_color(sky.direct, 1.65)
+        return sky.ambient, sky.direct
+
     def draw(self, world, view, lights, sky, *, night_vision=False, floor=0):
         sdl = self.sdl
         if not self.target:
@@ -318,12 +323,11 @@ class Lighting:
         if sdl.SDL_SetRenderTarget(sdl.renderer, self.target) < 0:
             return
         try:
-            ambient = self._sensor_color(sky.ambient, 2.9) if night_vision else sky.ambient
+            ambient, direct = self.sky_colors(sky, night_vision)
             sdl.SDL_SetRenderDrawColor(sdl.renderer, *ambient, 255)
             sdl.SDL_RenderClear(sdl.renderer)
             self._draw_world_mesh(self.contact_mesh, view)
             if self.sky_target and sdl.SDL_SetRenderTarget(sdl.renderer, self.sky_target) == 0:
-                direct = self._sensor_color(sky.direct, 1.65) if night_vision else sky.direct
                 sdl.SDL_SetRenderDrawColor(sdl.renderer, *direct, 255)
                 sdl.SDL_RenderClear(sdl.renderer)
                 self._draw_world_mesh(self.shadow_mesh, view)
