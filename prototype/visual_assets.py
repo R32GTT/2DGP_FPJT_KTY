@@ -26,6 +26,11 @@ class Painter:
         backend.SDL_SetRenderDrawColor(self.renderer, *color[:3], color[3] if len(color) > 3 else 255)
         backend.SDL_RenderFillRect(self.renderer, backend.SDL_Rect(int(x), int(y), max(1, int(w)), max(1, int(h))))
 
+    def ellipse(self, x, y, radius_x, radius_y, color):
+        for row in range(-radius_y, radius_y + 1):
+            half = int(radius_x * math.sqrt(1 - (row / radius_y)**2))
+            self.rect(x - half, y + row, 2 * half + 1, 1, color)
+
 
 def painted_image(backend, width, height, paint):
     # Direct3D는 창 크기가 바뀌면 렌더 타깃의 내용을 잃는다. 완성된 그림은 정적 텍스처로 보관한다.
@@ -80,14 +85,37 @@ def weapon_image(backend, alternate=False):
     return painted_image(backend, 64, 24, paint)
 
 
-def tree_image(backend):
+def tree_canopy_image(backend):
     def paint(p):
-        p.rect(58, 55, 12, 25, (84, 71, 47))
-        for radius, color, offset in ((48, (21, 36, 29, 140), 5), (45, (32, 62, 43), 0),
-                                      (34, (44, 79, 50), -5), (19, (60, 93, 57), -9)):
-            for y in range(-radius, radius + 1):
-                half = int(math.sqrt(max(0, radius * radius - y * y)))
-                p.rect(64 - half + offset, 62 + y + offset, half * 2, 1, color)
+        clusters = ((66, 29, 31, 23), (34, 46, 27, 29), (92, 49, 29, 26),
+                    (28, 78, 23, 25), (55, 95, 31, 26), (87, 89, 31, 26))
+        for x, y, rx, ry in clusters:
+            p.ellipse(x, y, rx, ry, (31, 56, 40))
+        for index, (x, y, rx, ry) in enumerate(clusters):
+            shade = 4 * (index % 3)
+            p.ellipse(x - 2, y - 3, rx - 4, ry - 6, (47 + shade, 73 + shade, 48 + shade))
+            p.ellipse(x - 5, y - 5, rx // 2, ry // 2, (61 + shade, 86 + shade, 55 + shade))
+        rng = random.Random(42)
+        for x, y, rx, ry in clusters:
+            for _ in range(22):
+                angle, radius = rng.uniform(0, math.tau), rng.uniform(0.2, 0.76)
+                p.rect(x + rx * math.cos(angle) * radius, y + ry * math.sin(angle) * radius,
+                       rng.randrange(2, 5), 2, rng.choice(((49, 70, 46), (75, 94, 58))))
+    return painted_image(backend, 128, 128, paint)
+
+
+def tree_trunk_image(backend):
+    def paint(p):
+        p.rect(7, 15, 114, 98, (39, 32, 25))
+        p.rect(14, 7, 100, 114, (39, 32, 25))
+        p.rect(17, 18, 91, 91, (138, 111, 75))
+        p.ellipse(62, 62, 42, 43, (90, 68, 49))
+        p.ellipse(61, 61, 34, 34, (157, 123, 82))
+        p.ellipse(60, 60, 23, 24, (115, 84, 55))
+        p.ellipse(60, 60, 17, 17, (164, 130, 85))
+        p.ellipse(58, 58, 6, 7, (107, 78, 51))
+        p.rect(64, 30, 3, 13, (96, 68, 46))
+        p.rect(24, 75, 13, 4, (102, 73, 47))
     return painted_image(backend, 128, 128, paint)
 
 

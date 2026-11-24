@@ -11,10 +11,12 @@ from .ai_config import RADIO_GRACE_SECONDS, RADIO_TRANSMIT_SECONDS
 from .geometry import Rect
 from .camera import CANVAS_SIZE
 from .hud import HUD
-from .lighting import Lighting
+from .lighting import Lighting, smooth
 from .map_images import MapImages
 from .perception import INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS
-from .visual_assets import actor_image, draw_polygon, prop_image, tree_image, truck_image, vignette_image, weapon_image
+from .visual_assets import (
+    actor_image, draw_polygon, prop_image, tree_canopy_image, tree_trunk_image, truck_image, vignette_image, weapon_image,
+)
 from .weapons import load_weapons, weapon_pose
 from .world import ROOT
 
@@ -40,7 +42,8 @@ class Renderer:
         self.layers = {}
         spawn = world.data["player_spawn"]
         self.map_images.prepare(world.visible_layers(Rect(spawn[0] - 20, spawn[1] - 16, 40, 32)), budget=12)
-        self.tree = tree_image(self.backend)
+        self.tree_canopy = self._image("assets/prototype/tree_canopy.png") or tree_canopy_image(self.backend)
+        self.tree_trunk = self._image("assets/prototype/tree_trunk.png") or tree_trunk_image(self.backend)
         self.truck = truck_image(self.backend)
         self.props = {kind: prop_image(self.backend, kind) for kind in ("cover", "desk", "rack", "bed", "antenna")}
         self.sprites = {key: self._image(f"assets/prototype/{key}.png") or actor_image(self.backend, key == "player")
@@ -77,6 +80,38 @@ class Renderer:
         cosine, sine = abs(math.cos(facing)), abs(math.sin(facing))
         width, height = size[0] * cosine + size[1] * sine, size[0] * sine + size[1] * cosine
         return Rect(center[0] - width / 2, center[1] - height / 2, width, height)
+
+    def _draw_trees(self, view, colliders, player, debug):
+        crown_size = 3.6
+        crown_px = crown_size * view.scale
+        viewport = view.viewport()
+        trunks = []
+        previous_alpha = 1.0
+        for tree in colliders:
+            if tree.kind != "tree" or not tree.active:
+                continue
+            rect = tree.rect
+            x, y = rect.x + rect.w * 0.5, rect.y + rect.h * 0.5
+            crown = Rect(x, y, 0, 0).expanded(crown_size * 0.5)
+            if not crown.overlaps(viewport) and not rect.overlaps(viewport):
+                continue
+            px, py = view.pico(x, y)
+            if crown.overlaps(viewport):
+                distance = math.hypot(x - player[0], y - player[1])
+                alpha = 0.08 + 0.92 * smooth((distance - 1.55) / 2.05)
+                if alpha != previous_alpha:
+                    self.tree_canopy.opacify(alpha)
+                    previous_alpha = alpha
+                self.tree_canopy.draw(px, py, crown_px, crown_px)
+            if rect.overlaps(viewport):
+                trunks.append((rect, px, py))
+        if previous_alpha != 1:
+            self.tree_canopy.opacify(1.0)
+        # 가까운 나무의 수관이 이웃 나무의 엄폐 범위를 가리지 않게 한다.
+        for rect, px, py in trunks:
+            self.tree_trunk.draw(px, py, rect.w * view.scale, rect.h * view.scale)
+            if debug:
+                self._rect(view, rect, (148, 190, 124), filled=False)
 
     @staticmethod
     def _draw_navigation(navigation, view):
@@ -143,14 +178,10 @@ class Renderer:
                              range(len(points)) if layer.triangles else None)
             elif layer.role != "walls" and not layer.rotation % 90:
                 self._rect(view, layer.rect, layer.color)
-        for collider in world.visible_colliders(view.viewport(4)):
-            if collider.kind in {"building", "terrain"}:
-                continue
-            if collider.kind == "tree":
-                x, y = view.pico(collider.rect.x + collider.rect.w / 2, collider.rect.y + collider.rect.h / 2)
-                self.tree.draw(x, y, 3.6 * view.scale, 3.6 * view.scale)
-                if debug:
-                    self._rect(view, collider.rect, (148, 190, 124), filled=False)
+        colliders = world.visible_colliders(view.viewport(4))
+        self._draw_trees(view, colliders, simulation.player.xy, debug)
+        for collider in colliders:
+            if collider.kind in {"building", "terrain", "tree"}:
                 continue
             if collider.kind == "parked_truck":
                 rect = collider.rect
@@ -331,6 +362,6 @@ class Renderer:
         self.sprites.clear()
         self.props.clear()
         self.guns.clear()
-        self.door = self.vignette = self.tree = self.truck = None
+        self.door = self.vignette = self.tree_canopy = self.tree_trunk = self.truck = None
         self.images.clear()
         self.backend.SDL_ShowCursor(self.backend.SDL_ENABLE)
