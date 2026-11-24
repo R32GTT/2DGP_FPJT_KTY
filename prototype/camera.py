@@ -29,7 +29,7 @@ class PlayCamera:
     def set_zoom(self, zoom):
         self.scale = PIXELS_PER_METER * max(0.5, min(4.0, zoom))
 
-    def follow(self, position, mouse=None, *, aiming=False, dt=None):
+    def follow(self, position, mouse=None, *, aiming=False, look_multiplier=1.0, dt=None):
         half_w, half_h = self.width / 2, self.height / 2
         limit_x, limit_y = (6.0, 6.0) if aiming else (2.0, 3.5)
         limit_x = min(limit_x, max(0.0, half_w - 24) / self.scale)
@@ -40,6 +40,9 @@ class PlayCamera:
         else:
             target_x = max(-limit_x, min(limit_x, (mx - half_w) / self.scale * 0.2))
         target_y = max(-1.0, min(1.0, (my - half_h) / half_h)) * limit_y
+        if aiming:
+            target_x *= look_multiplier
+            target_y *= look_multiplier
         blend = 1.0 if dt is None else -math.expm1(-12.0 * dt)
         self.look_x += (target_x - self.look_x) * blend
         self.look_y += (target_y - self.look_y) * blend

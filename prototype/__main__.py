@@ -37,6 +37,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
         frame_deadline = previous
         last_step_s = FIXED_DT
         stack_previewed = False
+        inventory_cursor = 0
         while controls.running and (not frames or count < frames):
             started = perf_counter()
             elapsed, previous = min(MAX_SIMULATION_BACKLOG_S, started - previous), started
@@ -55,6 +56,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             renderer, simulation = replacement, loaded
                             controls.keys.clear()
                             controls.firing = controls.aiming = controls.trigger_pending = False
+                            controls.inventory_open = False
                             controls.paused = True
                     except CampaignSaveError as error:
                         simulation.message = str(error)
@@ -78,9 +80,27 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     stack_previewed = False
                     controls.keys.clear()
                     controls.firing = controls.aiming = controls.trigger_pending = controls.map_open = False
+                    controls.inventory_open = False
                     controls.debug = controls.paused = True
                     continue
                 if not controls.paused:
+                    if action == "inventory":
+                        if simulation.player.hp > 0 and not simulation.respawn_selecting:
+                            controls.inventory_open = not controls.inventory_open
+                            controls.map_open = False
+                            controls.firing = controls.aiming = controls.trigger_pending = False
+                            inventory_cursor = 0
+                        continue
+                    if controls.inventory_open:
+                        if action == "item_previous":
+                            inventory_cursor = max(0, inventory_cursor - 1)
+                        elif action == "item_next":
+                            inventory_cursor = min(len(simulation.inventory.rows()) - 1, inventory_cursor + 1)
+                        elif action == "item_use":
+                            simulation.inventory.activate(inventory_cursor)
+                        elif action in {"slot_0", "slot_1", "slot_2"}:
+                            simulation.switch_weapon(int(action[-1]))
+                        continue
                     if action in {"lamp", "night_vision", "ir_laser"}:
                         if not controls.map_open and not simulation.respawn_selecting:
                             simulation.toggle_optics(action)
@@ -105,18 +125,23 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         simulation.reload()
                     elif action == "cancel":
                         simulation.cancel_reload()
-                    elif action in {"slot_0", "slot_1"}:
+                    elif action in {"slot_0", "slot_1", "slot_2"}:
                         simulation.switch_weapon(int(action[-1]))
-                    elif action == "fire_mode" and simulation.player.weapon:
+                    elif action == "fire_mode" and simulation.player.weapon and simulation.player.weapon.spec.automatic:
                         simulation.player.weapon.automatic = not simulation.player.weapon.automatic
                     elif action == "respawn" and simulation.player.hp <= 0:
                         controls.map_open = False
                         simulation.request_respawn()
             map_open = controls.map_open or (simulation.respawn_selecting and not controls.paused)
-            aiming = controls.aiming and not (controls.paused or map_open)
-            camera.follow(simulation.player.xy, None if map_open else controls.mouse, aiming=aiming, dt=elapsed)
+            if simulation.player.hp <= 0:
+                controls.inventory_open = False
+            interface_open = map_open or controls.inventory_open
+            aiming = controls.aiming and not (controls.paused or interface_open)
+            weapon = simulation.player.weapon
+            camera.follow(simulation.player.xy, None if interface_open else controls.mouse, aiming=aiming,
+                          look_multiplier=weapon.look_multiplier if weapon and aiming else 1.0, dt=elapsed)
             aim_offset = None
-            if not map_open:
+            if not interface_open:
                 aim_x, aim_y = camera.world(*controls.mouse)
                 aim_offset = aim_x - simulation.player.position.x, aim_y - simulation.player.position.y
             if controls.paused:
@@ -130,10 +155,10 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     if steps and step_started - started + last_step_s > SIMULATION_FRAME_BUDGET_S:
                         break
                     pressed = controls.consume_trigger()
-                    simulation.step((0, 0) if map_open else controls.direction,
-                                    aim_offset=aim_offset, firing=not map_open and (controls.firing or pressed),
+                    simulation.step((0, 0) if interface_open else controls.direction,
+                                    aim_offset=aim_offset, firing=not interface_open and (controls.firing or pressed),
                                     sprint=controls.sprint, aiming=aiming,
-                                    trigger_pressed=pressed and not map_open, walking=controls.walking)
+                                    trigger_pressed=pressed and not interface_open, walking=controls.walking)
                     last_step_s = perf_counter() - step_started
                     accumulator -= FIXED_DT
                     steps += 1
@@ -145,8 +170,14 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         break
             camera.recenter(simulation.player.xy)
             update_ms = (perf_counter() - started) * 1000
+            inventory_view = None
+            if controls.inventory_open and simulation.player.hp > 0:
+                rows = simulation.inventory.rows()
+                inventory_cursor = min(inventory_cursor, len(rows) - 1)
+                inventory_view = rows, inventory_cursor
             renderer.render(simulation, camera, debug=controls.debug, paused=controls.paused,
-                            update_ms=update_ms, mouse=controls.mouse, map_open=map_open)
+                            update_ms=update_ms, mouse=None if inventory_view else controls.mouse,
+                            map_open=map_open, inventory_view=inventory_view)
             count += 1
             # 대기가 길어진 오차를 다음 프레임에 누적하지 않는다.
             frame_deadline += FIXED_DT

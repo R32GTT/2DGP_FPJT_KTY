@@ -12,6 +12,7 @@ import pico2d as pico
 
 from campaign.clock import world_clock
 from .geometry import Rect
+from .inventory import BAG_LIMIT
 from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
 from .weapons import STAGE_NAMES
 from .interactions import nearby_facility, nearby_road_control
@@ -193,7 +194,7 @@ class HUD:
         self.label("weapon", weapon.spec.name if weapon else "UNARMED", 24)
         self.label("ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}" if weapon else "-- / ---", 24)
         mode = "AUTO" if weapon and weapon.automatic else "SEMI"
-        self.label("mode", f"{mode}  ·  1/2 교체  ·  V 모드  ·  R 재장전 / C 취소", 13)
+        self.label("mode", f"{mode}  ·  1/2/3 교체  ·  V 모드  ·  R 재장전 / C 취소", 13)
         self.label("message", simulation.message, 13)
         self.label("timing", f"update {update_ms:.2f}ms / draw {draw_ms:.2f}ms | cache {cache_count}/24 | 근거리 AI {getattr(simulation.ai, 'near_count', 0)}", 13)
         self.label("stock", f"DEPOT {simulation.campaign.supplies}  /  확보 {simulation.campaign.simulation.state.player_stock['supplies']}", 13)
@@ -369,7 +370,7 @@ class HUD:
             self.text(key, camera.width - 350, camera.height - 168 - number * 32)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
-               cache_count=0, search_counts=None, seen_enemies=()):
+               cache_count=0, search_counts=None, seen_enemies=(), inventory_view=None):
         self._update_text_scale(camera)
         now = perf_counter()
         self._track_message(simulation, now)
@@ -437,6 +438,25 @@ class HUD:
         if alarm is not None and alarm.until > simulation.time:
             self.label("region_alarm", f"지역 경보  ·  {math.ceil(alarm.until - simulation.time)}초", 16, (255, 133, 107))
             self._draw_notice("region_alarm", width / 2, height - (80 if paused else 28))
+        if inventory_view is not None:
+            self._draw_inventory(camera, simulation.inventory.bag_weight, *inventory_view)
+
+    def _draw_inventory(self, camera, weight, rows, selected):
+        left, width, top = camera.width / 2 - 226, 452, camera.height - 103
+        visible = 11
+        start = min(max(0, selected - visible + 1), max(0, len(rows) - visible))
+        self.panel(left, top - 372, width, 372)
+        self.label("inventory_title", f"장비  ·  가방 {weight:.1f}/{BAG_LIMIT:g} kg", 16)
+        self.text("inventory_title", left + 18, top - 22)
+        for line, (text, _) in enumerate(rows[start:start + visible]):
+            y = top - 54 - line * 26
+            if start + line == selected:
+                pico.draw_rectangle(left + 8, y - 11, left + width - 8, y + 11, 49, 76, 72, filled=True)
+            key = f"inventory_row_{line}"
+            self.label(key, text, 13)
+            self.text(key, left + 18, y)
+        self.label("inventory_keys", "↑↓ / 휠 선택    Enter 사용    Tab 닫기", 13)
+        self.text("inventory_keys", left + 18, top - 351)
 
     def _minimap(self, simulation, camera, debug=False, seen_enemies=()):
         width, height = 180, 126

@@ -19,11 +19,12 @@ from .interactions import (
     nearby_watch_post, use_facility, use_road_control,
 )
 from .geometry import Rect
+from .inventory import FieldInventory, weapon_slots
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
 from .transport import TransportCrew
 from .campaign_presence import CampaignPresence
-from .weapons import WeaponState, load_weapons
+from .weapons import WeaponState, load_attachments, load_weapons
 from .world import DEFAULT_SCENE, World
 
 
@@ -58,7 +59,8 @@ class PlaySimulation:
         self.stack_variant = stack_variant
         self.stack_title = ""
         player_spawn = drill["observer_spawn"] if search_drill else self.world.data["player_spawn"]
-        self.specs = load_weapons()
+        parts = load_attachments()
+        self.specs = load_weapons(attachments=parts)
         self.player = Actor("player", Position(*player_spawn), speed=3.0,
                             hp=100, armor=40, team="player", state="player")
         guard_rows = self.world.data["guards"]
@@ -100,12 +102,13 @@ class PlaySimulation:
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],
                           can_radio=self._can_radio, report_contact=self._report_contact, emit=self.events.emit,
                           light_at=self._light_at)
-        self.presence = (CampaignPresence(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"])
+        weapon_roles = {role: spec for spec in self.specs.values() for role in spec.issue_roles}
+        self.presence = (CampaignPresence(self.world, self.campaign, self.roster, self.ai, weapon_roles)
                          if self.world.data.get("generation") else None)
-        self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"], self.events)
+        self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, weapon_roles["escort"], self.events)
         self.combat = Combat(self.events, self.transports)
         self.time, self.footstep_at = float(campaign.state.world_time), 0.0
-        self.message = "R 재장전 / C 취소 / 1·2 총기 교체 / V 단발·연사 / F 문 / E 상호작용"
+        self.message = "R 재장전 / C 취소 / 1·2·3 총기 교체 / V 단발·연사 / F 문 / E 상호작용"
         if self.world.territories:
             self.message = "M 지도에서 동서 보급로 확인 · 차단기 가까이에서 E"
         self.respawn_target = None
@@ -114,6 +117,7 @@ class PlaySimulation:
         self.respawn_sites = {site["id"]: site for site in self.world.facilities if site["kind"] == "safehouse"}
         self.dropped = []
         self.safehouse_stash = {}
+        self.inventory = FieldInventory(self, parts)
         self.kit_available = True
         self.ai_scenario, self.ai_hint = ai_scenario, ""
         if self.presence:
@@ -149,6 +153,8 @@ class PlaySimulation:
     def reload(self, actor=None):
         actor = actor or self.player
         if actor.hp > 0 and actor.weapon is not None:
+            if actor is self.player:
+                self.inventory.feed_reserve(actor.weapon)
             self._signals(actor, actor.weapon.start_reload())
 
     def cancel_reload(self, actor=None):
@@ -157,8 +163,8 @@ class PlaySimulation:
             self._signals(actor, actor.weapon.cancel_reload())
 
     def switch_weapon(self, slot):
-        keys = list(self.player.loadout)
-        if self.player.hp <= 0 or not 0 <= slot < len(keys) or keys[slot] == self.player.active_weapon:
+        keys = weapon_slots(self.player.loadout)
+        if self.player.hp <= 0 or not 0 <= slot < len(keys) or keys[slot] in (None, self.player.active_weapon):
             return
         self.cancel_reload()
         self.player.active_weapon = keys[slot]
@@ -183,8 +189,11 @@ class PlaySimulation:
                 if truck is None:
                     self.roster.record_loss(actor, seated="vehicle_id" in event.data)
                 else:
+                    operation = self.campaign.simulation.state.operations[truck.convoy.id]
+                    progress = (truck.convoy.progress_m
+                                if operation.edge_paid and operation.edge_index == truck.convoy.edge_index else None)
                     self.roster.record_loss(actor, seated=True, driver_vehicle_id=truck.id,
-                                            progress_m=truck.convoy.progress_m)
+                                            progress_m=progress)
                     stops.append((truck, event.data["incoming"]))
                     self.message = "운전자 전투 불능 · 수송 정차"
                 if self.presence:
@@ -279,6 +288,7 @@ class PlaySimulation:
         if self.player.loadout:
             self.dropped.append((self.player.xy, self.player.loadout))
         self.player.loadout, self.player.active_weapon = {}, ""
+        self.inventory.drop_carried()
 
     @property
     def danger(self):
@@ -387,6 +397,7 @@ class PlaySimulation:
         player_motion = 1.0
         if self.player.hp > 0:
             speed = 1.5 if walking else 5 if sprint else 3
+            speed *= self.inventory.movement_multiplier
             if self.player.weapon is not None and self.player.weapon.reloading:
                 speed *= self.player.weapon.spec.reload_move_multiplier
             move_actor(self.player, direction, self.world, FIXED_DT, speed=speed)
@@ -477,13 +488,8 @@ class PlaySimulation:
     def take_supplies(self):
         if self.player.hp <= 0:
             return
-        for index, (point, loadout) in enumerate(self.dropped):
-            if math.dist(self.player.xy, point) < 1.5 and not self.player.loadout:
-                self.player.loadout = loadout
-                self.player.active_weapon = next(iter(loadout))
-                self.dropped.pop(index)
-                self.message = "떨어진 무기 회수 — 탄약·완료된 재장전 단계 보존"
-                return
+        if self.inventory.take_gun():
+            return
         facility = nearby_facility(self.world, self.player.xy)
         if facility is not None:
             self.message = use_facility(self, facility)

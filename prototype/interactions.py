@@ -36,6 +36,12 @@ def exchange_safehouse_weapon(simulation, facility):
         return "안전가옥 보관함이 비어 있음"
     if stored and stored.spec.id in player.loadout and stored.spec.id != player.active_weapon:
         return "같은 종류의 무기를 이미 휴대 중입니다. 해당 무기를 장착한 뒤 교체하세요"
+    if stored:
+        pistol = stored.spec.category == "pistol"
+        count = sum((weapon.spec.category == "pistol") == pistol
+                    for weapon in player.loadout.values() if weapon is not equipped)
+        if count >= (1 if pistol else 2):
+            return "해당 무기 슬롯을 비우거나 같은 슬롯의 무기를 장착하세요"
 
     if equipped:
         simulation.cancel_reload()

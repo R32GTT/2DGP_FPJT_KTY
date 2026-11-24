@@ -70,6 +70,8 @@ def capture(play):
             "dropped": [[point, weapons(loadout)] for point, loadout in play.dropped],
             "safehouse_stash": {key: weapons({weapon.spec.id: weapon})
                                 for key, weapon in play.safehouse_stash.items()},
+            "inventory": {"carried": play.inventory.carried, "stored": play.inventory.stored,
+                          "ground": play.inventory.ground},
             "random": play.combat.random.getstate(), "reports": play.campaign._reports,
             "resumed_at": play.campaign._resumed_at,
             "received": sorted(play.presence.received)}
@@ -140,6 +142,16 @@ def restore(play, row):
         if key not in play.respawn_sites or len(slot) != 1:
             raise ValueError("잘못된 안전가옥 보관함")
         play.safehouse_stash[key] = next(iter(restore_weapons(slot, play.specs).values()))
+    inventory = row["inventory"]
+    play.inventory.carried = play.inventory.validate_items(inventory["carried"])
+    play.inventory.stored = {key: play.inventory.validate_items(items) for key, items in inventory["stored"].items()}
+    if not play.inventory.stored.keys() <= play.respawn_sites.keys():
+        raise ValueError("잘못된 인벤토리 보관소")
+    play.inventory.ground = []
+    for point, items in inventory["ground"]:
+        if len(point) != 2 or not all(math.isfinite(value) for value in point):
+            raise ValueError("잘못된 현장 물자 위치")
+        play.inventory.ground.append((tuple(point), play.inventory.validate_items(items)))
     play.combat.random.setstate(tuples(row["random"]))
     play.campaign._reports, play.campaign._resumed_at = row["reports"], row["resumed_at"]
     play.presence.received = set(map(tuple, row["received"]))

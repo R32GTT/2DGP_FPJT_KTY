@@ -14,7 +14,7 @@ from .simulation import PlaySimulation
 from .world import ROOT
 
 
-SAVE_VERSION = 2
+SAVE_VERSION = 3
 SAVE_FORMAT = "revenant_lost.generated_play"
 DEFAULT_SAVE = ROOT / "saves" / "prototype.json.gz"
 MAX_BYTES = 16 * 1024 * 1024

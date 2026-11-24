@@ -62,8 +62,9 @@ class CampaignRoster:
             for index in range(unit.soldiers):
                 actor = Actor(f"{unit_id}:{index}", Position(home.x, home.y, home.floor), armor=15,
                               source_unit=unit_id, member=index, home_node=node, present=False)
-                actor.loadout = {weapon.id: WeaponState.ready(weapon)}
-                actor.active_weapon = weapon.id
+                spec = weapon(index) if callable(weapon) else weapon
+                actor.loadout = {spec.id: WeaponState.ready(spec)}
+                actor.active_weapon = spec.id
                 self.actors.append(actor)
                 self.by_id[actor.id] = actor
                 self.spawns[actor.id] = actor.xy

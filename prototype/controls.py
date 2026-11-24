@@ -15,6 +15,7 @@ class Controls:
         self.paused = False
         self.debug = False
         self.map_open = False
+        self.inventory_open = False
 
     def poll(self, camera):
         actions = []
@@ -31,7 +32,10 @@ class Controls:
                 key = event.key.keysym.sym
                 self.keys.add(key)
                 if key == sdl2.SDLK_ESCAPE:
-                    self.running = False
+                    if self.inventory_open:
+                        self.inventory_open = False
+                    else:
+                        self.running = False
                 elif key == sdl2.SDLK_p:
                     self.paused = not self.paused
                 elif key == sdl2.SDLK_F1:
@@ -42,6 +46,12 @@ class Controls:
                     actions.append("save" if key == sdl2.SDLK_F5 else "load")
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
+                    self.inventory_open = False
+                elif key == sdl2.SDLK_TAB:
+                    actions.append("inventory")
+                elif self.inventory_open and key in (sdl2.SDLK_UP, sdl2.SDLK_DOWN, sdl2.SDLK_RETURN):
+                    actions.append({sdl2.SDLK_UP: "item_previous", sdl2.SDLK_DOWN: "item_next",
+                                    sdl2.SDLK_RETURN: "item_use"}[key])
                 elif key in (sdl2.SDLK_l, sdl2.SDLK_n, sdl2.SDLK_k):
                     actions.append({sdl2.SDLK_l: "lamp", sdl2.SDLK_n: "night_vision", sdl2.SDLK_k: "ir_laser"}[key])
                 elif key == sdl2.SDLK_e and event.key.keysym.mod & sdl2.KMOD_SHIFT:
@@ -61,13 +71,18 @@ class Controls:
             elif event.type == sdl2.SDL_MOUSEMOTION:
                 self.mouse = (event.motion.x, event.motion.y)
             elif event.type in (sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP):
+                if self.inventory_open:
+                    continue
                 if event.button.button == sdl2.SDL_BUTTON_LEFT:
                     self.firing = event.type == sdl2.SDL_MOUSEBUTTONDOWN
                     self.trigger_pending |= self.firing
                 elif event.button.button == sdl2.SDL_BUTTON_RIGHT:
                     self.aiming = event.type == sdl2.SDL_MOUSEBUTTONDOWN
             elif event.type == sdl2.SDL_MOUSEWHEEL:
-                camera.set_zoom(camera.magnification * 1.2 ** event.wheel.y)
+                if self.inventory_open and event.wheel.y:
+                    actions.extend(["item_previous" if event.wheel.y > 0 else "item_next"] * min(12, abs(event.wheel.y)))
+                else:
+                    camera.set_zoom(camera.magnification * 1.2 ** event.wheel.y)
         return actions
 
     @property

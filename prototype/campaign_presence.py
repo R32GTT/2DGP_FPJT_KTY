@@ -13,8 +13,10 @@ from .perception import SIGHT_RANGE
 
 
 class CampaignPresence:
-    def __init__(self, world, bridge, roster, ai, weapon):
-        self.world, self.bridge, self.roster, self.ai, self.weapon = world, bridge, roster, ai, weapon
+    def __init__(self, world, bridge, roster, ai, weapon_roles):
+        self.world, self.bridge, self.roster, self.ai = world, bridge, roster, ai
+        self.weapon_roles = weapon_roles
+        self.weapon = weapon_roles["patrol"]
         self.sites = {site["service_node"]: site for site in world.facilities if site["campaign_id"]}
         self.marches, self.received = {}, set()
         self._orders_at, self.completed = -1, []
@@ -29,6 +31,23 @@ class CampaignPresence:
         ai.resupply = self.resupply
         ai.sight_reach = self.sight_reach
         bridge.simulation.movement_ready = self.can_advance
+
+    def _garrison_weapon(self, site, unit_id, member):
+        role = self.roles.get(f"{unit_id}:{member}")
+        kind = site["kind"]
+        if role and role[1] == "commander_lost":
+            key = "officer"
+        elif role and kind == "hq":
+            key = "watch"
+        elif kind == "warehouse" and member == 0:
+            key = "warehouse"
+        elif kind in {"hq", "garrison"} and member == 2:
+            key = "support"
+        elif member % 3 == 1:
+            key = "rifle_guard"
+        else:
+            key = "patrol"
+        return self.weapon_roles[key]
 
     def sight_reach(self, actor):
         role = self.roles.get(actor.id)
@@ -157,8 +176,9 @@ class CampaignPresence:
         for unit in sorted(state.units.values(), key=lambda unit: (unit.can_escort, unit.id)):
             if unit.node_id not in self.roster.active_nodes or unit.faction != "enemy" or not unit.soldiers:
                 continue
-            garrisons[unit.node_id].extend((actor, unit.status == "reserved")
-                                           for actor in self.roster.members(unit.id, self.weapon))
+            site = self.sites[unit.node_id]
+            members = self.roster.members(unit.id, lambda member: self._garrison_weapon(site, unit.id, member))
+            garrisons[unit.node_id].extend((actor, unit.status == "reserved") for actor in members)
         for node, members in garrisons.items():
             self._guard_posts(node, members)
         for view in self.bridge.convoys(seconds):
