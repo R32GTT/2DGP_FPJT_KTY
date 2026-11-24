@@ -90,6 +90,24 @@ def load_catalog(root):
     return catalog
 
 
+def _placed_lights(definition, placement):
+    result = []
+    ids = set()
+    for row in definition.get("lights", ()):
+        key, point, radius, color = (row[name] for name in ("id", "position", "radius", "color"))
+        intensity = row.get("intensity", 1.0)
+        if (not isinstance(key, str) or not key or key in ids
+                or len(point) != 2 or not all(type(axis) in (int, float) and math.isfinite(axis) for axis in point)
+                or len(color) != 3 or any(type(channel) is not int or not 0 <= channel <= 255 for channel in color)
+                or any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0
+                       for value in (radius, intensity))):
+            raise ValueError(f"잘못된 프리팹 광원: {definition['id']}/{key}")
+        ids.add(key)
+        result.append({"id": f"facility/{placement.id}/{key}", "position": placement.point(point),
+                       "radius": radius, "color": tuple(color), "intensity": intensity})
+    return result
+
+
 def expand_instances(scene, root):
     scene = deepcopy(scene)
     definitions = {}
@@ -148,7 +166,8 @@ def expand_instances(scene, root):
         scene["placed_prefabs"].append({"id": row["id"], "prefab_id": definition["id"],
                                        "version": definition["version"], "kind": definition["kind"],
                                        "rect": placement.rect(definition["bounds"]), "connectors": connectors,
-                                       "terminal": prefix + definition["terminal_node"], "guard_posts": guard_posts})
+                                       "terminal": prefix + definition["terminal_node"], "guard_posts": guard_posts,
+                                       "lights": _placed_lights(definition, placement)})
     return scene
 
 

@@ -20,6 +20,11 @@
     {"id": "floor_receiving", "rect": [-14, 0, 21, 8], "style": "floor", "image": "", "color": [133, 128, 108]},
     {"id": "floor_office", "rect": [7, 0, 7, 8], "style": "floor", "image": "", "color": [126, 107, 87]}
   ],
+  "lights": [
+    {"id": "receiving", "position": [1, 4.6], "radius": 8.5, "color": [255, 233, 193], "intensity": 0.92},
+    {"id": "storage_aisle", "position": [1, -8], "radius": 9.5, "color": [216, 232, 255], "intensity": 0.75},
+    {"id": "office", "position": [9.5, 3], "radius": 5.6, "color": [255, 219, 169], "intensity": 0.88}
+  ],
   "colliders": [
     {"id": "north", "rect": [-14, -16, 28, 0.3]},
     {"id": "west", "rect": [-14, -15.7, 0.3, 23.4]},

@@ -95,9 +95,13 @@ class PlaySimulation:
         self.guards = self.roster.sync()
         self.events, self.feedback = EventBus(), Feedback()
         self.alarms = {}
-        self.fixed_lights = tuple(Light(f"facility/{facility['id']}", tuple(facility["terminal"]),
-                                        6.5, (255, 221, 167), 0.75)
-                                  for facility in self.world.facilities)
+        authored_lights = {instance["id"]: instance["lights"] for instance in self.world.data.get("placed_prefabs", ())
+                           if instance.get("lights")}
+        self.fixed_lights = (
+            *(Light(**row) for fixtures in authored_lights.values() for row in fixtures),
+            *(Light(f"facility/{facility['id']}", tuple(facility["terminal"]), 6.5, (255, 221, 167), 0.75)
+              for facility in self.world.facilities if facility["id"] not in authored_lights),
+        )
         self._player_exposure = None
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],
                           can_radio=self._can_radio, report_contact=self._report_contact, emit=self.events.emit,

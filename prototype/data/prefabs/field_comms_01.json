@@ -16,6 +16,9 @@
     {"id": "mast_pad", "rect": [7, -8, 4, 6], "style": "pavement", "image": "", "color": [111, 120, 119]},
     {"id": "radio_room", "rect": [-6, -6, 12, 10], "style": "floor", "image": "", "color": [104, 122, 123]}
   ],
+  "lights": [
+    {"id": "radio_room", "position": [0, 0], "radius": 8.2, "color": [213, 237, 255], "intensity": 0.94}
+  ],
   "colliders": [
     {"id": "north", "rect": [-6, -6, 12, 0.25]},
     {"id": "west", "rect": [-6, -5.75, 0.25, 9.5]},

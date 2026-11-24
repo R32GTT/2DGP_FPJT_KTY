@@ -25,6 +25,11 @@
     {"id":"east_room","rect":[5,-2.5,5,6],"image":"","color":[120,140,137],"style":"floor"},
     {"id":"entry_wing","rect":[-4,3.5,8,3],"image":"","color":[126,131,117],"style":"floor"}
   ],
+  "lights":[
+    {"id":"entry","position":[0,4.4],"radius":5.6,"color":[227,232,255],"intensity":0.72},
+    {"id":"corridor","position":[0,-3.5],"radius":7.2,"color":[230,238,255],"intensity":0.86},
+    {"id":"command_room","position":[8,1.5],"radius":5.8,"color":[255,223,184],"intensity":0.92}
+  ],
   "colliders":[
     {"id":"outer_north_1","rect":[-10,-10.59,20,0.18]},
     {"id":"outer_west_1","rect":[-10.09,-10.5,0.18,14]},
