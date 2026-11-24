@@ -55,6 +55,9 @@ def build_generated_state(scene, setup=None):
     def assets(key, node, definition):
         units.extend({"id": f"{key}/unit/{index}", "soldiers": count, "node_id": node}
                      for index, count in enumerate(definition["units"]))
+        units.extend({"id": f"{key}/mobile/{index}", "soldiers": count, "node_id": node,
+                      "can_escort": False, "mobile": True}
+                     for index, count in enumerate(definition.get("mobile_units", ())))
         for profile, count in definition["vehicles"].items():
             vehicles.extend({**setup["vehicle_profiles"][profile], "id": f"{key}/{profile}/{index}", "node_id": node}
                             for index in range(count))
@@ -66,7 +69,8 @@ def build_generated_state(scene, setup=None):
         node = network["terminals"][key]
         definition = deepcopy(setup["facilities"][kind])
         facilities.append({**{name: definition[name] for name in ("capabilities", "inventory", "minimum_stock", "target_stock")},
-                           "id": key, "region_id": site.get("region_id", "generated"), "node_id": node})
+                           "id": key, "region_id": site.get("region_id", "generated"), "node_id": node,
+                           "staffing_target": definition.get("staffing_target", 0)})
         if key == scene["campaign_facility"]:
             facilities[-1]["inventory"] = dict(setup["collection_inventory"])
         assets(key, node, definition)

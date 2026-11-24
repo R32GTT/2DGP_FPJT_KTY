@@ -1,7 +1,7 @@
 """지역 유지 능력과 실병력의 철수 결과로 해방을 판정한다."""
 
 from . import clock
-from .models import Operation, stock
+from .models import QRF_OPERATIONS, Operation, stock
 from .resources import TERMINAL_PHASES, cancel, reserve
 from .routes import find_route, road_between
 
@@ -83,7 +83,7 @@ def evaluate_regions(state):
             region.withdrawal_started_at = state.world_time
             state.record("withdrawal_started", region_id=region.id)
             for operation in local_orders:
-                if operation.kind in {"supply", "export", "qrf"}:
+                if operation.kind in QRF_OPERATIONS | {"supply", "export", "redeployment"}:
                     cancel(state, operation.id)
         on_site = any(op.phase != "loading" and op.route and op.route[op.edge_index] in nodes
                       and any(state.units[key].soldiers for key in op.unit_ids) for op in active)

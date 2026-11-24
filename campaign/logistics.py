@@ -41,7 +41,7 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
     else:
         limit = sum(requested.values())
     pool = sorted(v.id for v in state.vehicles.values()
-                  if v.node_id == origin.node_id and v.status == "available")
+                  if v.node_id == origin.node_id and v.status == "available" and not v.troop_seats)
     vehicle_ids, capacity = [], 0
     while pool and capacity - len(vehicle_ids) * state.rules["provisions_per_vehicle"] < limit:
         chosen = state.choose(pool)

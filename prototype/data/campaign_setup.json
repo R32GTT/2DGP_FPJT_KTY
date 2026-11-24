@@ -5,17 +5,19 @@
   "resource_priority": ["supplies", "ammunition", "repair_parts"],
   "vehicle_profiles": {
     "truck": {"capacity": 150, "speed_mps": 10.0},
+    "troop_truck": {"capacity": 80, "speed_mps": 10.0, "troop_seats": 4},
     "external_truck": {"capacity": 200, "speed_mps": 10.0}
   },
   "facilities": {
     "hq": {
-      "capabilities": ["command", "garrison", "qrf"], "units": [10], "vehicles": {},
-      "inventory": {"supplies": 30, "ammunition": 20, "repair_parts": 5},
+      "capabilities": ["command", "garrison", "qrf"], "units": [10],
+      "mobile_units": [4, 4], "vehicles": {"troop_truck": 2}, "staffing_target": 10,
+      "inventory": {"supplies": 65, "ammunition": 20, "repair_parts": 5},
       "minimum_stock": {"supplies": 10, "ammunition": 10, "repair_parts": 2},
       "target_stock": {"supplies": 80, "ammunition": 20, "repair_parts": 5}
     },
     "comms": {
-      "capabilities": ["communication"], "units": [2], "vehicles": {},
+      "capabilities": ["communication"], "units": [2], "vehicles": {}, "staffing_target": 4,
       "inventory": {"supplies": 10, "ammunition": 10, "repair_parts": 5},
       "minimum_stock": {"supplies": 5, "ammunition": 5, "repair_parts": 2},
       "target_stock": {"supplies": 25, "ammunition": 10, "repair_parts": 5}
@@ -28,7 +30,7 @@
       "target_stock": {"supplies": 350, "ammunition": 80, "repair_parts": 40}
     },
     "garrison": {
-      "capabilities": ["garrison", "qrf"], "units": [10], "vehicles": {},
+      "capabilities": ["garrison", "qrf"], "units": [10], "vehicles": {}, "staffing_target": 8,
       "inventory": {"supplies": 30, "ammunition": 20, "repair_parts": 5},
       "minimum_stock": {"supplies": 10, "ammunition": 10, "repair_parts": 2},
       "target_stock": {"supplies": 80, "ammunition": 20, "repair_parts": 5}

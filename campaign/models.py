@@ -9,6 +9,8 @@ import random
 
 RESOURCE_TYPES = ("supplies", "ammunition", "repair_parts")
 FOOT_OPERATIONS = frozenset({"qrf", "withdrawal"})
+TROOP_TRANSPORTS = frozenset({"redeployment", "motor_qrf"})
+QRF_OPERATIONS = frozenset({"qrf", "motor_qrf"})
 RULES_VERSION = 1
 RULE_KEYS = {"planning_period_s", "consumption_period_s", "supplies_per_soldier",
              "loading_s", "unloading_s", "turnaround_s", "external_departure_interval_s",
@@ -74,6 +76,7 @@ class Facility:
     relay_disabled: bool = False
     commander_lost: bool = False
     watch_disabled: bool = False
+    staffing_target: int = 0
 
 
 @dataclass
@@ -87,6 +90,7 @@ class Unit:
     losses: int = 0
     position: Position | None = None
     can_escort: bool = True
+    mobile: bool = False
 
 
 @dataclass
@@ -98,6 +102,7 @@ class Vehicle:
     operation_id: str | None = None
     status: str = "available"
     position: Position | None = None
+    troop_seats: int = 0
 
 
 @dataclass
@@ -283,6 +288,7 @@ def validate_state(state: CampaignState) -> None:
         require(facility.id in state.regions[facility.region_id].facility_ids, "시설 역참조 누락")
         require(facility.node_id in state.nodes, "시설 노드 누락")
         require(type(facility.damage) is int and 0 <= facility.damage <= 100, "잘못된 시설 피해")
+        require(type(facility.staffing_target) is int and facility.staffing_target >= 0, "잘못된 주둔 목표")
         require(all(type(value) is bool for value in
                     (facility.relay_disabled, facility.commander_lost, facility.watch_disabled)),
                 "잘못된 시설 부속 목표 상태")
@@ -294,11 +300,12 @@ def validate_state(state: CampaignState) -> None:
     for unit in state.units.values():
         require(type(unit.soldiers) is int and type(unit.losses) is int
                 and unit.soldiers >= 0 and unit.losses >= 0, "잘못된 병력")
-        require(type(unit.can_escort) is bool, "잘못된 병력 호위 설정")
+        require(type(unit.can_escort) is bool and type(unit.mobile) is bool, "잘못된 병력 배정 설정")
         require((unit.soldiers == 0) == (unit.status == "destroyed"), "병력 격파 상태 불일치")
     for vehicle in state.vehicles.values():
         require(type(vehicle.capacity) is int and vehicle.capacity > 0
-                and math.isfinite(vehicle.speed_mps) and vehicle.speed_mps > 0, "잘못된 차량 제원")
+                and math.isfinite(vehicle.speed_mps) and vehicle.speed_mps > 0
+                and type(vehicle.troop_seats) is int and vehicle.troop_seats >= 0, "잘못된 차량 제원")
     for asset in (*state.units.values(), *state.vehicles.values()):
         require(asset.status in {"available", "reserved", "in_transit", "destroyed"}, "잘못된 자산 상태")
         require(asset.node_id is None or asset.node_id in state.nodes, "자산 노드 누락")
@@ -307,11 +314,12 @@ def validate_state(state: CampaignState) -> None:
         require(asset.node_id is not None or asset.operation_id is not None
                 or asset.position is not None, "자산 위치 누락")
     for operation in state.operations.values():
-        require(operation.kind in {"supply", "export", "repair"} | FOOT_OPERATIONS, "잘못된 작전 유형")
+        require(operation.kind in {"supply", "export", "repair"} | FOOT_OPERATIONS | TROOP_TRANSPORTS,
+                "잘못된 작전 유형")
         require(operation.kind not in FOOT_OPERATIONS or (not operation.vehicle_ids and bool(operation.unit_ids)),
                 "도보 작전 편성 오류")
         if operation.report_xy is not None:
-            require(operation.kind == "qrf" and len(operation.report_xy) == 2
+            require(operation.kind in QRF_OPERATIONS and len(operation.report_xy) == 2
                     and all(type(axis) in {int, float} and math.isfinite(axis) for axis in operation.report_xy),
                     "잘못된 위협 보고 위치")
         require(operation.phase in {"loading", "outbound", "unloading", "working", "turnaround", "returning",
@@ -332,6 +340,11 @@ def validate_state(state: CampaignState) -> None:
                 and all(vid in state.vehicles for vid in operation.vehicle_ids), "작전 차량 참조 오류")
         require(len(set(operation.unit_ids)) == len(operation.unit_ids)
                 and all(uid in state.units for uid in operation.unit_ids), "작전 병력 참조 오류")
+        if operation.kind in TROOP_TRANSPORTS:
+            require(len(operation.vehicle_ids) == len(operation.unit_ids) == 1
+                    and state.units[operation.unit_ids[0]].mobile
+                    and state.vehicles[operation.vehicle_ids[0]].troop_seats >= state.units[operation.unit_ids[0]].soldiers,
+                    "병력 수송 차량·좌석 불일치")
         require(all(node in state.nodes for node in operation.route), "작전 경로 노드 누락")
         require(type(operation.edge_index) is int and operation.edge_index >= 0, "잘못된 경로 순번")
         require(math.isfinite(operation.progress_m) and operation.progress_m >= 0, "잘못된 이동 진행도")

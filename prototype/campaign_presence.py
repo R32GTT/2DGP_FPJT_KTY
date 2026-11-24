@@ -3,7 +3,7 @@
 from collections import defaultdict
 import math
 
-from campaign.models import FOOT_OPERATIONS, Position
+from campaign.models import FOOT_OPERATIONS, QRF_OPERATIONS, Position
 from campaign.resources import available, issue_ammunition
 from campaign.routes import position
 from .ai_state import Brain, Incident
@@ -264,7 +264,7 @@ class CampaignPresence:
         if self._orders_at != state.world_time:
             self._orders_at = state.world_time
             self.completed = [operation for operation in state.operations.values()
-                              if operation.kind == "qrf" and operation.phase == "completed" and operation.report_xy is not None
+                              if operation.kind in QRF_OPERATIONS and operation.phase == "completed" and operation.report_xy is not None
                               and seconds - operation.completed_at <= COMBAT_ALERT_SECONDS]
             active = {operation.id for operation in self.completed}
             self.received = {key for key in self.received if key[0] in active}

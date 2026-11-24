@@ -5,8 +5,8 @@ import math
 
 from . import clock
 from .logistics import plan_exports, plan_supplies
-from .models import FOOT_OPERATIONS, CampaignState, Event
-from .qrf import dispatch_response, external_support_link
+from .models import FOOT_OPERATIONS, QRF_OPERATIONS, TROOP_TRANSPORTS, CampaignState, Event
+from .qrf import dispatch_response, external_support_link, plan_redeployments, regional_command
 from .repair import WORK_SECONDS, finish_repair, plan_repairs, queue_repairs
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
                         finish_relocation, finish_return, handover, owner, remove)
@@ -54,10 +54,11 @@ class Simulation:
                         operation.waiting_reason = "origin_unavailable"
                     else:
                         finish_return(state, operation_id)
-                elif operation.kind in FOOT_OPERATIONS:
+                elif operation.kind in FOOT_OPERATIONS | TROOP_TRANSPORTS:
                     target = state.facilities[operation.destination_id]
                     region = state.regions[target.region_id]
-                    if (region.owner == "enemy" and (operation.kind != "withdrawal"
+                    if (region.owner == "enemy" and (operation.kind not in TROOP_TRANSPORTS or target.damage < 100)
+                            and (operation.kind != "withdrawal"
                             or (region.control_state == "occupied" and target.damage < 100))):
                         finish_relocation(state, operation)
                     else:
@@ -80,6 +81,7 @@ class Simulation:
         state = self.state
         operation = state.operations.get(event.operation_id)
         if event.kind == "planning":
+            plan_redeployments(state)
             plan_supplies(state)
             plan_exports(state)
             clock.schedule(state, state.world_time + state.rules["planning_period_s"], "planning")
@@ -103,7 +105,7 @@ class Simulation:
                 if operation.kind != "export":
                     destination = state.facilities[operation.destination_id]
                     invalid = (state.regions[destination.region_id].owner != "enemy"
-                               or (operation.kind == "supply" and destination.damage == 100))
+                               or (operation.kind in TROOP_TRANSPORTS | {"supply"} and destination.damage == 100))
                     if operation.kind == "withdrawal":
                         invalid |= state.regions[destination.region_id].control_state != "occupied" or destination.damage == 100
                 if operation.origin_id != state.source.id:
@@ -113,11 +115,17 @@ class Simulation:
                         invalid |= origin_region.withdrawal_started_at is None
                     else:
                         invalid |= origin.damage == 100
-                if operation.kind == "qrf":
+                if operation.kind in QRF_OPERATIONS:
                     destination = state.facilities[operation.destination_id]
                     invalid |= (operation.origin_id == state.source.id
                                 or not external_support_link(state, origin.region_id)
                                 or not external_support_link(state, destination.region_id))
+                elif operation.kind == "redeployment":
+                    invalid |= (not regional_command(state, origin.region_id)
+                                or not regional_command(state, destination.region_id)
+                                or (origin.region_id != destination.region_id
+                                    and not all(external_support_link(state, key)
+                                                for key in (origin.region_id, destination.region_id))))
                 if invalid:
                     cancel(state, operation.id)
                 elif self.departure_ready is not None and not self.departure_ready(operation):
@@ -254,7 +262,7 @@ class Simulation:
             if facility.damage == 100:
                 for operation in list(state.operations.values()):
                     if ((operation.origin_id == facility.id and operation.kind != "withdrawal")
-                            or (operation.destination_id == facility.id and operation.kind == "supply")):
+                            or (operation.destination_id == facility.id and operation.kind in TROOP_TRANSPORTS | {"supply"})):
                         cancel(state, operation.id)
                 if destroy_inventory and any(facility.inventory.values()):
                     remove(state, facility.inventory, facility.inventory, outcome="destroyed", owner_id=facility.id)
@@ -344,6 +352,10 @@ class Simulation:
                     if not soldiers:
                         operation.completed_at = state.world_time
                     self._moving.discard(operation.id)
+                elif operation.kind in TROOP_TRANSPORTS and not soldiers:
+                    operation.phase = "stranded"
+                    operation.waiting_reason = "no_driver"
+                    self._moving.discard(operation.id)
                 elif operation.kind == "repair" and not soldiers:
                     operation.phase = "stranded"
                     operation.waiting_reason = "no_workers"
@@ -352,7 +364,8 @@ class Simulation:
                     operation.phase = "stranded"
                     operation.waiting_reason = "no_driver"
                     self._moving.discard(operation.id)
-                elif (soldiers < state.rules["escort_soldiers"] * len(vehicles)
+                elif (operation.kind not in TROOP_TRANSPORTS
+                      and soldiers < state.rules["escort_soldiers"] * len(vehicles)
                       and operation.waiting_reason != "driver_down"
                       and operation.phase in {"outbound", "unloading"}):
                     request_return(state, operation)

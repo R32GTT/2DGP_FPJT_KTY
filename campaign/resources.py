@@ -2,7 +2,8 @@
 
 import math
 
-from .models import FOOT_OPERATIONS, CampaignState, Operation, Reservation, RESOURCE_TYPES, stock, validate_state
+from .models import (FOOT_OPERATIONS, TROOP_TRANSPORTS, CampaignState, Operation, Reservation, RESOURCE_TYPES,
+                     stock, validate_state)
 
 
 TERMINAL_PHASES = {"completed", "cancelled", "destroyed"}
@@ -44,9 +45,10 @@ def reserve(state: CampaignState, operation: Operation, cargo: dict[str, int],
     if operation.id in state.operations or operation.phase != "loading":
         raise ValueError("이미 존재하거나 예약할 수 없는 작전")
     on_foot = operation.kind in FOOT_OPERATIONS
+    troop_transport = operation.kind in TROOP_TRANSPORTS
     if (origin.node_id != operation.home_node
             or (on_foot and (operation.vehicle_ids or not operation.unit_ids))
-            or (not on_foot and not sum(cargo.values()))):
+            or (not on_foot and not troop_transport and not sum(cargo.values()))):
         raise ValueError("출발 위치 또는 화물 오류")
     if (len(set(operation.vehicle_ids)) != len(operation.vehicle_ids)
             or len(set(operation.unit_ids)) != len(operation.unit_ids)):
@@ -59,9 +61,14 @@ def reserve(state: CampaignState, operation: Operation, cargo: dict[str, int],
     if sum(cargo.values()) + sum(provisions.values()) > capacity:
         raise ValueError("차량 적재량 초과")
     soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
-    if soldiers < state.rules["escort_soldiers"] * len(operation.vehicle_ids):
+    if troop_transport:
+        if (len(operation.vehicle_ids) != 1 or len(operation.unit_ids) != 1
+                or not state.units[operation.unit_ids[0]].mobile
+                or not 0 < soldiers <= state.vehicles[operation.vehicle_ids[0]].troop_seats):
+            raise ValueError("수송할 병력 또는 좌석 부족")
+    elif soldiers < state.rules["escort_soldiers"] * len(operation.vehicle_ids):
         raise ValueError("호위 병력 부족")
-    if not on_foot and any(not state.units[uid].can_escort for uid in operation.unit_ids):
+    if not on_foot and not troop_transport and any(not state.units[uid].can_escort for uid in operation.unit_ids):
         raise ValueError("시설 경계 병력은 수송 호위에 배정할 수 없음")
     if operation.origin_id == state.source.id:
         nodes, required = {state.source.node_id}, state.source.minimum_garrison
@@ -125,8 +132,9 @@ def depart(state: CampaignState, operation_id: str) -> bool:
     escorts = sum(state.units[uid].soldiers for uid in operation.unit_ids)
     remaining = sum(u.soldiers for u in state.units.values()
                     if u.node_id in nodes and u.status == "available")
+    required_crew = 1 if operation.kind in TROOP_TRANSPORTS else state.rules["escort_soldiers"] * len(operation.vehicle_ids)
     if ((operation.kind != "withdrawal" and remaining < required)
-            or escorts < state.rules["escort_soldiers"] * len(operation.vehicle_ids)
+            or escorts < required_crew
             or (operation.kind in FOOT_OPERATIONS and not escorts)
             or any(a.status != "reserved" or a.operation_id != operation.id
                    for a in _assets(state, operation))):
@@ -251,13 +259,17 @@ def finish_return(state: CampaignState, operation_id: str) -> bool:
 
 def finish_relocation(state: CampaignState, operation: Operation) -> None:
     """도착한 부대를 목적지의 실제 주둔 병력으로 편입한다."""
-    soldiers = 0
-    for unit in _assets(state, operation):
-        if unit.status != "destroyed":
-            soldiers += unit.soldiers
-            unit.node_id, unit.operation_id, unit.status = operation.destination_node, None, "available"
+    soldiers = sum(state.units[key].soldiers for key in operation.unit_ids)
+    for asset in _assets(state, operation):
+        if asset.status != "destroyed":
+            asset.node_id, asset.operation_id, asset.status = operation.destination_node, None, "available"
+    destination = state.facilities[operation.destination_id]
+    for name in RESOURCE_TYPES:
+        destination.inventory[name] += operation.cargo[name] + operation.provisions[name]
+        operation.cargo[name] = operation.provisions[name] = 0
     operation.phase = "completed"
-    operation.completed_at = state.world_time
+    operation.waiting_reason = ""
+    operation.delivered_at = operation.completed_at = state.world_time
     state.record(f"{operation.kind}_arrived", operation_id=operation.id, facility_id=operation.destination_id,
                  soldiers=soldiers)
 
