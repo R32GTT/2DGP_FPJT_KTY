@@ -34,6 +34,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
         controls.map_open = map_open
         camera.follow(simulation.player.xy)
         previous, accumulator, count = perf_counter(), 0.0, 0
+        frame_deadline = previous
         last_step_s = FIXED_DT
         stack_previewed = False
         while controls.running and (not frames or count < frames):
@@ -147,8 +148,14 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             renderer.render(simulation, camera, debug=controls.debug, paused=controls.paused,
                             update_ms=update_ms, mouse=controls.mouse, map_open=map_open)
             count += 1
-            # VSync가 없는 환경에서도 무제한 바쁜 루프가 되지 않게 한다.
-            sleep(max(0, FIXED_DT - (perf_counter() - started)))
+            # 대기가 길어진 오차를 다음 프레임에 누적하지 않는다.
+            frame_deadline += FIXED_DT
+            now = perf_counter()
+            remaining = frame_deadline - now
+            if remaining > 0:
+                sleep(remaining)
+            elif remaining < -FIXED_DT:
+                frame_deadline = now
     finally:
         if renderer is not None:
             renderer.close()
