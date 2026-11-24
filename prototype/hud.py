@@ -1,7 +1,9 @@
 """캐시된 글자·단계 진행 막대·상태 카드. 게임 상태를 변경하지 않는다."""
 
-import os
+import ctypes
+from dataclasses import dataclass
 import math
+import os
 from itertools import chain
 from pathlib import Path
 from time import perf_counter
@@ -29,11 +31,23 @@ SEARCH_VISIBLE = (255, 108, 98)
 SEARCH_OCCLUDED = (255, 215, 83)
 SEARCH_OUTSIDE = (203, 210, 206)
 
+
+@dataclass
+class Label:
+    style: tuple
+    width: int
+    height: int
+    raster_size: int = 0
+    image: pico.Image | None = None
+
+
 class HUD:
     def __init__(self, backend):
         self.backend = backend
-        path = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf"
-        self.fonts = {size: pico.load_font(str(path), size) for size in (13, 16, 24)}
+        self.font_path = str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf")
+        self.fonts = {size: pico.load_font(self.font_path, size) for size in (13, 16, 24)}
+        self.scaled_fonts = {}
+        self.text_scale = 1.0
         self.labels = {}
         self.next_update = 0.0
         self.next_debug_update = 0.0
@@ -48,19 +62,55 @@ class HUD:
         if not text:
             self.labels.pop(key, None)
             return
-        if key in self.labels and self.labels[key][0] == text:
+        style = text, size, color
+        cached = self.labels.get(key)
+        if cached is not None and cached.style == style:
             return
-        backend = self.backend
-        surface = backend.TTF_RenderUTF8_Blended(self.fonts[size].font, text.encode("utf-8"), backend.SDL_Color(*color))
-        texture = backend.SDL_CreateTextureFromSurface(backend.renderer, surface)
-        backend.SDL_FreeSurface(surface)
-        if not texture:
-            raise RuntimeError("HUD 텍스처 생성 실패")
-        self.labels[key] = text, pico.Image(texture)
+        width, height = ctypes.c_int(), ctypes.c_int()
+        if self.backend.TTF_SizeUTF8(self.fonts[size].font, text.encode("utf-8"),
+                                     ctypes.byref(width), ctypes.byref(height)) < 0:
+            raise RuntimeError("HUD 글자 크기 측정 실패")
+        self.labels[key] = Label(style, width.value, height.value)
+
+    def _update_text_scale(self, camera):
+        width, height = ctypes.c_int(), ctypes.c_int()
+        if self.backend.SDL_GetRendererOutputSize(self.backend.renderer,
+                                                   ctypes.byref(width), ctypes.byref(height)) < 0:
+            return
+        if width.value <= 0 or height.value <= 0:
+            return
+        scale = min(width.value / camera.width, height.value / camera.height)
+        # 작은 창 크기 변화마다 새 글꼴과 텍스처를 만들지 않는다.
+        bucket = max(1.0, math.ceil(scale * 4) / 4)
+        if bucket != self.text_scale:
+            for font in self.scaled_fonts.values():
+                self.backend.TTF_CloseFont(font.font)
+            self.scaled_fonts.clear()
+            self.text_scale = bucket
 
     def text(self, key, x, y):
-        image = self.labels[key][1]
-        image.draw(x + image.w / 2, y)
+        backend = self.backend
+        label = self.labels[key]
+        text, size, color = label.style
+        raster_size = math.ceil(size * self.text_scale)
+        if label.raster_size != raster_size:
+            font = self.fonts.get(raster_size) or self.scaled_fonts.get(raster_size)
+            if font is None:
+                font = self.scaled_fonts[raster_size] = pico.load_font(self.font_path, raster_size)
+            surface = backend.TTF_RenderUTF8_Blended(font.font, text.encode("utf-8"), backend.SDL_Color(*color))
+            if not surface:
+                raise RuntimeError("HUD 글자 그리기 실패")
+            try:
+                texture = backend.SDL_CreateTextureFromSurface(backend.renderer, surface)
+            finally:
+                backend.SDL_FreeSurface(surface)
+            if not texture:
+                raise RuntimeError("HUD 텍스처 생성 실패")
+            backend.SDL_SetTextureScaleMode(texture, backend.SDL_ScaleModeLinear)
+            label.image, label.raster_size = pico.Image(texture), raster_size
+        destination = backend.SDL_FRect(x, pico.get_canvas_height() - y - label.height / 2,
+                                        label.width, label.height)
+        backend.SDL_RenderCopyF(backend.renderer, label.image.texture, None, destination)
 
     @staticmethod
     def panel(x, y, w, h):
@@ -299,7 +349,7 @@ class HUD:
             self._draw_notice("game_notice", center, 69 if prompt else 29)
 
     def _draw_notice(self, key, center, y):
-        half_width = self.labels[key][1].w / 2
+        half_width = self.labels[key].width / 2
         pico.draw_rectangle(center - half_width - 12, y - 15, center + half_width + 12, y + 15,
                             15, 24, 27, 218, filled=True)
         self.text(key, center - half_width, y)
@@ -309,7 +359,7 @@ class HUD:
             x, y = point(*site["position"])
             marker = f"respawn_marker/{number}"
             self.label(marker, str(number), 16, (17, 28, 31))
-            half_width = self.labels[marker][1].w / 2
+            half_width = self.labels[marker].width / 2
             pico.draw_rectangle(x - 10, y - 10, x + 10, y + 10, 118, 215, 191, filled=True)
             self.text(marker, x - half_width, y)
             stored = simulation.safehouse_stash.get(site["id"])
@@ -320,6 +370,7 @@ class HUD:
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
                cache_count=0, search_counts=None):
+        self._update_text_scale(camera)
         now = perf_counter()
         self._track_message(simulation, now)
         if now >= self.next_update:
@@ -567,6 +618,7 @@ class HUD:
         self._map_batches.clear()
         self._map_world = None
         self.labels.clear()
-        for font in self.fonts.values():
+        for font in chain(self.fonts.values(), self.scaled_fonts.values()):
             self.backend.TTF_CloseFont(font.font)
         self.fonts.clear()
+        self.scaled_fonts.clear()
