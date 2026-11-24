@@ -258,7 +258,7 @@ class PlaySimulation:
         for actor in previous:
             if actor.id not in active:
                 self.ai.cancel_radio(actor, self.time, "unavailable")
-        if self.presence:
+        if self.presence and not self.campaign_complete:
             self.presence.sync_role_losses()
             self.presence.receive_orders(self.time)
 
@@ -326,6 +326,10 @@ class PlaySimulation:
         weights = {"combat": 1.0, "radio": 0.85, "search": 0.65, "combat_guard": 0.55, "alert": 0.4, "retreat": 0.8}
         return max((weights.get(actor.state, 0) for actor in self.guards
                     if actor.hp > 0 and math.dist(actor.xy, self.player.xy) < 24), default=0.0)
+
+    @property
+    def campaign_complete(self):
+        return self.campaign.simulation.state.completed_at is not None
 
     @property
     def lighting_time(self):
@@ -467,6 +471,8 @@ class PlaySimulation:
 
     def step(self, direction=(0, 0), aim=None, firing=False, sprint=False, *, aiming=False,
              trigger_pressed=False, walking=False, aim_offset=None):
+        if self.campaign_complete:
+            return
         if self.respawn_target is not None:
             current = self.campaign.simulation.state.world_time
             self.campaign.simulation.advance_to(min(self.respawn_target, current + 60))

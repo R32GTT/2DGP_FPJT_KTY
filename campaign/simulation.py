@@ -30,6 +30,9 @@ class Simulation:
         state = self.state
         if type(world_time) is not int or world_time < state.world_time:
             raise ValueError("목표 시각은 현재 이후의 정수 초여야 함")
+        if self._finish_if_occupied():
+            assert_invariants(state)
+            return
         if not state.started:
             state.started = True
             clock.schedule(state, state.world_time, "planning")
@@ -37,8 +40,15 @@ class Simulation:
                            "consumption", priority=clock.CONSUMPTION)
             clock.schedule(state, state.world_time + state.demand.period_s,
                            "demand", priority=clock.DEMAND)
-        clock.advance_to(state, world_time, self._handle_event, tick=self._tick)
+        clock.advance_to(state, world_time, self._handle_event, tick=self._tick, stop=self._finish_if_occupied)
         assert_invariants(state)
+
+    def _finish_if_occupied(self):
+        state = self.state
+        if state.completed_at is None and state.regions and all(region.owner == "player" for region in state.regions.values()):
+            state.completed_at = state.world_time
+            state.record("campaign_completed")
+        return state.completed_at is not None
 
     def _tick(self) -> None:
         state = self.state
@@ -233,6 +243,8 @@ class Simulation:
 
     def apply_action(self, action: dict):
         state = self.state
+        if state.completed_at is not None:
+            raise ValueError("종료된 캠페인")
         result = None
         kind = action["type"]
         if kind == "block_road":

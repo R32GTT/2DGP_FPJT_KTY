@@ -115,7 +115,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     else:
                         controls.debug = controls.paused = True
                     continue
-                if not controls.paused:
+                if not controls.paused and not simulation.campaign_complete:
                     if action == "inventory":
                         if simulation.player.hp > 0 and not simulation.respawn_selecting:
                             controls.inventory_open = not controls.inventory_open
@@ -181,7 +181,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             if not interface_open:
                 aim_x, aim_y = camera.world(*controls.mouse)
                 aim_offset = aim_x - simulation.player.position.x, aim_y - simulation.player.position.y
-            if controls.paused:
+            if controls.paused or simulation.campaign_complete:
                 accumulator = 0.0
                 controls.trigger_pending = False
             else:

@@ -8,8 +8,7 @@ from .interactions import nearby_facility
 
 
 OPERATION_NAMES = {"supply": "보급 수송", "export": "외부 출하", "repair": "시설 복구", "equipment": "장비 수송",
-                   "redeployment": "병력 재배치", "motor_qrf": "차량 증원", "qrf": "도보 증원", "withdrawal": "철수",
-                   "recapture": "탈환 수송"}
+                   "redeployment": "병력 재배치", "motor_qrf": "차량 증원", "qrf": "도보 증원", "withdrawal": "철수"}
 
 
 @dataclass(frozen=True)
@@ -42,7 +41,7 @@ def collect(play):
         departures = {event.operation_id: event.time for event in state.events if event.kind == "depart"}
         count = 0
         for operation in state.operations.values():
-            if (operation.phase not in {"loading", "outbound", "unloading", "working"}
+            if (operation.kind not in OPERATION_NAMES or operation.phase not in {"loading", "outbound", "unloading", "working"}
                     or key not in {operation.origin_id, operation.destination_id}):
                 continue
             note = play.operation_notes.get(operation.id, OperationNote(operation.id))

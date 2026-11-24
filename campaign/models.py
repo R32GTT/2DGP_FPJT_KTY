@@ -205,6 +205,7 @@ class CampaignState:
     next_sequence: int = 0
     rng_state: tuple = ()
     started: bool = False
+    completed_at: int | None = None
     operations: dict[str, Operation] = field(default_factory=dict)
     reservations: dict[str, Reservation] = field(default_factory=dict)
     events: list[Event] = field(default_factory=list)
@@ -241,6 +242,10 @@ def validate_state(state: CampaignState) -> None:
 
     require(state.source.mode in {"finite", "infinite"}, "잘못된 외부 지원 모드")
     require(type(state.world_time) is int and state.world_time >= 0, "잘못된 세계 시각")
+    if state.completed_at is not None:
+        require(type(state.completed_at) is int and state.completed_at == state.world_time
+                and bool(state.regions) and all(region.owner == "player" for region in state.regions.values()),
+                "캠페인 종료 판정과 지역 소유권 불일치")
     require(type(state.seed) is int and type(state.started) is bool, "잘못된 시드·시작 상태")
     require(type(state.rules_version) is int and state.rules_version == RULES_VERSION,
             "지원하지 않는 규칙 버전")

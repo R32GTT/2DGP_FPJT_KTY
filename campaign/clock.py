@@ -35,18 +35,24 @@ def drain_events(state: CampaignState, handler: Callable[[Event], None]) -> None
 
 
 def advance_to(state: CampaignState, target: int, handler: Callable[[Event], None],
-               *, tick: Callable[[], None] | None = None) -> None:
+               *, tick: Callable[[], None] | None = None, stop: Callable[[], bool] | None = None) -> None:
     if type(target) is not int or target < state.world_time:
         raise ValueError("목표 시각은 현재 이후의 정수 초여야 함")
     drain_events(state, handler)
+    if stop is not None and stop():
+        return
     if tick is not None:
         # 일반 진행과 스킵이 같은 1초 이동·사건 순서를 사용한다.
         while state.world_time < target:
             state.world_time += 1
             tick()
             drain_events(state, handler)
+            if stop is not None and stop():
+                return
     else:
         while state.events and state.events[0].time <= target:
             state.world_time = state.events[0].time
             drain_events(state, handler)
+            if stop is not None and stop():
+                return
         state.world_time = target
