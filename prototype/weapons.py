@@ -1,12 +1,47 @@
 """총기 정의와 재개 가능한 재장전 상태. 입력·그리기·오디오에 의존하지 않는다."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import math
 from pathlib import Path
 
 
 STAGE_NAMES = {"remove_magazine": "탄창 빼기", "insert_magazine": "탄창 끼우기", "bolt_catch": "볼트캐치"}
+DATA = Path(__file__).parent / "data"
+SLOTS = ("muzzle", "optic", "magazine")
+WEAPON_CATEGORIES = ("pistol", "rifle", "shotgun", "sniper", "machine_gun")
+
+
+@dataclass(frozen=True)
+class AttachmentSpec:
+    id: str
+    name: str
+    slot: str
+    weight: float
+    noise_radius_multiplier: float = 1.0
+    sound_strength_multiplier: float = 1.0
+    aim_multiplier: float = 1.0
+    look_multiplier: float = 1.0
+    capacity_multiplier: float = 1.0
+    reload_multiplier: float = 1.0
+
+    def __post_init__(self):
+        values = (self.weight, self.noise_radius_multiplier, self.sound_strength_multiplier,
+                  self.aim_multiplier, self.look_multiplier, self.capacity_multiplier, self.reload_multiplier)
+        if (not isinstance(self.id, str) or not self.id or not isinstance(self.name, str) or not self.name
+                or self.slot not in SLOTS or any(not _finite_number(value) or value <= 0 for value in values)
+                or min(self.look_multiplier, self.capacity_multiplier, self.reload_multiplier) < 1
+                or max(self.aim_multiplier, self.sound_strength_multiplier, self.noise_radius_multiplier) > 1):
+            raise ValueError(f"부착물 데이터 오류: {self.id}")
+
+
+def load_attachments():
+    rows = json.loads((DATA / "attachments.json").read_text(encoding="utf-8"))
+    parts = [AttachmentSpec(**row) for row in rows]
+    result = {part.id: part for part in parts}
+    if len(result) != len(parts):
+        raise ValueError("중복 부착물 ID")
+    return result
 
 
 @dataclass(frozen=True)
@@ -47,18 +82,28 @@ class WeaponSpec:
     move_spread_deg_per_mps: float = 0.15
     sprint_spread_multiplier: float = 3.0
     enemy_spread_multiplier: float = 8.0
+    category: str = "rifle"
+    weight: float = 3.2
+    pellets: int = 1
+    pellet_spread_deg: float = 0.0
+    suppression_multiplier: float = 1.0
+    compatible: tuple[AttachmentSpec, ...] = ()
+    issue_roles: tuple[str, ...] = ()
 
     def __post_init__(self):
         positive = (self.fire_interval, self.range_m, self.noise_radius, self.reload_move_multiplier,
                     self.spread_max_deg, self.spread_recovery_deg_per_s, self.aim_spread_multiplier,
-                    self.aim_settle_s, self.sprint_spread_multiplier, self.enemy_spread_multiplier)
+                    self.aim_settle_s, self.sprint_spread_multiplier, self.enemy_spread_multiplier,
+                    self.weight, self.suppression_multiplier)
         nonnegative = (self.spread_degrees, self.spread_per_shot_deg, self.spread_recovery_delay_s,
-                       self.move_spread_deg_per_mps)
+                       self.move_spread_deg_per_mps, self.pellet_spread_deg)
         integers = (self.capacity, self.reserve, self.damage, self.penetration)
         if (not isinstance(self.id, str) or not self.id.strip()
                 or not isinstance(self.name, str) or not self.name.strip()
                 or not isinstance(self.ammo_type, str) or not isinstance(self.image, str)
                 or type(self.automatic) is not bool
+                or self.category not in WEAPON_CATEGORIES or type(self.pellets) is not int
+                or not 1 <= self.pellets <= 16 or self.pellet_spread_deg >= 90
                 or any(type(value) is not int for value in integers)
                 or self.capacity <= 0 or self.reserve < 0 or self.damage <= 0 or self.penetration < 0
                 or any(not _finite_number(value) or value <= 0 for value in positive)
@@ -104,22 +149,30 @@ def _finite_number(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
-def load_weapons(path=None):
-    path = Path(path) if path else Path(__file__).parent / "data" / "weapons.json"
+def load_weapons(path=None, *, attachments=None):
+    path = Path(path) if path else DATA / "weapons.json"
     try:
+        parts = load_attachments() if attachments is None else attachments
         rows = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(rows, list) or not rows:
             raise ValueError("총기 목록은 비어 있지 않은 배열이어야 함")
         result = {}
+        roles = set()
         for row in rows:
             row = dict(row)
             row["reload_stages"] = tuple(ReloadStage(**stage) for stage in row["reload_stages"])
             for name in ("size_m", "mount", "grip", "muzzle"):
                 row[name] = tuple(row[name])
             row["damage_curve"] = tuple(tuple(point) for point in row.get("damage_curve", ()))
+            row["compatible"] = tuple(parts[key] for key in row.get("compatible", ()))
+            row["issue_roles"] = tuple(row.get("issue_roles", ()))
             spec = WeaponSpec(**row)
             if spec.id in result:
                 raise ValueError(f"중복 총기 ID: {spec.id}")
+            if (len(set(spec.issue_roles)) != len(spec.issue_roles)
+                    or any(not isinstance(role, str) or not role or role in roles for role in spec.issue_roles)):
+                raise ValueError(f"중복 또는 잘못된 지급 역할: {spec.id}")
+            roles.update(spec.issue_roles)
             result[spec.id] = spec
         return result
     except (OSError, KeyError, TypeError, ValueError) as exc:
@@ -143,6 +196,13 @@ class WeaponState:
     bloom_deg: float = 0.0
     recovery_delay: float = 0.0
     movement_spread_deg: float = 0.0
+    attachments: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not isinstance(self.attachments, dict) or any(
+                not any(part.id == key and part.slot == slot for part in self.spec.compatible)
+                for slot, key in self.attachments.items()):
+            raise ValueError("총기에 호환되지 않는 부착물")
 
     @classmethod
     def ready(cls, spec):
@@ -152,16 +212,49 @@ class WeaponState:
     def ammo(self):
         return self.magazine + int(self.chambered)
 
+    def part(self, slot):
+        key = self.attachments.get(slot)
+        return next((part for part in self.spec.compatible if part.id == key), None) if key else None
+
+    @property
+    def capacity(self):
+        magazine = self.part("magazine")
+        return max(self.spec.capacity, round(self.spec.capacity * magazine.capacity_multiplier)) if magazine else self.spec.capacity
+
+    @property
+    def look_multiplier(self):
+        optic = self.part("optic")
+        return optic.look_multiplier if optic else 1.0
+
+    def reload_duration(self, index):
+        magazine = self.part("magazine")
+        return self.spec.reload_stages[index].duration * (magazine.reload_multiplier if magazine else 1.0)
+
+    def change_attachment(self, slot, part=None):
+        if self.stage or self.reloading or slot not in SLOTS:
+            raise ValueError("재장전 중이거나 유효하지 않은 부착물 슬롯")
+        if part is not None and (part.slot != slot or part not in self.spec.compatible):
+            raise ValueError("호환되지 않는 부착물")
+        previous = self.attachments.pop(slot, None)
+        if part is not None:
+            self.attachments[slot] = part.id
+        overflow = max(0, self.magazine - self.capacity)
+        self.magazine -= overflow
+        self.reserve += overflow
+        return previous
+
     @property
     def remaining_reload(self):
         if not self.reloading and self.stage == 0:
             return 0.0
         end = 2 if self.chambered else 3
-        return max(0.0, sum(stage.duration for stage in self.spec.reload_stages[self.stage:end]) - self.stage_elapsed)
+        return max(0.0, sum(self.reload_duration(index) for index in range(self.stage, end)) - self.stage_elapsed)
 
     @property
     def spread_deg(self):
-        aim_scale = 1.0 - self.aim_progress * (1.0 - self.spec.aim_spread_multiplier)
+        optic = self.part("optic")
+        aim = self.spec.aim_spread_multiplier * (optic.aim_multiplier if optic else 1.0)
+        aim_scale = 1.0 - self.aim_progress * (1.0 - aim)
         return min(self.spec.spread_max_deg,
                    (self.spec.spread_degrees + self.bloom_deg) * aim_scale + self.movement_spread_deg)
 
@@ -176,10 +269,10 @@ class WeaponState:
     def _stage_signal(self):
         definition = self.spec.reload_stages[self.stage]
         return {"kind": "reload_step_started", "stage": definition.id,
-                "duration": definition.duration, "noise_radius": definition.noise_radius}
+                "duration": self.reload_duration(self.stage), "noise_radius": definition.noise_radius}
 
     def start_reload(self):
-        if self.reloading or (self.stage == 0 and self.magazine == self.spec.capacity and self.chambered):
+        if self.reloading or (self.stage == 0 and self.magazine == self.capacity and self.chambered):
             return []
         if self.stage == 0:
             if not self.chambered and self.magazine_attached and self.magazine > 0:
@@ -206,17 +299,18 @@ class WeaponState:
         signals = []
         while self.reloading and dt > 1e-10:
             definition = self.spec.reload_stages[self.stage]
-            consumed = min(dt, definition.duration - self.stage_elapsed)
+            duration = self.reload_duration(self.stage)
+            consumed = min(dt, duration - self.stage_elapsed)
             self.stage_elapsed += consumed
             dt -= consumed
-            if self.stage_elapsed + 1e-9 < definition.duration:
+            if self.stage_elapsed + 1e-9 < duration:
                 break
             # 완료 경계에서만 탄약·장착 상태를 이전한다. 취소가 이 결과를 되돌리지 않는다.
             if definition.id == "remove_magazine":
                 self.reserve += self.magazine
                 self.magazine, self.magazine_attached = 0, False
             elif definition.id == "insert_magazine":
-                amount = min(self.spec.capacity, self.reserve)
+                amount = min(self.capacity, self.reserve)
                 self.magazine, self.reserve = amount, self.reserve - amount
                 self.magazine_attached = True
             elif not self.chambered and self.magazine:

@@ -117,15 +117,28 @@ def hear(actor, memory, event, navigation, *, checked_sound_at):
     if radius <= 0 or distance > radius:
         return "out_of_range"
     priority = event.data.get("strength", 0.4) * (1 - distance / radius * 0.4)
-    memory.suspicion = min(1.0, memory.suspicion + priority)
     gunshot = event.data.get("reason") == "gunshot"
+    suppressed = gunshot and event.data.get("suppressed", False)
+    if suppressed and memory.suspicion < NOTICE_THRESHOLD:
+        if event.time - memory.sound_heard_at >= SOUND_MEMORY_SECONDS:
+            memory.suspicion = min(NOTICE_THRESHOLD - 0.01, memory.suspicion + priority)
+            memory.sound_heard_at = event.time
+            return "heard"
+    memory.suspicion = min(1.0, memory.suspicion + priority)
+    origin = event.position
+    if suppressed and distance:
+        # 억제 총성은 관측자 기준으로 거칠게 추정하며, 실제 발사 좌표는 기억에 기록하지 않는다.
+        dx, dy = origin[0] - actor.xy[0], origin[1] - actor.xy[1]
+        bearing = round(math.atan2(dy, dx) / (math.pi / 6)) * (math.pi / 6)
+        reach = max(1.5, round(distance / 3) * 3)
+        origin = actor.xy[0] + math.cos(bearing) * reach, actor.xy[1] + math.sin(bearing) * reach
     recent_gunshot = memory.gunshot_origin is not None and event.time - memory.sound_heard_at < SOUND_MEMORY_SECONDS
     if recent_gunshot:
         if not gunshot and memory.sound_at > checked_sound_at and priority < memory.sound_priority:
             return "lower_priority"
         # 비교 기준은 첫 총성의 위치다. 같은 구역의 총성은 조사 목표를 그대로 둔다.
-        nearby = (math.dist(event.position, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE
-                  and navigation.clear(memory.gunshot_origin, event.position, clearance=0))
+        nearby = (math.dist(origin, memory.gunshot_origin) <= GUNSHOT_REPLAN_DISTANCE
+                  and navigation.clear(memory.gunshot_origin, origin, clearance=0))
         if nearby:
             if not gunshot:
                 return "lower_priority"
@@ -137,11 +150,11 @@ def hear(actor, memory, event, navigation, *, checked_sound_at):
     if (not gunshot and not recent_gunshot and event.time - memory.sound_at < 2
             and priority < memory.sound_priority * 0.75):
         return "lower_priority"
-    point = _estimate_sound(event.position, distance, navigation)
+    point = _estimate_sound(origin, distance, navigation)
     if point is None:
         return "no_estimate"
     memory.last_sound = point
     memory.sound_at = memory.sound_heard_at = event.time
     memory.sound_priority = priority
-    memory.gunshot_origin = event.position if gunshot else None
+    memory.gunshot_origin = origin if gunshot else None
     return "new"

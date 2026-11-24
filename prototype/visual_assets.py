@@ -73,8 +73,13 @@ def actor_image(backend, player):
     return painted_image(backend, 48, 24, paint)
 
 
-def weapon_image(backend, alternate=False):
+def weapon_image(backend, alternate=False, category="rifle"):
     def paint(p):
+        if category == "pistol":
+            p.rect(3, 7, 48, 7, (62, 71, 71))
+            p.rect(11, 14, 15, 8, (35, 43, 45))
+            p.rect(20, 8, 31, 2, (151, 157, 143))
+            return
         p.rect(7, 9, 34, 5, (27, 33, 34))
         p.rect(34, 10, 23, 2, (161, 166, 154))
         p.rect(0, 8, 12, 8, (111, 106, 79) if alternate else (69, 85, 80))
@@ -82,6 +87,14 @@ def weapon_image(backend, alternate=False):
         p.rect(18, 6, 6, 3, (172, 177, 159))
         p.rect(19, 14, 5, 7, (37, 43, 42))
         p.rect(28, 9, 10, 5, (110, 112, 94))
+        if category == "shotgun":
+            p.rect(28, 7, 23, 9, (125, 91, 57))
+        elif category == "sniper":
+            p.rect(21, 4, 22, 7, (88, 103, 99))
+            p.rect(37, 10, 24, 3, (164, 173, 162))
+        elif category == "machine_gun":
+            p.rect(21, 13, 14, 10, (83, 91, 69))
+            p.rect(41, 7, 12, 9, (97, 106, 94))
     return painted_image(backend, 64, 24, paint)
 
 

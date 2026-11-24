@@ -71,6 +71,7 @@ class Combat:
             else:
                 continue
             # 탄도에서 대략적인 유입 방향만 얻는다.
+            strength *= shooter.weapon.spec.suppression_multiplier
             self.events.emit("pressure", time, actor, strength=strength, caliber=shooter.weapon.spec.damage,
                              incoming=math.atan2(-dy, -dx), hit=actor.id in damaged,
                              close=math.dist(actor.xy, start) <= 10)
@@ -109,7 +110,11 @@ class Combat:
         spec = weapon.spec
         self.shots += 1
         self.events.emit("weapon_fired", time, actor, weapon=spec.id)
-        self.events.emit("noise", time, actor, radius=spec.noise_radius, strength=0.8, reason="gunshot")
+        suppressor = weapon.part("muzzle")
+        radius = spec.noise_radius * (suppressor.noise_radius_multiplier if suppressor else 1.0)
+        strength = 0.8 * (suppressor.sound_strength_multiplier if suppressor else 1.0)
+        self.events.emit("noise", time, actor, radius=radius, strength=strength, reason="gunshot",
+                         suppressed=suppressor is not None)
         spread = weapon.shot_spread_deg * (spec.enemy_spread_multiplier if actor.team == "enemy" else 1)
         angle = actor.facing + math.radians(self.random.uniform(-spread, spread))
         muzzle = weapon_pose(actor)[1]
@@ -126,9 +131,21 @@ class Combat:
             self.traces.append(Tracer(actor.xy, point, actor.team))
             self.events.emit("impact", time, actor, surface=surface)
             return True
+        damaged = set()
+        for pellet in range(spec.pellets):
+            dispersion = math.radians(self.random.uniform(-spec.pellet_spread_deg, spec.pellet_spread_deg)) if pellet else 0
+            endpoint, impact = self._trace_round(actor, world, muzzle, angle + dispersion, time,
+                                                  targets, transports, damaged)
+            if pellet == 0:
+                pressure_end, pressure_impact = endpoint, impact
+        if actor.team == "player":
+            self._pressure(actor, world, muzzle, pressure_end, time, damaged, impact=pressure_impact)
+        return True
+
+    def _trace_round(self, actor, world, muzzle, angle, time, targets, transports, damaged):
+        spec = actor.weapon.spec
         end = (muzzle[0] + math.cos(angle) * spec.range_m, muzzle[1] + math.sin(angle) * spec.range_m)
         ignored_actors, ignored_walls, endpoint = {actor.id}, set(), end
-        damaged = set()
         impact = False
         vehicle_hit = transports.raycast(muzzle, end) if transports is not None else None
         for count in range(spec.penetration + 1):
@@ -164,6 +181,4 @@ class Combat:
                 endpoint = end
                 break
         self.traces.append(Tracer(muzzle, endpoint, actor.team))
-        if actor.team == "player":
-            self._pressure(actor, world, muzzle, endpoint, time, damaged, impact=impact)
-        return True
+        return endpoint, impact

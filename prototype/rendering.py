@@ -49,7 +49,7 @@ class Renderer:
         self.props = {kind: prop_image(self.backend, kind) for kind in ("cover", "desk", "rack", "bed", "antenna")}
         self.sprites = {key: self._image(f"assets/prototype/{key}.png") or actor_image(self.backend, key == "player")
                         for key in ("player", "guard")}
-        self.guns = {key: self._image(spec.image) or weapon_image(self.backend, key == "ar_b")
+        self.guns = {key: self._image(spec.image) or weapon_image(self.backend, key == "ar_b", spec.category)
                      for key, spec in load_weapons().items()}
         self.door = self._image("assets/prototype/door.png", "assets/generated/entities/door_door_wood_horizontal_64x32.png")
         self.vignette = self._image("assets/prototype/alert_vignette.png") or vignette_image(self.backend)

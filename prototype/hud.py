@@ -199,7 +199,7 @@ class HUD:
         self.label("stock", f"DEPOT {simulation.campaign.supplies}  /  확보 {simulation.campaign.simulation.state.player_stock['supplies']}", 13)
         self._update_ai(simulation)
         for index, (key, title) in enumerate(STAGE_NAMES.items()):
-            duration = weapon.spec.reload_stages[index].duration if weapon else 0
+            duration = weapon.reload_duration(index) if weapon else 0
             self.label(key, f"{index + 1} {title} {duration:g}s", 13)
         if weapon and (weapon.reloading or weapon.stage > 0):
             phase = STAGE_NAMES[weapon.spec.reload_stages[weapon.stage].id]
@@ -232,7 +232,7 @@ class HUD:
                 color, progress = (96, 182, 151), 1
             elif weapon and index == weapon.stage and (weapon.reloading or weapon.stage):
                 color = (227, 184, 104)
-                progress = weapon.stage_elapsed / weapon.spec.reload_stages[index].duration
+                progress = weapon.stage_elapsed / weapon.reload_duration(index)
             pico.draw_rectangle(x, 57, x + 116, 62, 43, 56, 52, filled=True)
             if progress:
                 pico.draw_rectangle(x, 57, x + 116 * progress, 62, *color, filled=True)
@@ -317,7 +317,7 @@ class HUD:
                 track = (118, 215, 191)
             pico.draw_rectangle(left, y + 8, left + segment, y + 11, *track, filled=True)
             if index == weapon.stage and weapon.stage_elapsed > 0:
-                progress = weapon.stage_elapsed / stage.duration
+                progress = weapon.stage_elapsed / weapon.reload_duration(index)
                 pico.draw_rectangle(left, y + 8, left + segment * progress, y + 11, *active_color, filled=True)
 
     def _track_message(self, simulation, now):

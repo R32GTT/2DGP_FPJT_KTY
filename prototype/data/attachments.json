@@ -1,0 +1,5 @@
+[
+  {"id":"suppressor","name":"소음기","slot":"muzzle","weight":0.35,"noise_radius_multiplier":0.42,"sound_strength_multiplier":0.32},
+  {"id":"combat_optic","name":"조준경","slot":"optic","weight":0.4,"aim_multiplier":0.72,"look_multiplier":1.35},
+  {"id":"extended_magazine","name":"대형 탄창","slot":"magazine","weight":0.45,"capacity_multiplier":1.35,"reload_multiplier":1.18}
+]

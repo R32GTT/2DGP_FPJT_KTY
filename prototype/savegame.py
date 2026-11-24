@@ -21,7 +21,8 @@ MAX_BYTES = 16 * 1024 * 1024
 
 
 def content_version():
-    paths = [ROOT / "prototype/data/campaign_setup.json", ROOT / "prototype/data/weapons.json"]
+    paths = [ROOT / "prototype/data/campaign_setup.json", ROOT / "prototype/data/weapons.json",
+             ROOT / "prototype/data/attachments.json"]
     paths += sorted((ROOT / "prototype/data/prefabs").glob("*.json"))
     digest = sha256()
     for path in paths:

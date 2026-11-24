@@ -1,7 +1,8 @@
 [
   {
     "id":"ar_a", "name":"AR-01", "capacity":30, "reserve":90,
-    "ammo_type":"", "automatic":true,
+    "ammo_type":"rifle", "category":"rifle", "automatic":true, "issue_roles":["patrol","escort"],
+    "compatible":["suppressor","combat_optic","extended_magazine"],
     "fire_interval":0.17, "damage":18, "range_m":60, "noise_radius":30,
     "damage_curve":[[0,18],[40,18],[60,0]],
     "spread_degrees":0.7, "penetration":1, "reload_move_multiplier":0.45, "image":"assets/prototype/rifle_a.png",
@@ -18,7 +19,8 @@
   },
   {
     "id":"ar_b", "name":"AR-02", "capacity":20, "reserve":60,
-    "ammo_type":"", "automatic":true,
+    "ammo_type":"rifle", "category":"rifle", "automatic":true, "weight":3.7, "issue_roles":["rifle_guard"],
+    "compatible":["suppressor","combat_optic","extended_magazine"],
     "fire_interval":0.23, "damage":25, "range_m":70, "noise_radius":36,
     "damage_curve":[[0,25],[50,25],[70,0]],
     "spread_degrees":0.5, "penetration":1, "reload_move_multiplier":0.35, "image":"assets/prototype/rifle_b.png",
@@ -35,9 +37,10 @@
   },
   {
     "id":"pistol_45", "name":".45 Pistol", "capacity":12, "reserve":48,
-    "ammo_type":".45 ACP", "automatic":false,
-    "fire_interval":0.2, "damage":70, "range_m":75, "noise_radius":30,
-    "damage_curve":[[0,70],[25,65],[50,50],[75,0]],
+    "ammo_type":"pistol", "category":"pistol", "automatic":false, "weight":0.9, "issue_roles":["officer","sidearm"],
+    "compatible":["suppressor","combat_optic","extended_magazine"],
+    "fire_interval":0.2, "damage":42, "range_m":35, "noise_radius":22,
+    "damage_curve":[[0,42],[8,39],[21,21],[35,0]],
     "spread_degrees":1.0, "penetration":0, "reload_move_multiplier":0.4,
     "spread_per_shot_deg":0.25, "spread_max_deg":3.0,
     "spread_recovery_delay_s":0.25, "spread_recovery_deg_per_s":2.0,
@@ -49,5 +52,44 @@
       {"id":"insert_magazine","duration":1.0,"noise_radius":2},
       {"id":"bolt_catch","duration":0.4,"noise_radius":4}
     ]
+  },
+  {
+    "id":"shotgun_12", "name":"SG-12", "category":"shotgun", "ammo_type":"shell", "weight":3.8,
+    "capacity":6, "reserve":24, "automatic":false, "fire_interval":0.68, "damage":18,
+    "range_m":37, "damage_curve":[[0,18],[8,17],[20,9],[37,0]],
+    "pellets":7, "pellet_spread_deg":5.8, "noise_radius":41, "spread_degrees":1.3,
+    "penetration":0, "reload_move_multiplier":0.42, "enemy_spread_multiplier":2.2,
+    "compatible":["suppressor","combat_optic","extended_magazine"], "issue_roles":["warehouse"],
+    "image":"assets/prototype/shotgun_12.png", "size_m":[0.99,0.24],
+    "mount":[0.08,0.1], "grip":[0.22,0.5], "muzzle":[0.98,0.5],
+    "reload_stages":[{"id":"remove_magazine","duration":0.65},{"id":"insert_magazine","duration":1.35},
+                     {"id":"bolt_catch","duration":0.65,"noise_radius":4}]
+  },
+  {
+    "id":"sniper_01", "name":"SR-01", "category":"sniper", "ammo_type":"precision", "weight":5.6,
+    "capacity":5, "reserve":20, "automatic":false, "fire_interval":1.05, "damage":86,
+    "range_m":110, "damage_curve":[[0,86],[62,84],[92,61],[110,0]],
+    "noise_radius":56, "spread_degrees":0.42, "spread_max_deg":4.0, "spread_per_shot_deg":1.3,
+    "aim_spread_multiplier":0.22, "aim_settle_s":0.7, "move_spread_deg_per_mps":0.55,
+    "penetration":2, "reload_move_multiplier":0.4, "enemy_spread_multiplier":3.0,
+    "compatible":["suppressor","combat_optic","extended_magazine"], "issue_roles":["watch"],
+    "image":"assets/prototype/sniper_01.png", "size_m":[1.23,0.23],
+    "mount":[0.08,0.1], "grip":[0.25,0.5], "muzzle":[0.98,0.5],
+    "reload_stages":[{"id":"remove_magazine","duration":0.65},{"id":"insert_magazine","duration":1.35},
+                     {"id":"bolt_catch","duration":0.85,"noise_radius":4}]
+  },
+  {
+    "id":"lmg_01", "name":"LMG-01", "category":"machine_gun", "ammo_type":"machine_gun", "weight":7.0,
+    "capacity":60, "reserve":120, "automatic":true, "fire_interval":0.115, "damage":23,
+    "range_m":72, "damage_curve":[[0,23],[36,21],[59,12],[72,0]],
+    "noise_radius":52, "spread_degrees":1.35, "spread_max_deg":7.0, "spread_per_shot_deg":0.55,
+    "move_spread_deg_per_mps":0.4, "suppression_multiplier":1.65,
+    "penetration":1, "reload_move_multiplier":0.32, "enemy_spread_multiplier":4.0,
+    "compatible":["suppressor","combat_optic","extended_magazine"], "issue_roles":["support"],
+    "image":"assets/prototype/lmg_01.png", "size_m":[1.08,0.28],
+    "mount":[0.08,0.1], "grip":[0.24,0.5], "muzzle":[0.98,0.5],
+    "reload_stages":[{"id":"remove_magazine","duration":0.95,"noise_radius":3},
+                     {"id":"insert_magazine","duration":2.1,"noise_radius":3},
+                     {"id":"bolt_catch","duration":0.8,"noise_radius":4}]
   }
 ]
