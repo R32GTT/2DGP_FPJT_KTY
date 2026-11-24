@@ -1,0 +1,4 @@
+# Install the complete project environment from the repository root.
+-r prototype/requirements.txt
+-r requirements-worldgen.txt
+-r maptool/requirements.txt

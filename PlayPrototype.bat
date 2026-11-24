@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
-if not exist ".venv\Scripts\python.exe" (
-    echo See prototype\README.md to prepare the virtual environment.
+call "%~dp0SetupEnvironment.bat"
+if errorlevel 1 (
     pause
     exit /b 1
 )

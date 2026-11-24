@@ -11,6 +11,22 @@
 
 ## 개발 환경
 
+게임은 **`PlayPrototype.bat`**를 실행한다. Windows용 64비트 Python 3.12 또는 3.13이 필요하다.
+실행기가 `.venv`를 생성하고 루트 `requirements.txt`의 게임·AI·그래픽·제작 도구 의존성을 설치한 뒤 통합 런처를 연다.
+Git pull로 의존성이 추가되거나 버전이 바뀌어도 다음 실행에 반영한다. 최초 설치나 의존성 갱신에는 인터넷 연결이 필요하다.
+이미 설치된 패키지는 재설치하지 않으며, 설치·검사 실패 시 게임을 열지 않고 오류를 표시한다.
+
+`.venv`는 생성한 PC의 Python 경로와 바이너리에 종속되므로 Git에 넣지 않는다.
+다른 PC에서도 저장소와 `requirements.txt`로 각자의 가상환경을 준비한다.
+수동 설치·갱신은 저장소 루트에서 `SetupEnvironment.bat`를 실행하거나 다음 명령을 사용한다.
+
+```powershell
+python -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+현재 배포 방식은 Python이 설치된 PC에서 실행하는 소스 배포다. Python 설치 없이 실행하는 독립 EXE는 아직 제공하지 않는다.
+
 캠페인은 Python 표준 라이브러리만 사용한다. Python 3.13.15에서 실행·검증했다.
 콘솔 실행과 테스트에는 Pico2D나 추가 패키지 설치가 필요하지 않다.
 아래 명령은 저장소 루트에서 실행한다.

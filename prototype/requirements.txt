@@ -1,4 +1,6 @@
 pico2d==1.5.1
+PySDL2==0.9.17
+PySDL2-DLL==2.32.10
 py_trees==2.6.0
 shapely==2.2.0
 numpy==2.5.5
