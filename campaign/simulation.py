@@ -11,15 +11,18 @@ from .repair import WORK_SECONDS, finish_repair, plan_repairs, queue_repairs
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
                         finish_relocation, finish_return, handover, owner, remove)
 from .routes import move_one_second, position, request_return, road_between, set_route
-from .territory import evaluate_regions
+from .territory import (can_secure_foothold, clear_foothold, evaluate_regions, finish_recapture, foothold_route_open,
+                        plan_recaptures, start_foothold)
 
 
 class Simulation:
-    def __init__(self, state: CampaignState, *, departure_ready=None, repair_ready=None, movement_ready=None):
+    def __init__(self, state: CampaignState, *, departure_ready=None, repair_ready=None, movement_ready=None,
+                 recapture_ready=None):
         self.state = state
         self.departure_ready = departure_ready
         self.repair_ready = repair_ready
         self.movement_ready = movement_ready
+        self.recapture_ready = recapture_ready
         self._moving = {op.id for op in state.operations.values()
                         if op.phase in {"outbound", "returning"}}
 
@@ -41,6 +44,9 @@ class Simulation:
         state = self.state
         for operation_id in sorted(self._moving):
             operation = state.operations[operation_id]
+            if (operation.kind == "recapture" and operation.phase == "outbound"
+                    and operation.waiting_reason != "driver_down" and not can_secure_foothold(state, operation)):
+                self._abort_recapture(operation, "insufficient_force_or_cargo")
             if (operation.kind in FOOT_OPERATIONS and operation.phase in {"outbound", "returning"}
                     and self.movement_ready is not None and not self.movement_ready(operation)):
                 continue
@@ -56,6 +62,11 @@ class Simulation:
                         finish_return(state, operation_id)
                 elif operation.kind == "withdrawal" and operation.destination_id == state.source.id:
                     finish_relocation(state, operation)
+                elif operation.kind == "recapture":
+                    if can_secure_foothold(state, operation):
+                        start_foothold(state, operation)
+                    else:
+                        self._abort_recapture(operation, "insufficient_force_or_cargo")
                 elif operation.kind in FOOT_OPERATIONS | TROOP_TRANSPORTS:
                     target = state.facilities[operation.destination_id]
                     region = state.regions[target.region_id]
@@ -80,10 +91,21 @@ class Simulation:
                 self._moving.discard(operation_id)
         evaluate_regions(state)
 
+    def _return(self, operation):
+        if operation.kind == "recapture":
+            clear_foothold(self.state, operation)
+        request_return(self.state, operation)
+        self._moving.add(operation.id)
+
+    def _abort_recapture(self, operation, reason):
+        self.state.record("recapture_aborted", operation_id=operation.id, reason=reason)
+        self._return(operation)
+
     def _handle_event(self, event: Event) -> None:
         state = self.state
         operation = state.operations.get(event.operation_id)
         if event.kind == "planning":
+            plan_recaptures(state)
             plan_redeployments(state)
             plan_equipment(state)
             plan_supplies(state)
@@ -106,7 +128,13 @@ class Simulation:
             if event.kind == "depart" and operation.phase == "loading":
                 origin = owner(state, operation.origin_id)
                 invalid = False
-                if operation.kind != "export" and not (operation.kind == "withdrawal"
+                if operation.kind == "recapture":
+                    destination = state.facilities[operation.destination_id]
+                    invalid = (state.regions[destination.region_id].owner != "player"
+                               or (operation.origin_id != state.source.id and not external_support_link(state, origin.region_id))
+                               or (operation.origin_id == state.source.id and not any(
+                                   external_support_link(state, region.id) for region in state.regions.values())))
+                elif operation.kind != "export" and not (operation.kind == "withdrawal"
                                                        and operation.destination_id == state.source.id):
                     destination = state.facilities[operation.destination_id]
                     invalid = (state.regions[destination.region_id].owner != "enemy"
@@ -167,6 +195,17 @@ class Simulation:
                 else:
                     finish_repair(state, operation)
                     request_return(state, operation)
+            elif event.kind == "recapture_work" and operation.phase == "working":
+                if not can_secure_foothold(state, operation):
+                    self._abort_recapture(operation, "insufficient_force_or_cargo")
+                elif not foothold_route_open(state, operation):
+                    self._abort_recapture(operation, "route_unavailable")
+                elif self.recapture_ready is not None and not self.recapture_ready(operation, state.world_time):
+                    operation.waiting_reason = "crew_in_combat"
+                    clock.schedule(state, state.world_time + 5, "recapture_work",
+                                   priority=clock.TRANSFER, operation_id=operation.id)
+                else:
+                    finish_recapture(state, operation)
             elif event.kind == "begin_return" and operation.phase == "turnaround":
                 request_return(state, operation)
             if operation.phase in {"outbound", "returning"}:
@@ -293,8 +332,7 @@ class Simulation:
             if operation.waiting_reason == "driver_down":
                 raise ValueError("운전자 교대 후 귀환할 수 있음")
             if not cancel(state, operation.id):
-                request_return(state, operation)
-                self._moving.add(operation.id)
+                self._return(operation)
         else:
             raise ValueError(f"지원하지 않는 행동: {kind}")
         state.record("action", action=deepcopy(action))
@@ -387,6 +425,11 @@ class Simulation:
                       and operation.phase in {"outbound", "unloading"}):
                     request_return(state, operation)
                     self._moving.add(operation.id)
+                if operation.kind == "recapture":
+                    if operation.phase in {"stranded", "destroyed"}:
+                        clear_foothold(state, operation)
+                    elif operation.phase == "working" and not can_secure_foothold(state, operation):
+                        self._abort_recapture(operation, "insufficient_force_or_cargo")
         if asset.node_id is not None:
             # 주둔 손실 이후 미출발 동원이 최소 주둔량을 침해하지 않게 한다.
             for candidate in reversed(list(state.operations.values())):

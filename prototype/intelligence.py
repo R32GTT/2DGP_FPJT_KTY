@@ -8,7 +8,8 @@ from .interactions import nearby_facility
 
 
 OPERATION_NAMES = {"supply": "보급 수송", "export": "외부 출하", "repair": "시설 복구", "equipment": "장비 수송",
-                   "redeployment": "병력 재배치", "motor_qrf": "차량 증원", "qrf": "도보 증원", "withdrawal": "철수"}
+                   "redeployment": "병력 재배치", "motor_qrf": "차량 증원", "qrf": "도보 증원", "withdrawal": "철수",
+                   "recapture": "탈환 수송"}
 
 
 @dataclass(frozen=True)

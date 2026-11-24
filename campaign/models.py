@@ -9,13 +9,14 @@ import random
 
 RESOURCE_TYPES = ("supplies", "ammunition", "repair_parts", "night_gear")
 FOOT_OPERATIONS = frozenset({"qrf", "withdrawal"})
-TROOP_TRANSPORTS = frozenset({"redeployment", "motor_qrf"})
+TROOP_TRANSPORTS = frozenset({"redeployment", "motor_qrf", "recapture"})
 QRF_OPERATIONS = frozenset({"qrf", "motor_qrf"})
 RULES_VERSION = 1
 RULE_KEYS = {"planning_period_s", "consumption_period_s", "supplies_per_soldier",
              "loading_s", "unloading_s", "turnaround_s", "external_departure_interval_s",
              "external_cargo_limit", "escort_soldiers", "provisions_per_vehicle",
              "road_cost_per_vehicle", "minimum_export_batch", "export_provision_buffer"}
+RECAPTURE_RULES = {"recapture_delay_s", "recapture_min_troops", "recapture_supplies", "recapture_work_s"}
 
 
 def stock(**values: int) -> dict[str, int]:
@@ -55,11 +56,12 @@ class Region:
     withdrawal_started_at: int | None = None
     bounds: list[float] | None = None
     liberated_at: int | None = None
+    recapture_operation_id: str | None = None
 
     @property
     def control_state(self):
         if self.owner == "player":
-            return "liberated"
+            return "reoccupying" if self.recapture_operation_id else "liberated"
         if self.withdrawal_started_at is not None:
             return "withdrawing"
         return "unstable" if self.weak_since is not None else "occupied"
@@ -282,6 +284,11 @@ def validate_state(state: CampaignState) -> None:
             require(len(region.bounds) == 4 and all(math.isfinite(axis) for axis in region.bounds)
                     and min(region.bounds[2:]) > 0, "잘못된 지역 경계")
         require(region.liberated_at is None or region.owner == "player", "해방 시각과 소유권 불일치")
+        if region.recapture_operation_id is not None:
+            op = state.operations.get(region.recapture_operation_id)
+            require(region.owner == "player" and op is not None and op.kind == "recapture"
+                    and op.phase == "working" and op.destination_id in region.facility_ids,
+                    "탈환 작전과 거점 상태 불일치")
         if region.withdrawal_started_at is not None:
             require(region.owner == "enemy" and region.weak_since is not None
                     and region.weak_since <= region.withdrawal_started_at, "잘못된 철수 상태")
@@ -332,7 +339,7 @@ def validate_state(state: CampaignState) -> None:
                     "잘못된 위협 보고 위치")
         require(operation.phase in {"loading", "outbound", "unloading", "working", "turnaround", "returning",
                                     "completed", "cancelled", "stranded", "destroyed"}, "잘못된 작전 상태")
-        require(operation.phase != "working" or operation.kind == "repair", "잘못된 복구 작업 상태")
+        require(operation.phase != "working" or operation.kind in {"repair", "recapture"}, "잘못된 거점 작업 상태")
         require(operation.origin_id in state.facilities or operation.origin_id == state.source.id,
                 "작전 출발지 누락")
         origin_node = (state.source.node_id if operation.origin_id == state.source.id
@@ -355,6 +362,11 @@ def validate_state(state: CampaignState) -> None:
                     and state.units[operation.unit_ids[0]].mobile
                     and state.vehicles[operation.vehicle_ids[0]].troop_seats >= state.units[operation.unit_ids[0]].soldiers,
                     "병력 수송 차량·좌석 불일치")
+        if operation.kind == "recapture":
+            require(RECAPTURE_RULES <= state.rules.keys(), "탈환 작전 설정 누락")
+        if operation.kind == "recapture" and operation.phase == "working":
+            require(state.regions[state.facilities[operation.destination_id].region_id].recapture_operation_id
+                    == operation.id, "탈환 거점 상태 누락")
         require(all(node in state.nodes for node in operation.route), "작전 경로 노드 누락")
         require(type(operation.edge_index) is int and operation.edge_index >= 0, "잘못된 경로 순번")
         require(math.isfinite(operation.progress_m) and operation.progress_m >= 0, "잘못된 이동 진행도")
@@ -397,6 +409,8 @@ def validate_state(state: CampaignState) -> None:
     require(RULE_KEYS <= set(state.rules)
             and all(type(value) is int and value > 0 for value in state.rules.values()),
             "운영 수치는 양의 정수여야 함")
+    require(not RECAPTURE_RULES.intersection(state.rules) or RECAPTURE_RULES <= state.rules.keys(),
+            "탈환 작전 설정 누락")
     sequences = set()
     for index, event in enumerate(state.events):
         require(type(event.time) is int and event.time >= state.world_time, "과거 예정 사건")
@@ -406,7 +420,7 @@ def validate_state(state: CampaignState) -> None:
         sequences.add(event.sequence)
         require(index == 0 or state.events[(index - 1) // 2] <= event, "사건 큐 순서 오류")
         require(event.kind in {"planning", "consumption", "demand", "depart", "unload", "begin_return",
-                               "repair_retry", "repair_work"},
+                               "repair_retry", "repair_work", "recapture_work"},
                 "지원하지 않는 예정 사건")
-        if event.kind in {"depart", "unload", "begin_return", "repair_work"}:
+        if event.kind in {"depart", "unload", "begin_return", "repair_work", "recapture_work"}:
             require(event.operation_id in state.operations, "예정 사건 작전 누락")

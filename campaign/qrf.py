@@ -37,17 +37,21 @@ def air_support_available(state, region_id):
         region.owner == "enemy" and _working(state, region, "air_defense"))
 
 
-def _order_troop_transport(state, origin, target, unit, route, kind, reason, delay, report_xy=None):
+def order_troop_transport(state, origin, target, unit, route, kind, reason, delay, report_xy=None, *,
+                          cargo=None, known_blocked=()):
+    cargo = stock() if cargo is None else cargo
+    provisions = transport_provisions(state, route)
     truck = min((vehicle for vehicle in state.vehicles.values()
                  if vehicle.node_id == origin.node_id and vehicle.status == "available"
-                 and vehicle.troop_seats >= unit.soldiers), key=lambda vehicle: vehicle.id, default=None)
+                 and vehicle.troop_seats >= unit.soldiers
+                 and vehicle.capacity >= provisions + sum(cargo.values())), key=lambda vehicle: vehicle.id, default=None)
     if truck is None:
         return None
     operation = Operation(state.new_id(), reason, kind, origin.id, target.id, route[0], route[-1],
-                          [truck.id], [unit.id], state.world_time, route=route, report_xy=report_xy)
-    provisions = transport_provisions(state, route)
+                          [truck.id], [unit.id], state.world_time, route=route, report_xy=report_xy,
+                          known_blocked=list(known_blocked))
     try:
-        reserve(state, operation, stock(), stock(supplies=provisions))
+        reserve(state, operation, cargo, stock(supplies=provisions))
     except ValueError:
         return None
     schedule(state, state.world_time + delay, "depart", priority=TRANSFER, operation_id=operation.id)
@@ -82,8 +86,8 @@ def plan_redeployments(state):
                 candidates.extend((distance, unit.id, origin, unit, route) for unit in local
                                   if unit.mobile and 0 < unit.soldiers <= spare)
         for _, _, origin, unit, route in sorted(candidates, key=lambda row: row[:2]):
-            if _order_troop_transport(state, origin, target, unit, route, "redeployment", "주둔 병력 보강",
-                                       state.rules["loading_s"]) is not None:
+            if order_troop_transport(state, origin, target, unit, route, "redeployment", "주둔 병력 보강",
+                                     state.rules["loading_s"]) is not None:
                 break
 
 
@@ -143,8 +147,8 @@ def dispatch_response(state, facility_id, *, report_xy=None, sighting=False):
         origin = state.facilities[origin_id]
         source_command = regional_command(state, origin.region_id)
         delay = 12 if command.commander_lost or source_command.commander_lost else 5
-        operation = _order_troop_transport(state, origin, target, state.units[unit_id], route,
-                                           "motor_qrf", reason, delay, report_xy)
+        operation = order_troop_transport(state, origin, target, state.units[unit_id], route,
+                                         "motor_qrf", reason, delay, report_xy)
         if operation is not None:
             return "ordered", operation.id
     if not candidates:

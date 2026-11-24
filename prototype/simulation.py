@@ -117,6 +117,7 @@ class PlaySimulation:
         self.presence = (CampaignPresence(self.world, self.campaign, self.roster, self.ai, weapon_roles)
                          if self.world.data.get("generation") else None)
         self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, weapon_roles["escort"], self.events)
+        campaign.recapture_ready = self.transports.recapture_ready
         self.combat = Combat(self.events, self.transports)
         self.time, self.footstep_at = float(campaign.state.world_time), 0.0
         self.message = "R 재장전 / C 취소 / 1·2·3 총기 교체 / V 단발·연사 / F 문 / E 상호작용"

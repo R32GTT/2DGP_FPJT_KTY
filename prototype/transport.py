@@ -129,7 +129,8 @@ class TransportCrew:
             ids = [key for key in operation.vehicle_ids if state.vehicles[key].status != "destroyed"]
             if not ids:
                 continue
-            stopped = operation.waiting_reason in {"driver_down", "no_driver"}
+            securing = operation.kind == "recapture" and operation.phase == "working"
+            stopped = securing or operation.waiting_reason in {"driver_down", "no_driver"}
             moving = view.phase in {"outbound", "returning"} and not stopped
             trucks = [Truck(ids[0], view, view.x, view.y, [], stopped)]
             for index, key in enumerate(ids[1:], 1):
@@ -147,6 +148,11 @@ class TransportCrew:
                     self.ai.brains.setdefault(actor.id, Brain([]))
                 trip = self.trips[view.id] = Trip(self.assign(ids, crew))
 
+            if moving and trip.exits:
+                trip.exits.clear()
+                trip.stopped_at = None
+                for actor in (actor for crew in trip.seats.values() for actor in crew):
+                    actor.boarding_goal, actor.transport_boarding = None, False
             for truck in trucks:
                 if moving or stopped:
                     truck.crew = trip.seats.get(truck.id, [])
@@ -179,7 +185,7 @@ class TransportCrew:
     def try_resume(self, seconds):
         resumed = False
         for key, trip in self.trips.items():
-            if not trip.exits:
+            if not trip.exits or self.bridge.simulation.state.operations[key].waiting_reason != "driver_down":
                 continue
             trucks = [truck for truck in self.trucks if truck.convoy.id == key and truck.stopped]
             if not trucks:
@@ -206,6 +212,22 @@ class TransportCrew:
                 self.bridge.resume_transport(key, seconds)
                 resumed = True
         return resumed
+
+    def recapture_ready(self, operation, seconds):
+        if not self.roster.materialized:
+            return True
+        trucks = [truck for truck in self.trucks if truck.convoy.id == operation.id]
+        if not trucks:
+            return True
+        trip = self.trips[operation.id]
+        crew = [actor for truck in trucks for actor in truck.crew if actor.hp > 0]
+        for actor in crew:
+            point = trip.exits.get(actor.id)
+            brain = self.ai.brains[actor.id]
+            if (point is None or math.dist(actor.xy, point) > 6 or brain.memory.visible
+                    or seconds - max(brain.memory.seen_at, brain.combat.incoming_at, brain.combat.fired_at) < QUIET_SECONDS):
+                return False
+        return bool(crew)
 
     def nearby_cargo(self, actor, operation_id=None):
         if actor.hp <= 0 or actor.position.floor != 0:
