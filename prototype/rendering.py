@@ -86,32 +86,42 @@ class Renderer:
         crown_px = crown_size * view.scale
         viewport = view.viewport()
         trunks = []
-        previous_alpha = 1.0
+        previous_crown_alpha = 1.0
         for tree in colliders:
             if tree.kind != "tree" or not tree.active:
                 continue
             rect = tree.rect
             x, y = rect.x + rect.w * 0.5, rect.y + rect.h * 0.5
             crown = Rect(x, y, 0, 0).expanded(crown_size * 0.5)
-            if not crown.overlaps(viewport) and not rect.overlaps(viewport):
+            crown_in_view = crown.overlaps(viewport)
+            trunk_in_view = rect.overlaps(viewport)
+            if not (crown_in_view or trunk_in_view):
                 continue
             px, py = view.pico(x, y)
-            if crown.overlaps(viewport):
-                distance = math.hypot(x - player[0], y - player[1])
-                alpha = 0.08 + 0.92 * smooth((distance - 1.55) / 2.05)
-                if alpha != previous_alpha:
-                    self.tree_canopy.opacify(alpha)
-                    previous_alpha = alpha
+            distance = math.hypot(x - player[0], y - player[1])
+            fade = 1.0 - smooth((distance - 1.55) / 2.05)
+            if crown_in_view:
+                crown_alpha = 1.0 - 0.92 * fade
+                if crown_alpha != previous_crown_alpha:
+                    self.tree_canopy.opacify(crown_alpha)
+                    previous_crown_alpha = crown_alpha
                 self.tree_canopy.draw(px, py, crown_px, crown_px)
-            if rect.overlaps(viewport):
-                trunks.append((rect, px, py))
-        if previous_alpha != 1:
+            if trunk_in_view and (fade >= 1 / 255 or debug):
+                trunks.append((rect, px, py, fade))
+        if previous_crown_alpha != 1:
             self.tree_canopy.opacify(1.0)
-        # 가까운 나무의 수관이 이웃 나무의 엄폐 범위를 가리지 않게 한다.
-        for rect, px, py in trunks:
-            self.tree_trunk.draw(px, py, rect.w * view.scale, rect.h * view.scale)
+        # 수관을 먼저 모두 그리고, 가려져 있던 밑동만 위에 드러낸다.
+        previous_trunk_alpha = 1.0
+        for rect, px, py, fade in trunks:
+            if fade >= 1 / 255:
+                if fade != previous_trunk_alpha:
+                    self.tree_trunk.opacify(fade)
+                    previous_trunk_alpha = fade
+                self.tree_trunk.draw(px, py, rect.w * view.scale, rect.h * view.scale)
             if debug:
                 self._rect(view, rect, (148, 190, 124), filled=False)
+        if previous_trunk_alpha != 1:
+            self.tree_trunk.opacify(1.0)
 
     @staticmethod
     def _draw_navigation(navigation, view):
