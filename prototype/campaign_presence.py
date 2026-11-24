@@ -9,6 +9,7 @@ from campaign.routes import position
 from .ai_state import Brain, Incident
 from .ai_config import COMBAT_ALERT_SECONDS
 from .geometry import Rect
+from .perception import SIGHT_RANGE
 
 
 class CampaignPresence:
@@ -18,8 +19,71 @@ class CampaignPresence:
         self.marches, self.received = {}, set()
         self._orders_at, self.completed = -1, []
         self._ammo_points = {}
+        self.roles = {}
+        for site in self.sites.values():
+            key = site["campaign_id"]
+            if site["kind"] == "hq":
+                self.roles[f"{key}/unit/0:1"] = site, "commander_lost"
+            if site.get("watch_post"):
+                self.roles[f"{key}/unit/0:0"] = site, "watch_disabled"
         ai.resupply = self.resupply
+        ai.sight_reach = self.sight_reach
         bridge.simulation.movement_ready = self.can_advance
+
+    def sight_reach(self, actor):
+        role = self.roles.get(actor.id)
+        if role is not None and role[1] == "watch_disabled":
+            site = role[0]
+            facility = self.bridge.simulation.state.facilities[site["campaign_id"]]
+            if facility.damage < 100 and not facility.watch_disabled and actor.last_node == site["service_node"]:
+                if math.dist(actor.xy, site["watch_post"][0]) <= 1.5:
+                    return 28.0
+        return SIGHT_RANGE
+
+    def record_role_loss(self, actor):
+        role = self.roles.get(actor.id)
+        if role is None:
+            return
+        site, component = role
+        facility = self.bridge.simulation.state.facilities[site["campaign_id"]]
+        if not getattr(facility, component):
+            self.bridge.disable_component(facility.id, component)
+
+    def sync_role_losses(self):
+        for actor_id in self.roles:
+            actor = self.roster.by_id.get(actor_id)
+            if actor is not None and actor.hp <= 0:
+                self.record_role_loss(actor)
+
+    def alert_headquarters(self, region_id, point, seconds, source):
+        command = self.bridge.local_command(region_id)
+        if command is None:
+            return
+        state = self.bridge.simulation.state
+        responders = []
+        for actor in self.roster.actors:
+            unit = state.units.get(actor.source_unit)
+            brain = self.ai.brains.get(actor.id)
+            if (actor.id == source or not actor.present or actor.hp <= 0 or brain is None or brain.visible
+                    or unit is None or unit.node_id != command.node_id or unit.status != "available"
+                    or actor.id in self.roles and self.roles[actor.id][1] == "commander_lost"):
+                continue
+            responders.append(actor)
+        count = 1 if command.commander_lost else 3
+        selected = sorted(responders, key=lambda actor: (math.dist(actor.xy, point), actor.id))[:count]
+        if not selected:
+            return
+        key = f"headquarters/{region_id}"
+        incident = self.ai.incidents.get(key)
+        if incident is None or incident.point != point:
+            incident = self.ai.incidents[key] = Incident(seconds, point)
+        incident.updated_at = seconds
+        for actor in selected:
+            brain = self.ai.brains[actor.id]
+            brain.incident = key
+            brain.memory.reported, brain.memory.reported_at = point, seconds
+            brain.memory.report_source = source
+            brain.combat.combat_alert_until = seconds + COMBAT_ALERT_SECONDS
 
     def resupply(self, actor, brain, seconds):
         weapon = actor.weapon
@@ -118,10 +182,23 @@ class CampaignPresence:
                 actor.last_node = ""
 
     def _guard_posts(self, node, members):
-        posts = iter(self.sites[node]["guard_posts"])
+        site = self.sites[node]
+        posts = iter(site["guard_posts"])
         home = self.bridge.simulation.state.nodes[node].position
         for actor, reserved in members:
-            post = None if reserved else next(posts, None)
+            post = None
+            if not reserved:
+                role = self.roles.get(actor.id)
+                if role is not None and role[0] is site:
+                    if role[1] == "commander_lost":
+                        terminal = tuple(site["terminal"])
+                        x, y = site["position"]
+                        post = [terminal], math.atan2(y - terminal[1], x - terminal[0])
+                    else:
+                        point, facing = site["watch_post"]
+                        post = [point], facing
+                if post is None:
+                    post = next(posts, None)
             brain = self.ai.brains.get(actor.id)
             if brain is None:
                 if post and all(math.dist(post[0][0], other.xy) >= .65 for other in self.roster.actors
@@ -132,7 +209,7 @@ class CampaignPresence:
                 else:
                     self._place(actor, node)
                 brain = self.ai.brains[actor.id] = Brain([actor.xy])
-            if not self.sites[node]["guard_posts"]:
+            if not site["guard_posts"] and post is None:
                 continue
             fallback = self.roster.spawns[actor.id] if actor.home_node == node else (home.x, home.y)
             route, facing = post if post else ([fallback], None)

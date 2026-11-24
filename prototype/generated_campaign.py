@@ -19,14 +19,25 @@ def bind_sites(scene):
     facilities = []
     for site in scene["planned_facilities"]:
         instance = placed.get(site["id"])
-        terminal = site["position"] if site["kind"] == "safehouse" else site["connector"]["position"]
+        kind = site["kind"]
+        terminal = site["position"] if kind in {"safehouse", "sam", "garrison"} else site["connector"]["position"]
         if instance:
             terminal = scene["navigation"][instance["terminal"]]
+        posts = list(instance["guard_posts"]) if instance else []
+        watch = None
+        if kind in {"hq", "comms"}:
+            if posts:
+                route, facing = posts.pop(0)
+                watch = (tuple(route[0]), facing)
+            else:
+                x, y = site["connector"]["position"]
+                dx, dy = site["connector"]["direction"]
+                watch = ((x - 3 * dx - 3 * dy, y - 3 * dy + 3 * dx), math.atan2(dy, dx))
         name = (names[site["region_id"]] + " · " if site.get("region_id") in names else "") + site["name"]
-        facilities.append({"id": site["id"], "name": name, "kind": site["kind"], "rect": site["rect"],
-                           "campaign_id": "" if site["kind"] == "safehouse" else site["id"],
+        facilities.append({"id": site["id"], "name": name, "kind": kind, "rect": site["rect"],
+                           "campaign_id": "" if kind == "safehouse" else site["id"],
                            "service_node": network["terminals"][site["id"]], "position": site["position"],
-                           "terminal": terminal, "guard_posts": instance["guard_posts"] if instance else []})
+                           "terminal": terminal, "guard_posts": posts, "watch_post": watch})
     depot = next(row for row in facilities if row["kind"] == "warehouse")
     safehouse = next(row for row in facilities if row["kind"] == "safehouse")
     return {**scene, "facilities": facilities, "campaign_facility": depot["id"],

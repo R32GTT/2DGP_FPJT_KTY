@@ -37,12 +37,12 @@ class Knowledge:
     exposed: bool = False
 
 
-def sight_sample(actor, target, geometry, memory):
+def sight_sample(actor, target, geometry, memory, *, reach=SIGHT_RANGE):
     if target.hp <= 0 or actor.position.floor != target.position.floor:
         return
     dx, dy = target.position.x - actor.position.x, target.position.y - actor.position.y
     distance = math.hypot(dx, dy)
-    sight_range = SIGHT_RANGE + (SIGHT_RETENTION_MARGIN if memory.exposed or memory.visible else 0.0)
+    sight_range = reach + (SIGHT_RETENTION_MARGIN if memory.exposed or memory.visible else 0.0)
     alignment = (dx * math.cos(actor.facing) + dy * math.sin(actor.facing)) / distance if distance else 1.0
     if distance <= sight_range and alignment >= 0.5 and geometry.raycast(actor.xy, target.xy) is None:
         return distance, alignment

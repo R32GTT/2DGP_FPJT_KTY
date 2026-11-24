@@ -43,9 +43,13 @@ def deserialize_campaign(text: str) -> CampaignState:
             raise CampaignSaveError("지원하지 않는 캠페인 저장 형식·버전")
         row = dict(payload["state"])
         row.setdefault("repair_requests", {})
-        for key, cls in (("roads", Road), ("facilities", Facility),
-                         ("reservations", Reservation)):
+        for key, cls in (("roads", Road), ("reservations", Reservation)):
             row[key] = {key: _construct(cls, value) for key, value in row[key].items()}
+        row["facilities"] = {
+            key: _construct(Facility, {"relay_disabled": False, "commander_lost": False,
+                                       "watch_disabled": False, **value})
+            for key, value in row["facilities"].items()
+        }
         row["regions"] = {key: _construct(Region, {"weak_since": None, "withdrawal_started_at": None, **value})
                           for key, value in row["regions"].items()}
         # 좌표가 추가되기 전에 저장한 작전은 별도 목격 위치 없이 복원한다.

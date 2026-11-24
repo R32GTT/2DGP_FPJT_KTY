@@ -261,13 +261,28 @@ class Renderer:
                 self._rect(view, collider.rect, (233, 111, 77) if collider.active else (91, 213, 150), filled=False)
         if world.facilities:
             for facility in world.facilities:
+                state = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
+                watch = facility.get("watch_post")
+                if watch is not None:
+                    (wx, wy), _ = watch
+                    booth = Rect(wx - 1.1, wy - 1.1, 2.2, 2.2)
+                    if view.visible(booth):
+                        enabled = state.damage < 100 and not state.watch_disabled
+                        self._rect(view, booth, (80, 108, 93) if enabled else (77, 68, 63))
+                        self._rect(view, booth, (179, 193, 160) if enabled else (115, 88, 76), filled=False)
+                        for dx in (-0.98, 0.78):
+                            for dy in (-0.98, 0.78):
+                                self._rect(view, Rect(wx + dx, wy + dy, 0.2, 0.2), (50, 58, 51))
                 point = facility["terminal"]
                 marker = Rect(point[0] - 0.35, point[1] - 0.35, 0.7, 0.7)
                 if not view.visible(marker):
                     continue
-                state = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
                 color = ((119, 191, 157) if facility["kind"] == "safehouse" else
-                         (177, 85, 69) if state and state.damage >= 100 else (193, 166, 83))
+                         (177, 85, 69) if state and (state.damage >= 100 or state.relay_disabled)
+                         else (193, 166, 83))
+                if facility["kind"] == "sam":
+                    x, y = view.pico(*point)
+                    self.props["antenna"].draw(x, y, 3.2 * view.scale, 2.7 * view.scale)
                 self._rect(view, marker, color)
                 self._rect(view, marker, (228, 219, 174), filled=False)
         elif world.data.get("interaction_markers", True):
@@ -337,6 +352,12 @@ class Renderer:
             image.rotate_draw(-body_angle, x, y, BODY_SIZE_M[0] * view.scale, BODY_SIZE_M[1] * view.scale)
             if body_alpha < 1:
                 image.opacify(1.0)
+            if actor.hp > 0 and simulation.presence:
+                role = simulation.presence.roles.get(actor.id)
+                if role is not None and role[1] == "commander_lost":
+                    badge = max(1, round(view.scale * 0.022))
+                    pico.draw_rectangle(x - badge, y - badge, x + badge, y + badge,
+                                        242, 195, 92, round(alpha * 255), filled=True)
             if weapon:
                 gun_x, gun_y = view.pico(*center)
                 gun = self.guns[weapon.spec.id]

@@ -15,7 +15,8 @@ from .events import EventBus
 from .feedback import Feedback
 from .movement import move_actor
 from .interactions import (
-    exchange_safehouse_weapon, nearby_facility, nearby_road_control, use_facility, use_road_control,
+    disable_watch_post, exchange_safehouse_weapon, nearby_facility, nearby_road_control,
+    nearby_watch_post, use_facility, use_road_control,
 )
 from .geometry import Rect
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
@@ -168,6 +169,13 @@ class PlaySimulation:
         events = self.events.drain()
         stops = []
         for event in events:
+            if event.kind == "facility_damaged" and self.presence:
+                key = event.data["facility"]
+                region = self.campaign.simulation.state.facilities[key].region_id
+                point = event.data.get("point", event.position)
+                result = self.campaign.report_facility_attack(key, point, event.time)
+                if result is not None:
+                    self.presence.alert_headquarters(region, point, event.time, key)
             if event.kind == "killed" and event.source in self.roster.by_id:
                 actor = self.roster.by_id[event.source]
                 self.ai.cancel_radio(actor, self.time, "killed")
@@ -179,6 +187,8 @@ class PlaySimulation:
                                             progress_m=truck.convoy.progress_m)
                     stops.append((truck, event.data["incoming"]))
                     self.message = "운전자 전투 불능 · 수송 정차"
+                if self.presence:
+                    self.presence.record_role_loss(actor)
                 if actor.loadout:
                     if "vehicle_id" not in event.data:
                         self.dropped.append((actor.xy, actor.loadout))
@@ -209,6 +219,7 @@ class PlaySimulation:
             if actor.id not in active:
                 self.ai.cancel_radio(actor, self.time, "unavailable")
         if self.presence:
+            self.presence.sync_role_losses()
             self.presence.receive_orders(self.time)
 
     def _radio_region(self, actor):
@@ -219,7 +230,12 @@ class PlaySimulation:
 
     def _can_radio(self, sender, receiver):
         region = self._radio_region(sender)
-        return region == self._radio_region(receiver) and self.campaign.has_signal(region)
+        if region != self._radio_region(receiver):
+            return False
+        command = self.campaign.local_command(region)
+        if self.campaign.has_signal(region) and (command is None or not command.relay_disabled):
+            return True
+        return command is not None and math.dist(sender.xy, receiver.xy) <= (18 if command.commander_lost else 28)
 
     def _alarm_position(self, region_id, actor):
         state = self.campaign.simulation.state
@@ -235,9 +251,11 @@ class PlaySimulation:
         region = self._radio_region(actor)
         result = (self.campaign.report_contact(actor, region, point, seconds)
                   if self.presence else None)
-        if not self.campaign.has_signal(region):
+        if not self.campaign.can_radio_locally(region):
             self.message = "무전 전달 실패 · 통신 연결 없음"
             return False
+        if result is not None and self.presence:
+            self.presence.alert_headquarters(region, point, seconds, actor.id)
         self.events.emit("radio_completed", seconds, actor, report=point)
         previous = self.alarms.get(region)
         if previous is None or previous.until <= seconds:
@@ -470,6 +488,10 @@ class PlaySimulation:
         if facility is not None:
             self.message = use_facility(self, facility)
             return
+        watch = nearby_watch_post(self.world, self.player.xy)
+        if watch is not None:
+            self.message = disable_watch_post(self, watch)
+            return
         control = nearby_road_control(self.world, self.player.xy)
         if control is not None:
             self.message = use_road_control(self.campaign, control)
@@ -493,10 +515,10 @@ class PlaySimulation:
         kind = facility["kind"] if facility else None
         if kind == "safehouse":
             self.message = exchange_safehouse_weapon(self, facility)
-        elif kind == "warehouse":
+        elif kind in {"warehouse", "hq"}:
             self.message = use_facility(self, facility, sabotage=True)
         else:
-            self.message = "안전가옥 또는 물류창고 단말 가까이에서 Shift+E"
+            self.message = "안전가옥·물류창고·HQ 단말 가까이에서 Shift+E"
 
     def request_respawn(self, slot=None):
         if self.player.hp > 0 or self.respawn_target is not None:

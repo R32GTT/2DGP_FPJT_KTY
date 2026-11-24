@@ -13,11 +13,35 @@ def _working(state, region, capability):
                for key in region.facility_ids)
 
 
+def regional_command(state, region_id):
+    region = state.regions[region_id]
+    if region.owner == "enemy":
+        return next((state.facilities[key] for key in region.facility_ids
+                     if "command" in state.facilities[key].capabilities and state.facilities[key].damage < 100), None)
+    return None
+
+
+def regional_signal(state, region_id):
+    region = state.regions[region_id]
+    return region.owner == "enemy" and _working(state, region, "communication")
+
+
+def external_support_link(state, region_id):
+    command = regional_command(state, region_id)
+    return command is not None and not command.relay_disabled and regional_signal(state, region_id)
+
+
+def air_support_available(state, region_id):
+    region = state.regions[region_id]
+    return not regional_signal(state, region_id) and not (
+        region.owner == "enemy" and _working(state, region, "air_defense"))
+
+
 def dispatch_response(state, facility_id, *, report_xy=None, sighting=False):
     target = state.facilities[facility_id]
     region = state.regions[target.region_id]
-    command = region.owner == "enemy" and _working(state, region, "command")
-    signal = _working(state, region, "communication")
+    command = regional_command(state, region.id)
+    signal = external_support_link(state, region.id)
     pending = next((op for op in state.operations.values() if op.kind == "qrf"
                     and state.facilities[op.destination_id].region_id == region.id
                     and op.phase not in TERMINAL_PHASES), None)
@@ -42,7 +66,7 @@ def dispatch_response(state, facility_id, *, report_xy=None, sighting=False):
         source_region = state.regions[origin.region_id]
         if (source_region is region or source_region.owner != "enemy" or origin.damage == 100
                 or source_region.withdrawal_started_at is not None
-                or not _working(state, source_region, "qrf") or not _working(state, source_region, "communication")):
+                or not _working(state, source_region, "qrf") or not external_support_link(state, source_region.id)):
             continue
         route = find_route(state, origin.node_id, target.node_id)
         if not route:
@@ -63,5 +87,7 @@ def dispatch_response(state, facility_id, *, report_xy=None, sighting=False):
     operation = Operation(state.new_id(), reason, "qrf", origin_id, target.id, route[0], route[-1],
                           [], [unit_id], state.world_time, route=route, report_xy=report_xy)
     reserve(state, operation, stock())
-    schedule(state, state.world_time + 5, "depart", priority=TRANSFER, operation_id=operation.id)
+    source_command = regional_command(state, state.facilities[origin_id].region_id)
+    delay = 12 if command.commander_lost or source_command.commander_lost else 5
+    schedule(state, state.world_time + delay, "depart", priority=TRANSFER, operation_id=operation.id)
     return "ordered", operation.id

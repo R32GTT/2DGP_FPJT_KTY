@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import math
 
 from campaign.models import FOOT_OPERATIONS, Node, Position, Road
+from campaign.qrf import air_support_available, regional_command, regional_signal
 from campaign.routes import FOOT_SPEED_MPS, movement_supply_cost
 from campaign.scenario import load_scenario
 from campaign.simulation import Simulation
@@ -68,11 +69,16 @@ class CampaignBridge:
         return facility.region_id if facility else self.simulation.state.facilities[self.facility_id].region_id
 
     def has_signal(self, region_id):
-        state = self.simulation.state
-        region = state.regions[region_id]
-        return region.owner == "enemy" and any(
-            "communication" in state.facilities[key].capabilities and state.facilities[key].damage < 100
-            for key in region.facility_ids)
+        return regional_signal(self.simulation.state, region_id)
+
+    def local_command(self, region_id):
+        return regional_command(self.simulation.state, region_id)
+
+    def can_radio_locally(self, region_id):
+        return self.local_command(region_id) is not None or self.has_signal(region_id)
+
+    def air_support_available(self, region_id):
+        return air_support_available(self.simulation.state, region_id)
 
     def advance_to(self, seconds):
         target = int(seconds + 1e-8)
@@ -89,11 +95,27 @@ class CampaignBridge:
             facility = next((site for site in endpoints if site and site.region_id == region_id), None)
         if actor.hp <= 0 or not actor.present or facility is None:
             return None
-        if facility.region_id != region_id or seconds < self._reports.get(region_id, -math.inf) + 4:
+        if facility.region_id != region_id or not self._allow_report(region_id, seconds):
             return None
-        self._reports[region_id] = seconds
         return self.simulation.apply_action({"type": "report_contact", "facility_id": facility.id,
                                              "unit_id": unit.id, "position": list(point)})
+
+    def report_facility_attack(self, facility_id, point, seconds):
+        facility = self.simulation.state.facilities[facility_id]
+        if not self._allow_report(facility.region_id, seconds):
+            return None
+        return self.simulation.apply_action({"type": "report_facility_attack", "facility_id": facility_id,
+                                             "position": list(point)})
+
+    def _allow_report(self, region_id, seconds):
+        if seconds < self._reports.get(region_id, -math.inf) + 4:
+            return False
+        self._reports[region_id] = seconds
+        return True
+
+    def disable_component(self, facility_id, component):
+        return self.simulation.apply_action({"type": "disable_facility_component", "facility_id": facility_id,
+                                             "component": component})
 
     def take_supplies(self, facility_id=None):
         facility_id = facility_id or self.facility_id

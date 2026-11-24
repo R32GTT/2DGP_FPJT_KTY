@@ -71,6 +71,9 @@ class Facility:
     minimum_stock: dict[str, int]
     target_stock: dict[str, int]
     damage: int = 0
+    relay_disabled: bool = False
+    commander_lost: bool = False
+    watch_disabled: bool = False
 
 
 @dataclass
@@ -280,6 +283,9 @@ def validate_state(state: CampaignState) -> None:
         require(facility.id in state.regions[facility.region_id].facility_ids, "시설 역참조 누락")
         require(facility.node_id in state.nodes, "시설 노드 누락")
         require(type(facility.damage) is int and 0 <= facility.damage <= 100, "잘못된 시설 피해")
+        require(all(type(value) is bool for value in
+                    (facility.relay_disabled, facility.commander_lost, facility.watch_disabled)),
+                "잘못된 시설 부속 목표 상태")
         require(all(facility.target_stock[name] >= facility.minimum_stock[name]
                     for name in RESOURCE_TYPES), "목표 비축량이 최소 비축량보다 적음")
         inventories.extend((facility.inventory, facility.minimum_stock, facility.target_stock))

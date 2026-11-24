@@ -13,6 +13,14 @@ def nearby_road_control(world, point):
                  if math.dist(point, control["position"]) <= 1.8), None)
 
 
+def nearby_watch_post(world, point):
+    for site in world.facilities:
+        post = site.get("watch_post")
+        if post and math.dist(point, post[0]) <= 1.5 and world.geometry.raycast(point, post[0]) is None:
+            return site
+    return None
+
+
 def use_road_control(bridge, control):
     road = bridge.simulation.state.roads[control["road"]]
     blocked = not road.blocked
@@ -65,10 +73,36 @@ def use_facility(simulation, facility, *, sabotage=False):
         if kind == "warehouse" and not sabotage:
             amount = bridge.take_supplies(key)
             return f"{facility['name']}에서 실제 보급품 {amount}개 확보"
+        if kind == "hq" and not sabotage:
+            if not bridge.disable_component(key, "relay_disabled"):
+                return "HQ 통신 중계기가 이미 무력화됨"
+            _emit_sabotage(simulation, key, facility["terminal"])
+            return "HQ 통신 중계기 무력화 · 외부 증원 차단"
         damage = bridge.damage_facility(key, destroy_inventory=kind == "warehouse")
-        simulation.events.emit("noise", simulation.time, player, radius=14, strength=1.0, reason="sabotage")
-        simulation.events.emit("facility_damaged", simulation.time, player, facility=key, damage=damage)
+        _emit_sabotage(simulation, key, facility["terminal"])
         if kind == "warehouse" and damage == 100:
             return f"{facility['name']} 무력화 · 재고 파괴"
+        if damage == 100:
+            state = bridge.simulation.state
+            region = state.facilities[key].region_id
+            if kind in {"sam", "comms"} and bridge.air_support_available(region):
+                return f"{facility['name']} 무력화 · 항공 지원 제한 해제"
+            return f"{facility['name']} 무력화"
         return f"{facility['name']} 피해 {damage}% — 실제 캠페인 상태 반영"
     return facility["name"]
+
+
+def disable_watch_post(simulation, site):
+    key = site["campaign_id"]
+    state = simulation.campaign.simulation.state
+    if state.facilities[key].damage == 100 or not simulation.campaign.disable_component(key, "watch_disabled"):
+        return "감시초소가 이미 무력화됨"
+    _emit_sabotage(simulation, key, site["watch_post"][0])
+    return "감시초소 무력화"
+
+
+def _emit_sabotage(simulation, key, point):
+    events, time, player = simulation.events, simulation.time, simulation.player
+    events.emit("noise", time, player, radius=14, strength=1.0, reason="sabotage")
+    events.emit("facility_damaged", time, player, facility=key, point=tuple(point),
+                damage=simulation.campaign.simulation.state.facilities[key].damage)

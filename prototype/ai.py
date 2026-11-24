@@ -30,6 +30,7 @@ class EnemyAI:
         self.report_contact, self.emit = report_contact, emit
         self.light_at = light_at
         self.resupply = None
+        self.sight_reach = None
         self.exits = {point for key, point in world.navigation.nodes.items() if key.endswith("/outside")}
         self.incidents = {}
         self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.01)
@@ -126,14 +127,15 @@ class EnemyAI:
             if time >= brain.sense_at:
                 was_visible = memory.visible
                 last_seen_at = memory.seen_at
-                sample = sight_sample(actor, player, self.world.geometry, memory)
+                reach = self.sight_reach(actor) if self.sight_reach else SIGHT_RANGE
+                sample = sight_sample(actor, player, self.world.geometry, memory, reach=reach)
                 # 순찰 방향에서 먼저 확인하고, 발견하지 못했을 때 소리 쪽도 살핀다.
                 fresh_incoming = situation.incoming is not None and time - brain.combat.incoming_at < 1
                 if sample is None and (fresh_incoming or situation.fresh_sound):
                     look = situation.incoming if fresh_incoming else memory.last_sound
                     face(actor, look)
                     actor.facing = turn_toward(previous_facing[actor.id], actor.facing, 1 / 60)
-                    sample = sight_sample(actor, player, self.world.geometry, memory)
+                    sample = sight_sample(actor, player, self.world.geometry, memory, reach=reach)
                 light = self.light_at(actor, player.position) if sample is not None and self.light_at else 1.0
                 update_vision(player, memory, time, sample,
                               alert=situation.investigating or situation.confirmed or memory.suspicion >= 0.3,

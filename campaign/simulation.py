@@ -6,7 +6,7 @@ import math
 from . import clock
 from .logistics import plan_exports, plan_supplies
 from .models import FOOT_OPERATIONS, CampaignState, Event
-from .qrf import dispatch_response
+from .qrf import dispatch_response, external_support_link
 from .repair import WORK_SECONDS, finish_repair, plan_repairs, queue_repairs
 from .resources import (TERMINAL_PHASES, assert_invariants, cancel, consume, depart,
                         finish_relocation, finish_return, handover, owner, remove)
@@ -113,6 +113,11 @@ class Simulation:
                         invalid |= origin_region.withdrawal_started_at is None
                     else:
                         invalid |= origin.damage == 100
+                if operation.kind == "qrf":
+                    destination = state.facilities[operation.destination_id]
+                    invalid |= (operation.origin_id == state.source.id
+                                or not external_support_link(state, origin.region_id)
+                                or not external_support_link(state, destination.region_id))
                 if invalid:
                     cancel(state, operation.id)
                 elif self.departure_ready is not None and not self.departure_ready(operation):
@@ -226,6 +231,17 @@ class Simulation:
             result = status, operation_id
             state.record("qrf_report", facility_id=facility_id, status=status,
                          operation_id=operation_id, position=position_report)
+        elif kind == "disable_facility_component":
+            facility = state.facilities[action["facility_id"]]
+            component = action["component"]
+            allowed = {"relay_disabled": {"command"}, "commander_lost": {"command"},
+                       "watch_disabled": {"command", "communication"}}
+            if component not in allowed or not allowed[component].intersection(facility.capabilities):
+                raise ValueError("시설에 없는 부속 목표")
+            if getattr(facility, component):
+                return False
+            setattr(facility, component, True)
+            result = True
         elif kind == "damage_facility":
             damage = action["damage"]
             destroy_inventory = action.get("destroy_inventory", False)
