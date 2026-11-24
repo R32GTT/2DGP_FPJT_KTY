@@ -115,7 +115,10 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     if (controls.firing or controls.map_open) and action in {"door", "supplies", "facility_alternate"}:
                         simulation.message = "지도를 닫은 뒤 상호작용" if controls.map_open else "사격 중에는 상호작용할 수 없음"
                         continue
-                    if action == "door":
+                    if action == "throw":
+                        if not controls.map_open and not controls.firing:
+                            simulation.throw_selected(camera.world(*controls.mouse))
+                    elif action == "door":
                         simulation.use_door()
                     elif action == "supplies":
                         simulation.take_supplies()

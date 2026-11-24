@@ -275,7 +275,13 @@ class HUD:
         show_reload = weapon is not None and (weapon.reloading or weapon.stage > 0)
         bottom = base + 32 if show_reload else base
         x = left + 12
-        pico.draw_rectangle(left, base, left + width, bottom + 134, 15, 24, 27, 218, filled=True)
+        inventory = simulation.inventory
+        throwable = inventory.active_throwable
+        top = bottom + (156 if throwable else 134)
+        pico.draw_rectangle(left, base, left + width, top, 15, 24, 27, 218, filled=True)
+        if throwable:
+            self.label("game_throwable", f"G  {inventory.item(throwable)[0]} ×{inventory.carried[throwable]}", 13)
+            self.text("game_throwable", x, bottom + 138)
         lamp = {"off": "꺼짐", "white": "백색", "infrared": "IR"}[player.lamp]
         if player.lamp == "infrared" and not simulation.sky.infrared:
             lamp = "IR 주간"

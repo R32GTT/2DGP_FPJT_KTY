@@ -59,6 +59,16 @@ def painted_image(backend, width, height, paint):
     return pico2d.Image(texture)
 
 
+def smoke_image(backend):
+    def paint(p):
+        p.ellipse(48, 48, 47, 47, (102, 109, 107, 44))
+        for x, y, radius in ((26, 42, 24), (45, 30, 27), (65, 39, 27), (66, 60, 24),
+                             (48, 66, 28), (31, 58, 23), (48, 47, 32)):
+            for inset in (0, 2, 5, 8, 11):
+                p.ellipse(x, y, radius - inset, radius - inset, (134, 140, 136, 35))
+    return painted_image(backend, 96, 96, paint)
+
+
 def actor_image(backend, player):
     def paint(p):
         # 몸통 중심 (24,12). 위쪽이 정면이며 어깨가 좌우로 넓게 펼쳐진다.

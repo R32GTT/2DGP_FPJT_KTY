@@ -37,14 +37,15 @@ class Knowledge:
     exposed: bool = False
 
 
-def sight_sample(actor, target, geometry, memory, *, reach=SIGHT_RANGE):
-    if target.hp <= 0 or actor.position.floor != target.position.floor:
+def sight_sample(actor, target, geometry, memory, *, time=0.0, reach=SIGHT_RANGE):
+    floor = actor.position.floor
+    if target.hp <= 0 or floor != target.position.floor or time < actor.blinded_until:
         return
     dx, dy = target.position.x - actor.position.x, target.position.y - actor.position.y
     distance = math.hypot(dx, dy)
     sight_range = reach + (SIGHT_RETENTION_MARGIN if memory.exposed or memory.visible else 0.0)
     alignment = (dx * math.cos(actor.facing) + dy * math.sin(actor.facing)) / distance if distance else 1.0
-    if distance <= sight_range and alignment >= 0.5 and geometry.raycast(actor.xy, target.xy) is None:
+    if distance <= sight_range and alignment >= 0.5 and geometry.sight_clear(actor.xy, target.xy, floor=floor):
         return distance, alignment
 
 
@@ -92,7 +93,7 @@ def update_vision(target, memory, time, sample, *, alert=False, reacquire=False,
 
 
 def observe(actor, target, geometry, memory, time, **factors):
-    update_vision(target, memory, time, sight_sample(actor, target, geometry, memory), **factors)
+    update_vision(target, memory, time, sight_sample(actor, target, geometry, memory, time=time), **factors)
 
 
 def _estimate_sound(position, distance, navigation):
@@ -110,7 +111,8 @@ def _estimate_sound(position, distance, navigation):
 
 
 def hear(actor, memory, event, navigation, *, checked_sound_at):
-    if event.kind != "noise" or event.data.get("team") == actor.team:
+    if (event.kind != "noise" or event.data.get("team") == actor.team
+            or event.data.get("floor", actor.position.floor) != actor.position.floor):
         return
     distance = math.dist(actor.xy, event.position)
     radius = event.data["radius"]

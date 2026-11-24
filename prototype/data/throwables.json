@@ -1,0 +1,32 @@
+[
+  {
+    "id": "smoke",
+    "name": "연막탄",
+    "weight": 0.45,
+    "throw_range": 15.0,
+    "speed": 16.0,
+    "fuse": 1.0,
+    "warehouse_quantity": 2,
+    "effect": {"kind": "smoke", "radius": 4.0, "duration": 10.0, "noise_radius": 7.0}
+  },
+  {
+    "id": "flash",
+    "name": "섬광탄",
+    "weight": 0.30,
+    "throw_range": 14.0,
+    "speed": 18.0,
+    "fuse": 0.85,
+    "warehouse_quantity": 2,
+    "effect": {"kind": "flash", "radius": 6.0, "duration": 2.4, "noise_radius": 23.0}
+  },
+  {
+    "id": "frag",
+    "name": "수류탄",
+    "weight": 0.40,
+    "throw_range": 16.0,
+    "speed": 17.0,
+    "fuse": 1.25,
+    "warehouse_quantity": 2,
+    "effect": {"kind": "frag", "radius": 4.5, "noise_radius": 36.0}
+  }
+]

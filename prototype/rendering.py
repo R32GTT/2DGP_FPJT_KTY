@@ -14,9 +14,11 @@ from .hud import HUD
 from .lighting import Lighting, incident_light, smooth
 from .map_images import MapImages
 from .perception import INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS
+from .throwables import BURST_SECONDS
 from .transport import TRUCK_SIZE
 from .visual_assets import (
-    actor_image, draw_polygon, prop_image, tree_canopy_image, tree_trunk_image, truck_image, vignette_image, weapon_image,
+    actor_image, draw_polygon, prop_image, smoke_image, tree_canopy_image, tree_trunk_image, truck_image,
+    vignette_image, weapon_image,
 )
 from .weapons import load_weapons, weapon_pose
 from .world import ROOT
@@ -53,6 +55,7 @@ class Renderer:
                      for key, spec in load_weapons().items()}
         self.door = self._image("assets/prototype/door.png", "assets/generated/entities/door_door_wood_horizontal_64x32.png")
         self.vignette = self._image("assets/prototype/alert_vignette.png") or vignette_image(self.backend)
+        self.smoke = smoke_image(self.backend)
         self.hud = HUD(self.backend)
         self.last_draw_ms = 0.0
         for name in self.missing:
@@ -171,8 +174,8 @@ class Renderer:
 
     @staticmethod
     def _enemy_visibility(world, player, enemies, sky, lights, night_vision):
-        origin = player.xy
-        centers = world.geometry.sight_flags(origin, [actor.xy for actor in enemies])
+        origin, floor = player.xy, player.position.floor
+        centers = world.geometry.sight_flags(origin, [actor.xy for actor in enemies], floor=floor)
         visible = [actor for actor, clear in zip(enemies, centers) if clear]
         blocked = [actor for actor, clear in zip(enemies, centers) if not clear]
         sides = []
@@ -182,7 +185,7 @@ class Renderer:
             sides.extend(((actor.xy[0] - dy * scale, actor.xy[1] + dx * scale),
                           (actor.xy[0] + dy * scale, actor.xy[1] - dx * scale)))
         if sides:
-            flags = world.geometry.sight_flags(origin, sides)
+            flags = world.geometry.sight_flags(origin, sides, floor=floor)
             visible.extend(actor for actor, left, right in zip(blocked, flags[::2], flags[1::2]) if left or right)
 
         result = {}
@@ -199,6 +202,35 @@ class Renderer:
             if alpha >= 1 / 255:
                 result[actor.id] = alpha
         return result
+
+    def _draw_throwables(self, simulation, view, floor):
+        for flight in simulation.throwables.flights:
+            if flight.floor != floor:
+                continue
+            x, y = flight.position
+            body = Rect(x - 0.07, y - 0.07, 0.14, 0.14)
+            if view.visible(body):
+                self._rect(view, body, (120, 132, 94))
+        for cloud in simulation.throwables.smoke:
+            if cloud.floor != floor:
+                continue
+            if not view.visible(Rect(*cloud.position, 0, 0).expanded(cloud.radius)):
+                continue
+            diameter = 2 * cloud.radius * view.scale
+            self.smoke.opacify(min(1.0, cloud.expires_at - simulation.time))
+            self.smoke.draw(*view.pico(*cloud.position), diameter, diameter)
+        for burst in simulation.throwable_bursts:
+            if burst.floor != floor:
+                continue
+            progress = (simulation.time - burst.time) / BURST_SECONDS
+            radius = (0.18 + 0.58 * progress) * burst.spec.effect.radius
+            if not view.visible(Rect(*burst.position, 0, 0).expanded(radius)):
+                continue
+            x, y = burst.position
+            points = [view.pico(x + math.cos(angle) * radius, y + math.sin(angle) * radius)
+                      for angle in (index * math.tau / 12 for index in range(12))]
+            color = (255, 251, 224) if burst.spec.effect.kind == "flash" else (248, 157, 76)
+            draw_polygon(self.backend, points, (*color, round(208 * (1 - progress))))
 
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False,
                inventory_view=None):
@@ -344,9 +376,9 @@ class Renderer:
             gun_bounds = self._rotated_bounds(center, weapon.spec.size_m, actor.facing) if weapon else body_bounds
             if view.visible(body_bounds) or view.visible(gun_bounds):
                 candidates.append((actor, body_angle, weapon, center, gun_bounds))
-        seen_enemies = self._enemy_visibility(world, player,
-                                              [actor for actor, *_ in candidates if actor.team != player.team],
-                                              sky, lights, night_vision)
+        flash_left = player.blinded_until - simulation.time
+        seen_enemies = {} if flash_left > 0 else self._enemy_visibility(
+            world, player, [actor for actor, *_ in candidates if actor.team != player.team], sky, lights, night_vision)
         awareness = []
         for actor, body_angle, weapon, center, gun_bounds in candidates:
             alpha = 1.0 if actor.team == player.team else seen_enemies.get(actor.id, 0)
@@ -405,6 +437,7 @@ class Renderer:
         self.lighting.draw(world, view, lights, sky, night_vision=night_vision, floor=floor)
         # 지면 조명으로 그려진 그림자 위에 수관을 별도로 합성한다.
         self._draw_trees(view, colliders, player.xy, sky, night_vision, debug)
+        self._draw_throwables(simulation, view, floor)
         for point in simulation.laser_targets(sky, view.viewport()):
             x, y = view.pico(*point)
             alpha = round(230 * sky.infrared)
@@ -421,7 +454,7 @@ class Renderer:
         for trace in simulation.combat.traces:
             color = (249, 225, 137) if trace.team == "player" else (230, 128, 92)
             pico.draw_line(*view.pico(*trace.start), *view.pico(*trace.end), *color)
-        if mouse is not None and simulation.player.hp > 0:
+        if mouse is not None and player.hp > 0 and flash_left <= 0:
             # 흔들리는 화면에서도 실제 조준한 월드 지점에 조준점을 함께 그린다.
             aim = camera.world(*mouse)
             x, y = view.pico(*aim)
@@ -434,6 +467,9 @@ class Renderer:
         if simulation.feedback.alpha > 0.001:
             self.vignette.opacify(simulation.feedback.alpha)
             self.vignette.draw(camera.width / 2, camera.height / 2, camera.width, camera.height)
+        if flash_left > 0 and player.hp > 0:
+            pico.draw_rectangle(0, 0, view.width - 1, view.height - 1, 250, 249, 233,
+                                round(244 * min(1.0, flash_left / 0.45)), filled=True)
         self.hud.render(simulation, camera, paused=paused, debug=debug,
                         update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=map_open,
                         cache_count=len(self.map_images.cache), search_counts=search_counts,
@@ -449,6 +485,6 @@ class Renderer:
         self.sprites.clear()
         self.props.clear()
         self.guns.clear()
-        self.door = self.vignette = self.tree_canopy = self.tree_trunk = self.truck = None
+        self.door = self.vignette = self.tree_canopy = self.tree_trunk = self.truck = self.smoke = None
         self.images.clear()
         self.backend.SDL_ShowCursor(self.backend.SDL_ENABLE)

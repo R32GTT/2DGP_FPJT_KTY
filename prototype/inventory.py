@@ -27,9 +27,12 @@ class FieldInventory:
     def __init__(self, play, parts):
         self.play, self.parts = play, parts
         self.throwable_specs = load_throwables()
+        self.selected_throwable = None
         self.carried, self.stored = {}, {}
+        throwable_stock = {f"throwable:{spec.id}": spec.warehouse_quantity for spec in self.throwable_specs.values()
+                           if spec.warehouse_quantity}
         self.ground = [
-            (tuple(site["terminal"]), {**dict.fromkeys(parts, 1),
+            (tuple(site["terminal"]), {**dict.fromkeys(parts, 1), **throwable_stock,
                                       **{f"ammo:{key}": row[2] for key, row in AMMUNITION.items()}})
             for site in play.world.facilities if site["kind"] == "warehouse"
         ]
@@ -42,6 +45,17 @@ class FieldInventory:
             return spec.name, spec.weight
         part = self.parts[key]
         return part.name, part.weight
+
+    @property
+    def active_throwable(self):
+        if self.selected_throwable in self.carried:
+            return self.selected_throwable
+        return next((key for key in self.carried if key.startswith("throwable:")), None)
+
+    def consume_throwable(self, key):
+        self._remove(self.carried, key, 1)
+        if self.selected_throwable == key and key not in self.carried:
+            self.selected_throwable = None
 
     def validate_items(self, values):
         if not isinstance(values, dict):
@@ -116,6 +130,7 @@ class FieldInventory:
         if self.carried:
             self.ground.append((self.play.player.xy, self.carried))
             self.carried = {}
+        self.selected_throwable = None
 
     @staticmethod
     def _remove(items, key, amount):
@@ -185,8 +200,12 @@ class FieldInventory:
                 rows.append(("안전가옥  ·  무기 보관·교환", ("stash_gun", site)))
             for key, count in sorted(self.stored.get(safehouse, {}).items()):
                 rows.append((f"보관함  ·  {self.item(key)[0]} ×{count} 회수", ("take", safehouse, key)))
+        active_throwable = self.active_throwable
         for key, count in sorted(self.carried.items()):
             label = f"가방  ·  {self.item(key)[0]} ×{count}"
+            if key.startswith("throwable:"):
+                state = "선택 중 · G 투척" if key == active_throwable else "투척물 선택"
+                rows.append((f"{label}  ·  {state}", ("select_throwable", key)))
             rows.append((f"{label} {'보관' if safehouse else '내려놓기'}", ("put", safehouse, key)))
         return rows
 
@@ -201,6 +220,9 @@ class FieldInventory:
             self.play.switch_weapon(*args)
         elif kind == "part":
             self._change_part(*args)
+        elif kind == "select_throwable":
+            self.selected_throwable = args[0]
+            self.play.message = f"{self.item(args[0])[0]} 선택 · G 투척"
         elif kind == "gun":
             self.take_gun(*args)
         elif kind == "drop_gun":
@@ -224,6 +246,8 @@ class FieldInventory:
         elif kind == "put":
             site, key = args
             amount = self.carried.pop(key)
+            if self.selected_throwable == key:
+                self.selected_throwable = None
             if site:
                 stored = self.stored.setdefault(site, {})
                 stored[key] = stored.get(key, 0) + amount

@@ -49,6 +49,8 @@ class Controls:
                     self.inventory_open = False
                 elif key == sdl2.SDLK_TAB:
                     actions.append("inventory")
+                elif key == sdl2.SDLK_g:
+                    actions.append("throw")
                 elif self.inventory_open and key in (sdl2.SDLK_UP, sdl2.SDLK_DOWN, sdl2.SDLK_RETURN):
                     actions.append({sdl2.SDLK_UP: "item_previous", sdl2.SDLK_DOWN: "item_next",
                                     sdl2.SDLK_RETURN: "item_use"}[key])

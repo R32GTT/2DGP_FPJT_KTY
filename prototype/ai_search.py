@@ -277,10 +277,14 @@ class SearchController:
     def confirm_view(self, actor, brain, time):
         sweep, room, stationary = brain.look.sample
         scan = brain.search.task.scan
+        if time < actor.blinded_until:
+            scan.exposure.clear()
+            return
         pending = sweep.pending_for(actor.id, room, revisit_corners=not brain.search.task.staging)
         corners = set(pending) & set(sweep.pending_corners(room))
         candidates = (scan.walk_look,) if scan.walk_look in corners else (p for p in pending if p not in corners)
-        views = dict(sample_views(actor.xy, actor.facing, candidates, self.world.geometry, stationary=stationary))
+        views = dict(sample_views(actor.xy, actor.facing, candidates, self.world.geometry, stationary=stationary,
+                                  floor=actor.position.floor))
         if time - scan.sample_at > 1 / 30:
             scan.exposure.clear()
         scan.sample_at = time
@@ -406,6 +410,9 @@ class Visit(Sequence):
         self.goal, task.staging = None, False
         self.started = self.time if self.started is None else self.started
         brain.motion.speed = 0
+        if self.time < actor.blinded_until:
+            self.started, self.since = self.time, None
+            return Status.RUNNING
         if task.sweep is not None:
             self.controller.look_at_indoor_samples(actor, brain, self.time, task.sweep,
                                                   task.sweep.area.room_of(task.target), stationary=True)
@@ -414,7 +421,8 @@ class Visit(Sequence):
         if cue is not None and report is not None and report.kind == cue.kind and report.point == task.target and report.at >= cue.at:
             return Status.SUCCESS
         brain.look.point, brain.look.reason = task.target, "단서 위치 확인"
-        views = dict(sample_views(actor.xy, actor.facing, (task.target,), world.geometry, stationary=True))
+        views = dict(sample_views(actor.xy, actor.facing, (task.target,), world.geometry, stationary=True,
+                                  floor=actor.position.floor))
         self.since = (self.time if self.since is None else self.since) if views.get(task.target) else None
         if self.since is not None and self.time - self.since >= self.hold:
             return Status.SUCCESS

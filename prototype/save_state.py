@@ -38,8 +38,10 @@ def restore_actor(row, specs):
     actor = Actor(**{**row, "position": Position(**row["position"]),
                      "loadout": restore_weapons(row["loadout"], specs),
                      "boarding_goal": tuples(row["boarding_goal"])})
-    if (not all(math.isfinite(value) for value in (*actor.xy, actor.hp, actor.facing, actor.radius, actor.speed))
+    if (not all(math.isfinite(value) for value in (*actor.xy, actor.hp, actor.facing, actor.radius,
+                                                 actor.speed, actor.blinded_until))
             or actor.hp < 0 or actor.radius <= 0 or actor.speed <= 0
+            or actor.blinded_until < 0
             or actor.lamp not in OPTICS_MODES or type(actor.night_vision) is not bool or type(actor.ir_laser) is not bool
             or actor.active_weapon and actor.active_weapon not in actor.loadout):
         raise ValueError("잘못된 현장 개체 상태")
@@ -71,7 +73,8 @@ def capture(play):
             "safehouse_stash": {key: weapons({weapon.spec.id: weapon})
                                 for key, weapon in play.safehouse_stash.items()},
             "inventory": {"carried": play.inventory.carried, "stored": play.inventory.stored,
-                          "ground": play.inventory.ground},
+                          "ground": play.inventory.ground, "selected_throwable": play.inventory.selected_throwable},
+            "throwables": play.throwables.snapshot(),
             "random": play.combat.random.getstate(), "reports": play.campaign._reports,
             "resumed_at": play.campaign._resumed_at,
             "received": sorted(play.presence.received)}
@@ -144,6 +147,11 @@ def restore(play, row):
         play.safehouse_stash[key] = next(iter(restore_weapons(slot, play.specs).values()))
     inventory = row["inventory"]
     play.inventory.carried = play.inventory.validate_items(inventory["carried"])
+    selection = inventory["selected_throwable"]
+    if selection is not None and (selection not in play.inventory.carried or not selection.startswith("throwable:")):
+        raise ValueError("잘못된 투척물 선택 상태")
+    play.inventory.selected_throwable = selection
+    play.throwables.restore(row["throwables"], play.time)
     play.inventory.stored = {key: play.inventory.validate_items(items) for key, items in inventory["stored"].items()}
     if not play.inventory.stored.keys() <= play.respawn_sites.keys():
         raise ValueError("잘못된 인벤토리 보관소")

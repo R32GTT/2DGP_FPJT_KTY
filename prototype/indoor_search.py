@@ -44,7 +44,7 @@ class SearchArea:
         return next((pose.room for pose in self.entry_poses if pose.position == point), None)
 
 
-def sample_views(xy, facing, samples, geometry, *, stationary=False, include_outside=False):
+def sample_views(xy, facing, samples, geometry, *, stationary=False, include_outside=False, floor=None):
     forward_x, forward_y = math.cos(facing), math.sin(facing)
     scan_range = STATIONARY_SCAN_RANGE_M if stationary else SCAN_RANGE_M
     near = 0.15 if stationary else 0.075
@@ -57,7 +57,7 @@ def sample_views(xy, facing, samples, geometry, *, stationary=False, include_out
         in_view = distance <= near or dx * forward_x + dy * forward_y >= distance * SCAN_CONE_COS
         if in_view or include_outside:
             candidates.append((point, in_view))
-    flags = geometry.sight_flags(xy, [point for point, _ in candidates])
+    flags = geometry.sight_flags(xy, [point for point, _ in candidates], floor=floor)
     for (point, in_view), clear in zip(candidates, flags):
         # 시야 밖에 있지만 장애물로 가려지지 않은 표본도 디버그에서 구별한다.
         yield point, (True if in_view else None) if clear else False

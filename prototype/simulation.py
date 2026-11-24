@@ -22,6 +22,7 @@ from .geometry import Rect
 from .inventory import FieldInventory, weapon_slots
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
+from .throwables import BURST_SECONDS, SmokeCloud, Throwables
 from .transport import TransportCrew
 from .campaign_presence import CampaignPresence
 from .weapons import WeaponState, load_attachments, load_weapons
@@ -122,6 +123,13 @@ class PlaySimulation:
         self.dropped = []
         self.safehouse_stash = {}
         self.inventory = FieldInventory(self, parts)
+        self.throwables = Throwables(self.inventory.throwable_specs)
+        self.world.geometry.smoke = self.throwables.smoke
+        self.throwable_bursts = []
+        self._throwable_effects = {"smoke": self._activate_smoke, "flash": self._activate_flash, "frag": self._activate_frag}
+        for spec in self.throwables.specs.values():
+            if spec.effect.kind not in self._throwable_effects:
+                raise ValueError(f"등록되지 않은 투척 효과: {spec.effect.kind}")
         self.kit_available = True
         self.ai_scenario, self.ai_hint = ai_scenario, ""
         if self.presence:
@@ -324,7 +332,8 @@ class PlaySimulation:
                             1.0, actor.facing, math.radians(25), infrared=True, floor=floor)
 
     def laser_targets(self, sky, viewport):
-        if not self.player.night_vision or not sky.infrared or self.player.hp <= 0:
+        if (not self.player.night_vision or not sky.infrared or self.player.hp <= 0
+                or self.time < self.player.blinded_until):
             return
         reach = 30.0
         for actor in (self.player, *self.guards):
@@ -332,7 +341,7 @@ class PlaySimulation:
                     or not Rect(*actor.xy, 0, 0).expanded(reach).overlaps(viewport)):
                 continue
             point = beam_end(self.world, actor.xy, actor.facing, reach)
-            if point is None:
+            if point is None or self.world.geometry.smoke_blocks(self.player.xy, point, self.player.position.floor):
                 continue
             dx, dy = point[0] - self.player.position.x, point[1] - self.player.position.y
             distance = math.hypot(dx, dy)
@@ -362,6 +371,71 @@ class PlaySimulation:
         elif action == "lamp":
             player.lamp = OPTICS_MODES[(OPTICS_MODES.index(player.lamp) + 1) % len(OPTICS_MODES)]
 
+    def throw_selected(self, target):
+        player = self.player
+        if player.hp <= 0:
+            return False
+        key = self.inventory.active_throwable
+        if key is None:
+            self.message = "휴대한 투척물이 없습니다 · Tab 인벤토리"
+            return False
+        self.throwables.launch(key.removeprefix("throwable:"), source=player.id, floor=player.position.floor,
+                               origin=player.xy, target=target, time=self.time, team=player.team)
+        self.inventory.consume_throwable(key)
+        return True
+
+    def _trace_throw(self, floor, start, end):
+        wall = self.world.geometry.raycast(start, end, category="movement")
+        truck = self.transports.raycast(start, end) if floor == 0 else None
+        return min((hit[0] for hit in (wall, truck) if hit is not None), default=None)
+
+    def _activate_smoke(self, activation):
+        effect = activation.spec.effect
+        expires_at = activation.time + effect.duration
+        if expires_at <= self.time:
+            return
+        self.throwables.smoke.append(SmokeCloud(activation.floor, activation.position, effect.radius, expires_at))
+        for brain in self.ai.brains.values():
+            if brain.memory.visible:
+                brain.sense_at = self.time
+
+    def _activate_flash(self, activation):
+        effect = activation.spec.effect
+        expires_at = activation.time + effect.duration
+        if expires_at <= self.time:
+            return
+        for actor in (self.player, *self.guards):
+            if (actor.hp <= 0 or actor.position.floor != activation.floor
+                    or math.dist(actor.xy, activation.position) > effect.radius
+                    or not self.world.geometry.sight_clear(actor.xy, activation.position, floor=activation.floor)
+                    or (activation.floor == 0 and self.transports.raycast(actor.xy, activation.position) is not None)):
+                continue
+            actor.blinded_until = max(actor.blinded_until, expires_at)
+            brain = self.ai.brains.get(actor.id)
+            if brain:
+                brain.memory.visible, brain.memory.exposed = False, False
+                brain.sense_at = self.time
+
+    def _activate_frag(self, activation):
+        self.combat.blast(self.world, activation.position, activation.floor, activation.spec.effect.radius,
+                          (self.player, *self.guards), self.time, activation.source)
+
+    def _update_throwables(self):
+        if self.throwable_bursts:
+            self.throwable_bursts[:] = [burst for burst in self.throwable_bursts
+                                        if self.time - burst.time < BURST_SECONDS]
+        if not self.throwables.flights and not self.throwables.smoke:
+            return
+        for activation in self.throwables.update(self.time, self._trace_throw):
+            effect = activation.spec.effect
+            self._throwable_effects[effect.kind](activation)
+            if effect.kind != "smoke" and self.time - activation.time < BURST_SECONDS:
+                self.throwable_bursts.append(activation)
+            if effect.noise_radius:
+                self.events.emit_at("noise", self.time, activation.source, activation.position,
+                                    {"team": activation.team, "floor": activation.floor, "radius": effect.noise_radius,
+                                     "strength": min(1.0, effect.noise_radius / 20), "reason": effect.kind})
+
     def step(self, direction=(0, 0), aim=None, firing=False, sprint=False, *, aiming=False,
              trigger_pressed=False, walking=False, aim_offset=None):
         if self.respawn_target is not None:
@@ -369,6 +443,9 @@ class PlaySimulation:
             self.campaign.simulation.advance_to(min(self.respawn_target, current + 60))
             self.time = float(self.campaign.simulation.state.world_time)
             self._expire_alarms()
+            self._update_throwables()
+            if self.events.pending:
+                self._dispatch()
             if self.time >= self.respawn_target:
                 site = self.respawn_sites.get(self.respawn_site_id)
                 self.respawn_target = None
@@ -416,6 +493,7 @@ class PlaySimulation:
                 self.player.weapon.update_accuracy(
                     FIXED_DT, aiming=aiming, movement_speed_mps=moved / FIXED_DT,
                     sprinting=sprint and not walking)
+        self._update_throwables()
         self._dispatch()
         self._player_exposure = None
         intents = self.ai.update(self.guards, self.player, self.time, player_motion=player_motion)
@@ -450,7 +528,7 @@ class PlaySimulation:
             self.combat.fire(self.player, self.world, self.time)
         for actor in self.guards:
             intent = intents.get(actor.id)
-            if actor.hp <= 0 or self.player.hp <= 0 or intent is None:
+            if actor.hp <= 0 or self.player.hp <= 0 or intent is None or self.time < actor.blinded_until:
                 continue
             if intent.retreat_fire:
                 if (self.combat.clear_fire_line(actor, self.player, self.world)

@@ -20,7 +20,10 @@ class EventBus:
         self.counts = Counter()
 
     def emit(self, kind, time, actor, **data):
-        event = GameEvent(kind, time, actor.id, actor.xy, {"team": actor.team, **data})
+        return self.emit_at(kind, time, actor.id, actor.xy, {"team": actor.team, **data})
+
+    def emit_at(self, kind, time, source, position, data):
+        event = GameEvent(kind, time, source, position, data)
         self.pending.append(event)
         self.history.append(event)
         self.counts[kind] += 1

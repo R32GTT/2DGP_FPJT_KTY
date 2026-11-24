@@ -34,6 +34,7 @@ class Actor:
     lamp: str = "off"
     night_vision: bool = False
     ir_laser: bool = False
+    blinded_until: float = 0.0
 
     @property
     def xy(self):

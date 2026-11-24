@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 DATA_PATH = Path(__file__).with_name("data") / "throwables.json"
+BURST_SECONDS = 0.24
 
 
 def _number(value, *, minimum=0):
@@ -18,10 +19,11 @@ class ThrowableEffect:
     kind: str
     radius: float
     duration: float = 0
+    noise_radius: float = 0
 
     def __post_init__(self):
         if not isinstance(self.kind, str) or not self.kind.strip() or not all(
-                _number(value) for value in (self.radius, self.duration)):
+                _number(value) for value in (self.radius, self.duration, self.noise_radius)):
             raise ValueError("잘못된 투척 효과 정의")
 
 
@@ -34,11 +36,13 @@ class ThrowableSpec:
     speed: float
     fuse: float
     effect: ThrowableEffect
+    warehouse_quantity: int = 0
 
     def __post_init__(self):
         if (not all(isinstance(value, str) and value.strip() for value in (self.id, self.name))
                 or not all(_number(value) and value > 0 for value in (self.weight, self.throw_range, self.speed))
-                or not _number(self.fuse) or not isinstance(self.effect, ThrowableEffect)):
+                or not _number(self.fuse) or not isinstance(self.effect, ThrowableEffect)
+                or type(self.warehouse_quantity) is not int or self.warehouse_quantity < 0):
             raise ValueError(f"잘못된 투척물 정의: {self.id}")
 
 
@@ -67,6 +71,7 @@ class Flight:
     target: tuple[float, float]
     updated_at: float
     trigger_at: float
+    team: str
 
 
 @dataclass(frozen=True)
@@ -76,14 +81,24 @@ class Activation:
     floor: int
     position: tuple[float, float]
     time: float
+    team: str
+
+
+@dataclass(frozen=True)
+class SmokeCloud:
+    floor: int
+    position: tuple[float, float]
+    radius: float
+    expires_at: float
 
 
 class Throwables:
     def __init__(self, specs):
         self.specs = specs
         self.flights = []
+        self.smoke = []
 
-    def launch(self, key, *, source, floor, origin, target, time):
+    def launch(self, key, *, source, floor, origin, target, time, team=""):
         spec = self.specs[key]
         if (len(origin) != 2 or len(target) != 2 or not _number(time)
                 or not all(_number(value, minimum=-math.inf) for value in (*origin, *target))):
@@ -92,12 +107,14 @@ class Throwables:
         if distance > spec.throw_range:
             fraction = spec.throw_range / distance
             target = tuple(start + (end - start) * fraction for start, end in zip(origin, target))
-        self.flights.append(Flight(spec, source, floor, tuple(origin), tuple(target), time, time + spec.fuse))
+        self.flights.append(Flight(spec, source, floor, tuple(origin), tuple(target), time, time + spec.fuse, team))
 
     def update(self, time, trace):
         """trace(floor, start, end)는 첫 장애물의 선분 비율이나 None을 반환한다."""
         if not _number(time):
             raise ValueError("잘못된 투척 시각")
+        if self.smoke:
+            self.smoke[:] = [cloud for cloud in self.smoke if time < cloud.expires_at]
         active, activations = [], []
         for flight in self.flights:
             end_time = min(time, flight.trigger_at)
@@ -119,8 +136,32 @@ class Throwables:
             flight.updated_at = max(flight.updated_at, end_time)
             if time >= flight.trigger_at:
                 activations.append(Activation(flight.spec, flight.source, flight.floor,
-                                              flight.position, flight.trigger_at))
+                                              flight.position, flight.trigger_at, flight.team))
             else:
                 active.append(flight)
         self.flights = active
         return sorted(activations, key=lambda item: item.time)
+
+    def snapshot(self):
+        return {"flights": [{**vars(flight), "spec": flight.spec.id} for flight in self.flights],
+                "smoke": [vars(cloud) for cloud in self.smoke]}
+
+    def restore(self, saved, time):
+        def point(value):
+            if len(value) != 2 or not all(_number(coord, minimum=-math.inf) for coord in value):
+                raise ValueError("잘못된 투척물 저장 위치")
+            return tuple(value)
+
+        flights = [Flight(**{**row, "spec": self.specs[row["spec"]],
+                             "position": point(row["position"]), "target": point(row["target"])})
+                   for row in saved["flights"]]
+        smoke = [SmokeCloud(**{**row, "position": point(row["position"])}) for row in saved["smoke"]]
+        if any(type(flight.floor) is not int or not isinstance(flight.source, str)
+               or not isinstance(flight.team, str) or not _number(flight.updated_at)
+               or not _number(flight.trigger_at) or not flight.updated_at <= time < flight.trigger_at for flight in flights):
+            raise ValueError("잘못된 투척물 비행 상태")
+        if any(type(cloud.floor) is not int or not _number(cloud.radius) or cloud.radius <= 0
+               or not _number(cloud.expires_at) or cloud.expires_at <= time for cloud in smoke):
+            raise ValueError("잘못된 연막 상태")
+        self.flights = flights
+        self.smoke[:] = smoke

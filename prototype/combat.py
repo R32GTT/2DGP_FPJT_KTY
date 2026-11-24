@@ -103,6 +103,16 @@ class Combat:
             self.events.emit("killed", time, victim, **context)
         return True
 
+    def blast(self, world, origin, floor, radius, actors, time, source):
+        for victim in actors:
+            if (victim.hp <= 0 or victim.position.floor != floor or math.dist(origin, victim.xy) > radius
+                    or world.geometry.raycast(origin, victim.xy, category="bullet") is not None
+                    or (floor == 0 and self.transports and self.transports.raycast(origin, victim.xy) is not None)):
+                continue
+            x, y = victim.xy
+            self._damage(victim, victim.hp + victim.armor, time, attacker=source,
+                         incoming=math.atan2(y - origin[1], x - origin[0]))
+
     def fire(self, actor, world, time):
         weapon = actor.weapon
         if actor.hp <= 0 or weapon is None or time < actor.equip_until or not weapon.fire(time):

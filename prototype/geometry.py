@@ -69,6 +69,7 @@ class Collider:
 class SpatialIndex:
     objects: dict[str, Collider] = field(default_factory=dict)
     index: BoundsIndex = field(default_factory=BoundsIndex)
+    smoke: list = field(default_factory=list)
 
     def add(self, collider):
         self.index.add(collider.id, collider.rect, collider)
@@ -84,13 +85,26 @@ class SpatialIndex:
     def sight_count(self, origin, targets):
         return sum(self.sight_flags(origin, targets))
 
-    def sight_flags(self, origin, targets):
+    def smoke_blocks(self, origin, target, floor):
+        return any(cloud.floor == floor and segment_distance(*cloud.position, *origin, *target) <= cloud.radius
+                   for cloud in self.smoke)
+
+    def sight_clear(self, origin, target, *, floor):
+        return not self.smoke_blocks(origin, target, floor) and self.raycast(origin, target) is None
+
+    def sight_flags(self, origin, targets, *, floor=None):
         if len(targets) <= 3:
+            if self.smoke and floor is not None:
+                return [self.sight_clear(origin, target, floor=floor) for target in targets]
             return [self.raycast(origin, target, category="sight") is None for target in targets]
         rays = linestrings([(origin, point) for point in targets])
         blocked = {row for row, collider in self.index.intersections(rays)
                    if collider.active and "sight" in collider.blocks
                    and collider.rect.segment_entry(origin, targets[row]) is not None}
+        # 층을 받는 실시간 시야에만 연막을 적용한다. 정적 수색 지점 계산은 벽만 조회한다.
+        if self.smoke and floor is not None:
+            return [index not in blocked and not self.smoke_blocks(origin, target, floor)
+                    for index, target in enumerate(targets)]
         return [index not in blocked for index in range(len(targets))]
 
     def raycast(self, start, end, *, padding=0.0, category="sight", ignore_doors=False, ignore_ids=()):
