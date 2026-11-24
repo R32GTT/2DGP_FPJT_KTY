@@ -183,13 +183,21 @@ class SearchState:
 
 
 @dataclass
+class RadioState:
+    started_at: float | None = None
+    shouted_contact_at: float | None = None
+    sent_point: tuple[float, float] | None = None
+    sent_at: float = -1000.0
+
+
+@dataclass
 class Brain:
     patrol: list
     memory: Knowledge = field(default_factory=Knowledge)
     waypoint: int = 0
     sense_at: float = 0.0
     radio_at: float = 0.0
-    contact_at: float = 0.0
+    contact_at: float | None = None
     incident: str = ""
     far_at: float = 0.0
     far_updated: float = 0.0
@@ -197,6 +205,7 @@ class Brain:
     combat: CombatState = field(default_factory=CombatState)
     search: SearchState = field(default_factory=SearchState)
     look: LookState = field(default_factory=LookState)
+    radio: RadioState = field(default_factory=RadioState)
     post_facing: float | None = None
 
     @property

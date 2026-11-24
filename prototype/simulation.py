@@ -1,5 +1,6 @@
 """고정 틱의 플레이 조합. 총기·지각·AI·효과·군수 모듈을 이벤트로 연결한다."""
 
+from dataclasses import dataclass
 import math
 
 from campaign.models import Position
@@ -24,6 +25,17 @@ from .world import DEFAULT_SCENE, World
 
 
 FIXED_DT = 1 / 60
+ALARM_SECONDS = 60
+ALARM_NOTICE_RANGE = 100.0
+
+
+@dataclass(frozen=True)
+class RegionAlarm:
+    position: tuple[float, float]
+    until: float
+
+    def near(self, point):
+        return math.dist(point, self.position) <= ALARM_NOTICE_RANGE
 
 
 class PlaySimulation:
@@ -76,12 +88,12 @@ class PlaySimulation:
         self.roster.materialized = materialized
         self.roster.track_player(self.player.xy)
         self.guards = self.roster.sync()
+        self.events, self.feedback = EventBus(), Feedback()
+        self.alarms = {}
         self.ai = EnemyAI(self.world, self.guard_records, [row["patrol"] for row in guard_rows],
-                          can_radio=self.campaign.can_radio,
-                          report_contact=self._report_contact if self.world.data.get("generation") else None)
+                          can_radio=self._can_radio, report_contact=self._report_contact, emit=self.events.emit)
         self.presence = (CampaignPresence(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"])
                          if self.world.data.get("generation") else None)
-        self.events, self.feedback = EventBus(), Feedback()
         self.transports = TransportCrew(self.world, self.campaign, self.roster, self.ai, self.specs["ar_a"], self.events)
         self.combat = Combat(self.events, self.transports)
         self.time, self.footstep_at = float(campaign.state.world_time), 0.0
@@ -151,6 +163,7 @@ class PlaySimulation:
         for event in events:
             if event.kind == "killed" and event.source in self.roster.by_id:
                 actor = self.roster.by_id[event.source]
+                self.ai.cancel_radio(actor, self.time, "killed")
                 truck = self.transports.driver_shot(actor, event.data.get("vehicle_id"))
                 if truck is None:
                     self.roster.record_loss(actor, seated="vehicle_id" in event.data)
@@ -177,20 +190,64 @@ class PlaySimulation:
             self.message = "전투 불능 — Enter: 6시간 진행 후 무장 없이 복귀"
 
     def _sync_guards(self, *, restore=False):
+        previous = self.guards
         self.world.update_chunks(self.player.xy)
         self.roster.track_player(self.player.xy)
         if self.presence:
             self.presence.prepare(self.time, self.player.xy)
         self.transports.sync(self.time)
         self.guards = self.roster.sync(restore=restore) + self.transports.dismounted
+        active = {actor.id for actor in self.guards}
+        for actor in previous:
+            if actor.id not in active:
+                self.ai.cancel_radio(actor, self.time, "unavailable")
         if self.presence:
             self.presence.receive_orders(self.time)
 
+    def _radio_region(self, actor):
+        territory = self.world.territory_at(actor.xy)
+        if territory in self.campaign.simulation.state.regions:
+            return territory
+        return self.campaign.actor_region(actor)
+
+    def _can_radio(self, sender, receiver):
+        region = self._radio_region(sender)
+        return region == self._radio_region(receiver) and self.campaign.has_signal(region)
+
+    def _alarm_position(self, region_id, actor):
+        state = self.campaign.simulation.state
+        facilities = [state.facilities[key] for key in state.regions[region_id].facility_ids]
+        sites = {site["campaign_id"]: site["terminal"] for site in self.world.facilities}
+        speakers = [facility for facility in facilities if facility.damage < 100 and facility.id in sites]
+        if not speakers:
+            return actor.xy
+        speaker = min(speakers, key=lambda facility: (math.dist(actor.xy, sites[facility.id]), facility.id))
+        return tuple(sites[speaker.id])
+
     def _report_contact(self, actor, point, seconds):
-        result = self.campaign.report_contact(actor, point, seconds)
+        region = self._radio_region(actor)
+        result = (self.campaign.report_contact(actor, region, point, seconds)
+                  if self.presence else None)
+        if not self.campaign.has_signal(region):
+            self.message = "무전 전달 실패 · 통신 연결 없음"
+            return False
+        self.events.emit("radio_completed", seconds, actor, report=point)
+        previous = self.alarms.get(region)
+        if previous is None or previous.until <= seconds:
+            position = self._alarm_position(region, actor)
+            self.events.emit("alarm_started", seconds, actor, region=region, speaker=position)
+            self.message = "적이 목격 보고를 접수했습니다 · 지역 경보"
+        else:
+            position = previous.position
+        self.alarms[region] = RegionAlarm(position, seconds + ALARM_SECONDS)
         if result and result[0] == "ordered":
             self.message = "목격 보고 전달 · 다른 지역에서 지원 병력 출발 준비"
-            self.events.emit("support_ordered", seconds, actor, operation_id=result[1], position=point)
+            self.events.emit("support_ordered", seconds, actor, operation_id=result[1], report=point)
+        return True
+
+    def _expire_alarms(self):
+        for region in [key for key, alarm in self.alarms.items() if alarm.until <= self.time]:
+            del self.alarms[region]
 
     def _drop_equipment(self):
         self.cancel_reload()
@@ -200,7 +257,7 @@ class PlaySimulation:
 
     @property
     def danger(self):
-        weights = {"combat": 1.0, "search": 0.65, "combat_guard": 0.55, "alert": 0.4, "retreat": 0.8}
+        weights = {"combat": 1.0, "radio": 0.85, "search": 0.65, "combat_guard": 0.55, "alert": 0.4, "retreat": 0.8}
         return max((weights.get(actor.state, 0) for actor in self.guards
                     if actor.hp > 0 and math.dist(actor.xy, self.player.xy) < 24), default=0.0)
 
@@ -210,6 +267,7 @@ class PlaySimulation:
             current = self.campaign.simulation.state.world_time
             self.campaign.simulation.advance_to(min(self.respawn_target, current + 60))
             self.time = float(self.campaign.simulation.state.world_time)
+            self._expire_alarms()
             if self.time >= self.respawn_target:
                 site = self.respawn_sites.get(self.respawn_site_id)
                 self.respawn_target = None
@@ -226,6 +284,7 @@ class PlaySimulation:
             self.feedback.update(FIXED_DT, 0)
             return
         self.time += FIXED_DT
+        self._expire_alarms()
         self.world.update_chunks(self.player.xy)
         if trigger_pressed and self.player.weapon is not None and self.player.weapon.reloading:
             self.cancel_reload()
@@ -237,21 +296,25 @@ class PlaySimulation:
             if actor.hp > 0 and actor.weapon is not None:
                 self._signals(actor, actor.weapon.tick(FIXED_DT))
         previous = self.player.xy
+        player_motion = 1.0
         if self.player.hp > 0:
             speed = 1.5 if walking else 5 if sprint else 3
             if self.player.weapon is not None and self.player.weapon.reloading:
                 speed *= self.player.weapon.spec.reload_move_multiplier
             move_actor(self.player, direction, self.world, FIXED_DT, speed=speed)
-            if math.dist(previous, self.player.xy) > 0.001 and not walking and self.time >= self.footstep_at:
+            moved = math.dist(previous, self.player.xy)
+            if moved > 0.001:
+                player_motion = 0.72 if walking else 1.25 if sprint else 1.0
+            if moved > 0.001 and not walking and self.time >= self.footstep_at:
                 self.events.emit("noise", self.time, self.player, radius=12 if sprint else 5,
                                  strength=0.45 if sprint else 0.25, reason="footstep")
                 self.footstep_at = self.time + (0.35 if sprint else 0.5)
             if self.player.weapon is not None:
                 self.player.weapon.update_accuracy(
-                    FIXED_DT, aiming=aiming, movement_speed_mps=math.dist(previous, self.player.xy) / FIXED_DT,
+                    FIXED_DT, aiming=aiming, movement_speed_mps=moved / FIXED_DT,
                     sprinting=sprint and not walking)
         self._dispatch()
-        intents = self.ai.update(self.guards, self.player, self.time)
+        intents = self.ai.update(self.guards, self.player, self.time, player_motion=player_motion)
         active_guards = [actor for actor in self.guards if actor.hp > 0]
         # 이동 방향과 무관하게 처리 순서가 특정 병사에게 계속 유리하지 않도록 번갈아 적용한다.
         if int(round(self.time / FIXED_DT)) % 2:
@@ -299,6 +362,7 @@ class PlaySimulation:
                         lambda point: self.combat.clear_fire_line(actor, self.player, self.world, origin=point),
                     )
         self._dispatch()
+        self.ai.finish_radios(self.guards, self.time)
         if self.transports.try_resume(self.time) and self.player.hp > 0:
             self.message = "생존 호위가 운전석에 복귀 · 수송 재출발"
         self.feedback.update(FIXED_DT, self.danger if self.player.hp > 0 else 0)

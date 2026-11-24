@@ -14,19 +14,19 @@ from . import ai_config as config
 
 
 class SquadCoordinator:
-    def __init__(self, world, brains, incidents, can_radio=None, report_contact=None):
+    def __init__(self, world, brains, incidents, can_radio=None):
         self.world, self.brains, self.incidents = world, brains, incidents
         self.can_radio = can_radio
-        self.report_contact = report_contact
         self.approaches = {}
         self.assign_at = 0.0
 
-    def report_sighting(self, actor, brain, actors, time):
-        brain.radio_at = time + 4
-        point = tuple(round(axis / 4) * 4 for axis in brain.memory.last_seen)
-        if self.report_contact:
-            self.report_contact(actor, point, time)
-        receivers = self.receivers(actor, actors)
+    @staticmethod
+    def report_point(brain):
+        return tuple(round(axis / 4) * 4 for axis in brain.memory.last_seen)
+
+    def report_sighting(self, actor, brain, actors, time, *, local_only=False):
+        point = self.report_point(brain)
+        receivers = self.receivers(actor, actors, local_only=local_only)
         if not receivers:
             return
         key = brain.incident if brain.incident in self.incidents else actor.id
@@ -53,11 +53,12 @@ class SquadCoordinator:
                 ally.memory.report_source = incident.reporter
                 ally.memory.reported_at = incident.sighting_at
 
-    def receivers(self, actor, actors):
+    def receivers(self, actor, actors, *, local_only=False):
         return [other for other in actors if other.id != actor.id and other.hp > 0 and other.team == actor.team
             and ((other.position.floor == actor.position.floor and math.dist(actor.xy, other.xy) <= 14
                   and self.world.geometry.raycast(actor.xy, other.xy) is None)
-                 or (math.dist(actor.xy, other.xy) <= 75 and self.can_radio and self.can_radio(actor, other)))]
+                 or (not local_only and math.dist(actor.xy, other.xy) <= 75
+                     and self.can_radio and self.can_radio(actor, other)))]
 
     def report_inspection(self, actor, brain, actors, cue, time):
         report = brain.search.reported_check

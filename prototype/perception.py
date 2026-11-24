@@ -8,6 +8,10 @@ SOUND_MEMORY_SECONDS = 14
 GUNSHOT_REPLAN_DISTANCE = 4.0
 SIGHT_RANGE = 16.0
 SIGHT_RETENTION_MARGIN = 0.25
+NOTICE_THRESHOLD = 0.30
+INSPECT_THRESHOLD = 0.70
+VISION_HOLD_SECONDS = 0.7
+VISION_DECAY_PER_SECOND = 0.25
 
 
 @dataclass
@@ -26,26 +30,69 @@ class Knowledge:
     reported: tuple | None = None
     reported_at: float = -1000.0
     report_source: str = ""
+    recognition: float = 0.0
+    glimpse: tuple | None = None
+    glimpse_at: float = -1000.0
+    vision_at: float | None = None
+    exposed: bool = False
 
 
-def observe(actor, target, geometry, memory, time):
-    sight_range = SIGHT_RANGE + SIGHT_RETENTION_MARGIN if memory.visible else SIGHT_RANGE
-    memory.visible = False
+def sight_sample(actor, target, geometry, memory):
     if target.hp <= 0 or actor.position.floor != target.position.floor:
         return
     dx, dy = target.position.x - actor.position.x, target.position.y - actor.position.y
     distance = math.hypot(dx, dy)
-    in_cone = distance < 1.2 or dx * math.cos(actor.facing) + dy * math.sin(actor.facing) >= distance * 0.5
-    if distance <= sight_range and in_cone and geometry.raycast(actor.xy, target.xy) is None:
-        if memory.last_seen is not None and time - memory.seen_at < 0.5:
-            vx, vy = target.xy[0] - memory.last_seen[0], target.xy[1] - memory.last_seen[1]
-            if math.hypot(vx, vy) > 0.06:
-                memory.seen_heading = math.atan2(vy, vx)
-                memory.seen_motion_at = time
-        if time - memory.seen_motion_at > 1.5:
-            memory.seen_heading = None
-        memory.visible, memory.last_seen, memory.seen_at = True, target.xy, time
-        memory.suspicion = 1.0
+    sight_range = SIGHT_RANGE + (SIGHT_RETENTION_MARGIN if memory.exposed or memory.visible else 0.0)
+    alignment = (dx * math.cos(actor.facing) + dy * math.sin(actor.facing)) / distance if distance else 1.0
+    if distance <= sight_range and alignment >= 0.5 and geometry.raycast(actor.xy, target.xy) is None:
+        return distance, alignment
+
+
+def update_vision(target, memory, time, sample, *, alert=False, reacquire=False, motion=1.0, light=1.0):
+    previous = memory.vision_at if memory.vision_at is not None else time
+    memory.vision_at = time
+    elapsed = max(0.0, time - previous)
+    memory.suspicion = max(0.0, memory.suspicion - 0.06 * elapsed)
+    if light <= 0:
+        sample = None
+    was_exposed = memory.exposed and elapsed <= 0.25
+    memory.exposed = sample is not None
+    memory.visible = False
+    if sample is None or not was_exposed:
+        decay_time = max(0.0, time - max(previous, memory.glimpse_at + VISION_HOLD_SECONDS))
+        memory.recognition = max(0.0, memory.recognition - decay_time * VISION_DECAY_PER_SECOND)
+        if not memory.recognition:
+            memory.glimpse = None
+    if sample is None:
+        return
+
+    distance, alignment = sample
+    memory.glimpse, memory.glimpse_at = target.xy, time
+    if reacquire:
+        memory.recognition = 1.0
+    elif was_exposed:
+        # 첫 표본은 노출 시작만 기록한다. 두 관측 사이의 노출만 누적한다.
+        distance_factor = max(0.26, 1.0 - distance / 22)
+        angle_factor = 0.4 + 0.6 * max(0.0, (alignment - 0.5) * 2)
+        rate = 1.05 * distance_factor * angle_factor
+        if distance <= 2.0:
+            rate = max(rate, 3.4 * angle_factor)
+        rate *= motion * light * (1.35 if alert else 1.0)
+        memory.recognition = min(1.0, memory.recognition + elapsed * rate)
+    if memory.recognition < 1.0:
+        return
+    if memory.last_seen is not None and time - memory.seen_at < 0.5:
+        vx, vy = target.xy[0] - memory.last_seen[0], target.xy[1] - memory.last_seen[1]
+        if math.hypot(vx, vy) > 0.06:
+            memory.seen_heading = math.atan2(vy, vx)
+            memory.seen_motion_at = time
+    if time - memory.seen_motion_at > 1.5:
+        memory.seen_heading = None
+    memory.visible, memory.last_seen, memory.seen_at = True, target.xy, time
+
+
+def observe(actor, target, geometry, memory, time, **factors):
+    update_vision(target, memory, time, sight_sample(actor, target, geometry, memory), **factors)
 
 
 def _estimate_sound(position, distance, navigation):

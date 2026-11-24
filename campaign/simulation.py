@@ -214,8 +214,12 @@ class Simulation:
                 raise ValueError("위협 보고에는 유효한 확인 좌표가 필요함")
             if sighting:
                 unit = state.units[action["unit_id"]]
+                operation = state.operations.get(unit.operation_id)
+                assigned = unit.node_id == state.facilities[facility_id].node_id
+                field_unit = (unit.status == "in_transit" and operation is not None
+                              and facility_id in {operation.origin_id, operation.destination_id})
                 if (unit.faction != "enemy" or not unit.soldiers
-                        or unit.node_id != state.facilities[facility_id].node_id):
+                        or not (assigned or field_unit)):
                     raise ValueError("보고 병력이 해당 시설에 배치되어 있지 않음")
             position_report = list(point) if point is not None else None
             status, operation_id = dispatch_response(state, facility_id, report_xy=position_report, sighting=sighting)

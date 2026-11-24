@@ -97,7 +97,7 @@ class CampaignPresence:
 
     def _in_contact(self, members):
         return any(actor.hp > 0 and (self.ai.brains.get(actor.id) and self.ai.brains[actor.id].visible
-                                    or actor.state in {"combat", "combat_guard", "retreat", "search", "alert", "regroup"})
+                                    or actor.state in {"combat", "combat_guard", "retreat", "search", "alert", "regroup", "radio"})
                    for actor in members)
 
     def can_advance(self, operation):

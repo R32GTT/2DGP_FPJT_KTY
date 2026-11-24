@@ -5,8 +5,9 @@ import math
 
 from campaign.models import Position
 from .actors import Actor
-from .ai_state import Brain, CombatState, Incident, SearchCue
+from .ai_state import Brain, CombatState, Incident, RadioState, SearchCue
 from .perception import Knowledge
+from .simulation import RegionAlarm
 from .transport import Trip
 from .weapons import WeaponState
 
@@ -49,12 +50,14 @@ def capture(play):
     for key, brain in play.ai.brains.items():
         brains[key] = {"patrol": brain.patrol, "waypoint": brain.waypoint, "incident": brain.incident,
                        "radio_at": brain.radio_at, "contact_at": brain.contact_at,
+                       "radio": asdict(brain.radio),
                        "memory": asdict(brain.memory), "combat": asdict(brain.combat),
                        "search": {key: getattr(brain.search, key) for key in SEARCH},
                        "checked": list(brain.search.checked),
                        "priority": asdict(brain.search.priority_cue) if brain.search.priority_cue else None}
     return {"runtime": {key: getattr(play, key) for key in RUNTIME}, "player": actor_state(play.player),
             "respawn_site_id": play.respawn_site_id,
+            "alarms": {key: asdict(alarm) for key, alarm in play.alarms.items() if alarm.until > play.time},
             "actors": [actor_state(actor) for actor in roster.actors], "brains": brains,
             "roster": {"spawns": roster.spawns, "deaths": sorted(roster.local_deaths),
                        "seated_deaths": sorted(roster.seated_deaths), "materialized": roster.materialized},
@@ -77,6 +80,12 @@ def restore(play, row):
         setattr(play, key, row["runtime"][key])
     if not math.isfinite(play.time) or int(play.time + 1e-8) != state.world_time:
         raise ValueError("현장·캠페인 시각 불일치")
+    for key, saved in row.get("alarms", {}).items():
+        position, until = tuple(saved["position"]), saved["until"]
+        if (key not in state.regions or len(position) != 2 or not all(map(math.isfinite, position))
+                or not math.isfinite(until) or until <= play.time):
+            raise ValueError("잘못된 지역 경보 상태")
+        play.alarms[key] = RegionAlarm(position, until)
     play.player = restore_actor(row["player"], play.specs)
     play.respawn_site_id = row.get("respawn_site_id")
     if play.respawn_site_id is not None and (play.respawn_target is None or play.respawn_site_id not in play.respawn_sites):
@@ -101,7 +110,12 @@ def restore(play, row):
         brain = Brain([tuple(point) for point in saved["patrol"]])
         brain.waypoint, brain.incident = saved["waypoint"], saved["incident"]
         brain.radio_at, brain.contact_at, brain.sense_at = saved["radio_at"], saved["contact_at"], play.time
+        brain.radio = RadioState(**{key: tuples(value) for key, value in saved.get("radio", {}).items()})
         brain.memory = Knowledge(**{key: tuples(value) for key, value in saved["memory"].items()})
+        started = brain.radio.started_at
+        if started is not None and (not math.isfinite(started) or started > play.time
+                                    or brain.contact_at is None or brain.memory.last_seen is None):
+            raise ValueError("잘못된 무전 진행 상태")
         brain.combat = CombatState(**{key: tuples(value) for key, value in saved["combat"].items()})
         for name in SEARCH:
             setattr(brain.search, name, saved["search"][name])

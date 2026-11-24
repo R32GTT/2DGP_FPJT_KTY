@@ -17,7 +17,7 @@ from .interactions import nearby_facility, nearby_road_control
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
              "alert": "조사", "search": "전투 수색", "combat": "교전",
-             "combat_guard": "전투 경계", "retreat": "엄폐·후퇴"}
+             "combat_guard": "전투 경계", "retreat": "엄폐·후퇴", "radio": "무전 중"}
 AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reload": "재장전",
               "fire": "사격", "advance": "접근", "flank": "측면 이동",
               "peek": "피킹", "peek_return": "엄폐 복귀", "reposition": "사선 확보", "wait": "사격 대기"}
@@ -84,6 +84,8 @@ class HUD:
             state = " / ".join(part for part in (AI_STATES.get(actor.state, actor.state), action) if part)
             if time < brain.combat.combat_alert_until:
                 state += f" · 경계 {math.ceil(brain.combat.combat_alert_until - time)}초"
+            elif memory.recognition > 0:
+                state += f" · 인식 {memory.recognition:.0%}"
             route = "목표 없음"
             if brain.search.task.scanning:
                 route = "바라보는 방향 확인"
@@ -370,6 +372,14 @@ class HUD:
             self._minimap(simulation, camera, debug)
         if map_open:
             self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused)
+        territory = simulation.world.territory_at(simulation.player.xy)
+        alarm = simulation.alarms.get(territory)
+        if territory not in simulation.campaign.simulation.state.regions:
+            alarm = max((entry for entry in simulation.alarms.values()
+                         if entry.near(simulation.player.xy)), key=lambda entry: entry.until, default=None)
+        if alarm is not None and alarm.until > simulation.time:
+            self.label("region_alarm", f"지역 경보  ·  {math.ceil(alarm.until - simulation.time)}초", 16, (255, 133, 107))
+            self._draw_notice("region_alarm", width / 2, height - (80 if paused else 28))
 
     def _minimap(self, simulation, camera, debug=False):
         width, height = 180, 126

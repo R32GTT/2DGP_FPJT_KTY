@@ -60,29 +60,35 @@ class CampaignBridge:
     def inventory(self, facility_id):
         return self.simulation.state.facilities[facility_id].inventory
 
-    def can_radio(self, sender, receiver):
+    def actor_region(self, actor):
+        facility = self.node_facilities.get(actor.last_node or actor.home_node)
+        return facility.region_id if facility else self.simulation.state.facilities[self.facility_id].region_id
+
+    def has_signal(self, region_id):
         state = self.simulation.state
-        sender_home = self.node_facilities.get(sender.last_node or sender.home_node)
-        receiver_home = self.node_facilities.get(receiver.last_node or receiver.home_node)
-        if sender_home is None or receiver_home is None or sender_home.region_id != receiver_home.region_id:
-            return False
-        return any("communication" in state.facilities[key].capabilities and state.facilities[key].damage < 100
-                   for key in state.regions[sender_home.region_id].facility_ids)
+        region = state.regions[region_id]
+        return region.owner == "enemy" and any(
+            "communication" in state.facilities[key].capabilities and state.facilities[key].damage < 100
+            for key in region.facility_ids)
 
     def advance_to(self, seconds):
         target = int(seconds + 1e-8)
         if target > self.simulation.state.world_time:
             self.simulation.advance_to(target)
 
-    def report_contact(self, actor, point, seconds):
+    def report_contact(self, actor, region_id, point, seconds):
         state = self.simulation.state
         unit = state.units.get(actor.source_unit)
         facility = self.node_facilities.get(unit.node_id) if unit else None
+        if unit and unit.node_id is None and unit.operation_id:
+            operation = state.operations[unit.operation_id]
+            endpoints = (state.facilities.get(key) for key in (operation.origin_id, operation.destination_id))
+            facility = next((site for site in endpoints if site and site.region_id == region_id), None)
         if actor.hp <= 0 or not actor.present or facility is None:
             return None
-        if seconds < self._reports.get(facility.region_id, -math.inf) + 4:
+        if facility.region_id != region_id or seconds < self._reports.get(region_id, -math.inf) + 4:
             return None
-        self._reports[facility.region_id] = seconds
+        self._reports[region_id] = seconds
         return self.simulation.apply_action({"type": "report_contact", "facility_id": facility.id,
                                              "unit_id": unit.id, "position": list(point)})
 

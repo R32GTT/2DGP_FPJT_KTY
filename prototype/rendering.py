@@ -7,11 +7,12 @@ from time import perf_counter
 
 import pico2d as pico
 
+from .ai_config import RADIO_GRACE_SECONDS, RADIO_TRANSMIT_SECONDS
 from .geometry import Rect
 from .camera import CANVAS_SIZE
 from .hud import HUD
 from .map_images import MapImages
-from .perception import SOUND_MEMORY_SECONDS
+from .perception import INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS
 from .visual_assets import actor_image, draw_polygon, prop_image, tree_image, truck_image, vignette_image, weapon_image
 from .weapons import load_weapons, weapon_pose
 from .world import ROOT
@@ -90,6 +91,31 @@ class Renderer:
         for key in keys:
             x, y = view.pico(*navigation.nodes[key])
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 152, 198, 240, filled=True)
+
+    @staticmethod
+    def _draw_awareness(brain, x, y, time):
+        radio_start = brain.radio.started_at
+        level = brain.memory.recognition
+        grace = RADIO_GRACE_SECONDS - (time - brain.contact_at) if brain.contact_at is not None else 0
+        if radio_start is not None:
+            color = (255, 112, 96)
+            progress = min(1.0, (time - radio_start) / RADIO_TRANSMIT_SECONDS)
+            pico.draw_rectangle(x - 3, y + 5, x + 3, y + 12, *color, filled=True)
+            pico.draw_line(x + 2, y + 12, x + 2, y + 16, *color)
+        elif brain.memory.visible or grace > 0:
+            color = (255, 91, 80)
+            progress = grace / RADIO_GRACE_SECONDS if grace > 0 else 1.0
+            pico.draw_line(x, y + 6, x, y + 14, *color)
+            pico.draw_rectangle(x - 1, y + 3, x + 1, y + 4, *color, filled=True)
+        elif 0 < level < 1.0:
+            progress = level
+            color = ((248, 157, 76) if level >= INSPECT_THRESHOLD else
+                     (253, 213, 109) if level >= NOTICE_THRESHOLD else (229, 235, 225))
+        else:
+            return
+        pico.draw_rectangle(x - 16, y - 2, x + 16, y + 2, 29, 30, 29, filled=True)
+        if progress > 0:
+            pico.draw_rectangle(x - 15, y - 1, x - 15 + 30 * progress, y + 1, *color, filled=True)
 
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False):
         started = perf_counter()
@@ -173,6 +199,14 @@ class Renderer:
             crate = Rect(world.crate[0] - 0.35, world.crate[1] - 0.35, 0.7, 0.7)
             self._rect(view, crate, (183, 156, 76))
             self._rect(view, crate, (228, 205, 137), filled=False)
+        for alarm in simulation.alarms.values():
+            x, y = alarm.position
+            beacon = Rect(x - 0.23, y - 0.23, 0.46, 0.46)
+            if alarm.until > simulation.time and view.visible(beacon):
+                pulse = 0.5 + 0.5 * math.sin(simulation.time * math.tau)
+                glow = 0.45 + pulse * 0.5
+                self._rect(view, Rect(x - glow, y - glow, 2 * glow, 2 * glow), (255, 58, 46, int(35 + 60 * pulse)))
+                self._rect(view, beacon, (255, int(48 + 78 * pulse), 54))
         safe = Rect(world.safehouse[0] - 1.2, world.safehouse[1] - 1.2, 2.4, 2.4)
         if world.data.get("interaction_markers", True) and view.visible(safe):
             self._rect(view, safe, (47, 94, 82))
@@ -224,11 +258,16 @@ class Renderer:
                 gun = self.guns[weapon.spec.id]
                 gun.rotate_draw(-actor.facing, gun_x, gun_y,
                                 weapon.spec.size_m[0] * view.scale, weapon.spec.size_m[1] * view.scale)
+            brain = simulation.ai.brains.get(actor.id)
+            if (not map_open and brain and actor.hp > 0
+                    and (brain.radio.started_at is not None or brain.memory.recognition > 0)
+                    and actor.position.floor == simulation.player.position.floor
+                    and world.geometry.raycast(simulation.player.xy, actor.xy) is None):
+                self._draw_awareness(brain, x, y + max(12, 0.45 * view.scale), simulation.time)
             if debug:
                 self._rect(view, Rect(actor.position.x - actor.radius, actor.position.y - actor.radius,
                                       actor.radius * 2, actor.radius * 2), (244, 211, 119), filled=False)
                 self._rect(view, gun_bounds, (107, 187, 212), filled=False)
-                brain = simulation.ai.brains.get(actor.id)
                 if brain and actor.hp:
                     previous = (x, y)
                     for point in brain.motion.path:

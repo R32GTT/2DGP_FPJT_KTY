@@ -16,16 +16,19 @@ from .ai_motion import MotionController, face, turn_toward, turn_indoor_gaze
 from .ai_crowd import CrowdMotion
 from .cover import CoverFinder
 from .door_traffic import DoorTraffic
-from .perception import SOUND_MEMORY_SECONDS, SIGHT_RANGE, hear, observe
+from .perception import (INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS, SIGHT_RANGE,
+                         hear, sight_sample, update_vision)
 
 from . import ai_config as config
 
 
 class EnemyAI:
-    def __init__(self, world, actors, patrols, *, can_radio=None, report_contact=None):
+    def __init__(self, world, actors, patrols, *, can_radio=None, report_contact=None, emit=None, light_at=None):
         self.world = world
         self.cover_finder = CoverFinder(world)
         self.can_radio = can_radio
+        self.report_contact, self.emit = report_contact, emit
+        self.light_at = light_at
         self.exits = {point for key, point in world.navigation.nodes.items() if key.endswith("/outside")}
         self.incidents = {}
         self.brains = {actor.id: Brain([tuple(point) for point in patrol], sense_at=index * 0.01)
@@ -36,7 +39,7 @@ class EnemyAI:
         self.crowd = CrowdMotion(world)
         self.search = SearchController(world, self.brains, self.incidents)
         self.combat = CombatController(world, self.brains, self.cover_finder)
-        self.squad = SquadCoordinator(world, self.brains, self.incidents, self.can_radio, report_contact)
+        self.squad = SquadCoordinator(world, self.brains, self.incidents, self.can_radio)
 
     def start_search_drill(self, actors, point):
         self.search.start_search_drill(actors, point)
@@ -104,7 +107,7 @@ class EnemyAI:
         for key, patrol in patrols.items():
             self.brains[key] = Brain(patrol)
 
-    def _sense_actor(self, actor, brain, player, time, previous_facing):
+    def _sense_actor(self, actor, brain, player, time, previous_facing, player_motion):
         memory = brain.memory
         brain.look.point, brain.look.reason, brain.look.sample = None, "", None
         self.search.refresh_failure(actor, brain)
@@ -117,18 +120,27 @@ class EnemyAI:
             if time >= brain.sense_at:
                 was_visible = memory.visible
                 last_seen_at = memory.seen_at
-                observe(actor, player, self.world.geometry, memory, time)
+                sample = sight_sample(actor, player, self.world.geometry, memory)
                 # 순찰 방향에서 먼저 확인하고, 발견하지 못했을 때 소리 쪽도 살핀다.
                 fresh_incoming = situation.incoming is not None and time - brain.combat.incoming_at < 1
-                if not memory.visible and (fresh_incoming or situation.fresh_sound):
+                if sample is None and (fresh_incoming or situation.fresh_sound):
                     look = situation.incoming if fresh_incoming else memory.last_sound
                     face(actor, look)
                     actor.facing = turn_toward(previous_facing[actor.id], actor.facing, 1 / 60)
-                    observe(actor, player, self.world.geometry, memory, time)
-                if memory.visible and not was_visible and time - last_seen_at > config.CONTACT_INTERRUPTION_SECONDS:
+                    sample = sight_sample(actor, player, self.world.geometry, memory)
+                light = self.light_at(player.position) if sample is not None and self.light_at else 1.0
+                update_vision(player, memory, time, sample,
+                              alert=situation.investigating or situation.confirmed or memory.suspicion >= 0.3,
+                              reacquire=situation.confirmed and (memory.last_seen is not None or fresh_incoming),
+                              motion=player_motion, light=light)
+                new_contact = brain.contact_at is None or time - last_seen_at > config.RADIO_CONTACT_MAX_AGE
+                if memory.visible and not was_visible and new_contact:
                     brain.contact_at = time
-                brain.sense_at = time + (0.10 if situation.confirmed or memory.visible else 0.18)
-                memory.suspicion = max(0, memory.suspicion - 0.01)
+                    if self.emit:
+                        self.emit("contact_confirmed", time, actor)
+                if memory.visible:
+                    brain.combat.combat_alert_until = time + config.COMBAT_ALERT_SECONDS
+                brain.sense_at = time + (0.10 if situation.confirmed or memory.exposed else 0.18)
             if memory.visible:
                 if situation.old_state not in {"combat", "retreat"} or brain.search.task.target is not None:
                     self.search.interrupt_search(actor, brain)
@@ -137,6 +149,8 @@ class EnemyAI:
                                           situation.investigating, situation.incoming if situation.confirmed else None)
             else:
                 brain.search.priority_cue = None
+        elif memory.exposed or memory.recognition or memory.suspicion:
+            update_vision(player, memory, time, None)
         situation.priority_search = brain.search.investigating_priority
         return situation
 
@@ -180,8 +194,6 @@ class EnemyAI:
         brain.search.task.cue = None
         brain.search.task.target = None
         brain.look.point, brain.look.reason = memory.last_seen, "교전 대상"
-        if time >= brain.radio_at and time - brain.contact_at >= 0.55:
-            self.squad.report_sighting(actor, brain, actors, time)
         if situation.old_state not in {"combat", "retreat"}:
             brain.combat.blocked_fire_at = None
             brain.combat.fire_at, brain.combat.burst = time + 0.28, 0
@@ -197,6 +209,71 @@ class EnemyAI:
               and actor.weapon.chambered and brain.combat.action in {"fire", "advance", "peek", "flank", "reposition", "pin"}):
             intent.fire = True
         return ActionPlan(goal, approach="advance" if brain.combat.action == "advance" else None)
+
+    @staticmethod
+    def _radio_blocked(actor, brain, time):
+        return (actor.hp <= 0 or not actor.present or actor.transport_boarding or actor.hurt_until > time
+                or brain.combat.suppression >= 0.55 or brain.motion.door_stack is not None
+                or brain.combat.peek_home is not None
+                or (brain.visible and math.dist(actor.xy, brain.memory.last_seen) < 2.0))
+
+    def cancel_radio(self, actor, time, reason):
+        brain = self.brains.get(actor.id)
+        if brain is None or brain.radio.started_at is None:
+            return
+        brain.radio.started_at = None
+        brain.radio_at = time + config.RADIO_RETRY_SECONDS
+        if self.emit:
+            self.emit("radio_interrupted", time, actor, reason=reason)
+
+    def _act_radio(self, actor, brain, actors, intent, situation, time):
+        memory, radio = brain.memory, brain.radio
+        if brain.contact_at is None or memory.last_seen is None or time - memory.seen_at > config.RADIO_CONTACT_MAX_AGE:
+            self.cancel_radio(actor, time, "stale_contact")
+            return None
+        since_contact = time - brain.contact_at
+        if since_contact >= config.LOCAL_REPORT_DELAY_SECONDS and radio.shouted_contact_at != brain.contact_at:
+            self.squad.report_sighting(actor, brain, actors, time, local_only=True)
+            radio.shouted_contact_at = brain.contact_at
+        if self._radio_blocked(actor, brain, time):
+            self.cancel_radio(actor, time, "pressure")
+            return None
+        if radio.started_at is None:
+            point = self.squad.report_point(brain)
+            if (since_contact + 1e-8 < config.RADIO_GRACE_SECONDS or time < brain.radio_at
+                    or (point == radio.sent_point and memory.seen_at - radio.sent_at < config.RADIO_CONTACT_MAX_AGE)):
+                return None
+            radio.started_at = time
+            if self.emit:
+                self.emit("radio_started", time, actor)
+        actor.state = "radio"
+        brain.look.point, brain.look.reason = memory.last_seen, "목격 무전"
+        return ActionPlan(None, mode="radio")
+
+    def finish_radios(self, actors, time):
+        """이 틱의 피격·사망을 처리한 뒤에만 보고를 전달한다."""
+        for actor in actors:
+            brain = self.brains[actor.id]
+            radio = brain.radio
+            if radio.started_at is None:
+                continue
+            if brain.memory.last_seen is None:
+                self.cancel_radio(actor, time, "stale_contact")
+                continue
+            if self._radio_blocked(actor, brain, time):
+                self.cancel_radio(actor, time, "pressure")
+                continue
+            if time - radio.started_at + 1e-8 < config.RADIO_TRANSMIT_SECONDS:
+                continue
+            point = self.squad.report_point(brain)
+            success = self.report_contact(actor, point, time) if self.report_contact else True
+            radio.started_at = None
+            brain.radio_at = time + (config.RADIO_UPDATE_SECONDS if success else config.RADIO_CONTACT_MAX_AGE)
+            if success:
+                self.squad.report_sighting(actor, brain, actors, time)
+                radio.sent_point, radio.sent_at = point, time
+            if self.emit and (not success or not self.report_contact):
+                self.emit("radio_completed" if success else "radio_failed", time, actor, report=point)
 
     def _act_peek(self, actor, brain, actors, intent, situation, time):
         memory = brain.memory
@@ -319,6 +396,16 @@ class EnemyAI:
         brain.look.point, brain.look.reason = memory.last_sound, "소리 방향 확인"
         return ActionPlan(None)
 
+    def _act_notice(self, actor, brain, actors, intent, situation, time):
+        memory = brain.memory
+        if (situation.confirmed or situation.incoming is not None or memory.glimpse is None
+                or memory.recognition < NOTICE_THRESHOLD):
+            return None
+        actor.state = "alert"
+        brain.look.point, brain.look.reason = memory.glimpse, "수상한 움직임 확인"
+        inspecting = memory.recognition >= INSPECT_THRESHOLD and math.dist(actor.xy, memory.glimpse) > 1.5
+        return ActionPlan(memory.glimpse if inspecting else None, approximate=inspecting)
+
     def _act_patrol(self, actor, brain, actors, intent, situation, time):
         brain.clear_contact()
         actor.state, goal = self._patrol(actor, brain)
@@ -328,6 +415,8 @@ class EnemyAI:
         goal, weapon, combat = plan.goal, actor.weapon, brain.combat
         if actor.state not in {"search", "alert"} and brain.search.task.execution is not None:
             brain.search.task.execution.stop(Status.INVALID)
+        if plan.mode == "radio":
+            return self.motion.move(actor, brain, intent, MoveRequest(None), time, budget)
         moving_to_cover = actor.state == "retreat" and combat.action == "cover" and goal is not None and math.dist(actor.xy, goal) > 0.3
         intent.reload = bool(weapon and not weapon.chambered and not weapon.reloading
                              and not moving_to_cover and (weapon.reserve > 0 or weapon.stage >= 2))
@@ -409,7 +498,7 @@ class EnemyAI:
             elif actor.id in intents and self.brains[actor.id].look.point is not None:
                 face(actor, self.brains[actor.id].look.point)
 
-    def update(self, actors, player, time):
+    def update(self, actors, player, time, *, player_motion=1.0):
         self.search.begin_tick()
         intents, budget = {}, 1
         approach_looks = {}
@@ -422,7 +511,7 @@ class EnemyAI:
             if actor.hp <= 0:
                 continue
             brain, intent = self.brains[actor.id], Intent()
-            situation = self._sense_actor(actor, brain, player, time, previous_facing)
+            situation = self._sense_actor(actor, brain, player, time, previous_facing, player_motion)
             if situation.distant:
                 if time < brain.far_at:
                     continue
@@ -436,8 +525,9 @@ class EnemyAI:
                 decision = self.decisions.get(actor.id)
                 if decision is None:
                     decision = self.decisions[actor.id] = ActorDecision([
-                        self._act_yield, self._act_regroup, self._act_boarding,
-                        self._act_contact, self._act_peek, self._act_formation, self._act_search, self._act_sound, self._act_patrol,
+                        self._act_radio, self._act_yield, self._act_regroup, self._act_boarding,
+                        self._act_contact, self._act_peek, self._act_formation, self._act_notice,
+                        self._act_search, self._act_sound, self._act_patrol,
                     ])
                 plan = decision.choose(actor, brain, actors, intent, situation, time)
                 budget = self._execute_plan(
