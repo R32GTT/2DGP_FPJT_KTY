@@ -46,9 +46,10 @@ def build_state(data, *, seed=42, support="finite") -> CampaignState:
         source=source, demand=demand, rules=data["rules"],
         rng_state=random.Random(seed).getstate(),
         resource_priority=priority,
+        player_stock={**stock(), **data.get("player_stock", {})},
     )
     for name in stock():
-        state.ledger.initial[name] = sum(f.inventory[name] for f in facilities.values())
+        state.ledger.initial[name] = state.player_stock[name] + sum(f.inventory[name] for f in facilities.values())
         if support == "finite":
             state.ledger.initial[name] += source.inventory[name]
     state.initial_soldiers = sum(unit.soldiers for unit in state.units.values())

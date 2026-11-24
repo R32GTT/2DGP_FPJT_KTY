@@ -393,7 +393,7 @@ class HUD:
                 action = "무기 보관" if simulation.player.weapon else "보관함 비어 있음"
                 if stored:
                     action = f"{stored.spec.name} {'교체' if simulation.player.weapon else '회수'}"
-                prompt = f"[Shift+E] {action}"
+                prompt = f"[Shift+E] {action} · [Tab] 보관함"
                 if simulation.kit_available and not simulation.player.loadout:
                     prompt = f"[E] 예비 키트 · {prompt}"
             elif facility_here and facility_here["kind"] == "warehouse":
@@ -407,6 +407,8 @@ class HUD:
             if control:
                 road = simulation.campaign.simulation.state.roads[control["road"]]
                 prompt = f"[E] {'수송로 개방' if road.blocked else '수송로 차단'}"
+            if simulation.transports.nearby_cargo(simulation.player) is not None:
+                prompt = "[Tab] 수송대 화물"
             self.label("prompt", prompt, 16, (241, 211, 135))
             map_title = ("장비 시험장" if simulation.equipment_range else
                          simulation.stack_title or simulation.world.data.get("name", "지역 지도"))

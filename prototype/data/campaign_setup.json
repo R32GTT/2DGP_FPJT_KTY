@@ -3,6 +3,7 @@
   "minimum_garrison": 10,
   "importance": {"normal": 1, "important": 2, "core": 3},
   "resource_priority": ["supplies", "ammunition", "repair_parts", "night_gear"],
+  "player_stock": {"night_gear": 1},
   "vehicle_profiles": {
     "truck": {"capacity": 150, "speed_mps": 10.0},
     "troop_truck": {"capacity": 80, "speed_mps": 10.0, "troop_seats": 4},

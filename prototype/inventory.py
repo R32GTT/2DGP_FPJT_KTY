@@ -13,6 +13,14 @@ AMMUNITION = {
     "precision": ("저격총탄", 0.027, 10),
     "machine_gun": ("기관총탄", 0.024, 80),
 }
+CARGO_ITEMS = {
+    "supplies": ("보급품 상자", 1.0),
+    "ammunition": ("탄약 상자", 2.0),
+    "repair_parts": ("수리 부품 상자", 2.5),
+    "night_gear": ("야간 장비 세트", 1.0),
+}
+NIGHT_KIT = "cargo:night_gear"
+AMMO_CRATE = "cargo:ammunition"
 BAG_LIMIT = 8.0
 PICKUP_REACH = 1.5
 
@@ -43,8 +51,21 @@ class FieldInventory:
         if key.startswith("throwable:"):
             spec = self.throwable_specs[key.removeprefix("throwable:")]
             return spec.name, spec.weight
+        if key.startswith("cargo:"):
+            return CARGO_ITEMS[key.removeprefix("cargo:")]
         part = self.parts[key]
         return part.name, part.weight
+
+    @property
+    def has_night_gear(self):
+        return not self.play.presence or NIGHT_KIT in self.carried
+
+    def sync_night_gear(self):
+        if not self.has_night_gear:
+            player = self.play.player
+            player.night_vision = player.ir_laser = False
+            if player.lamp == "infrared":
+                player.lamp = "off"
 
     @property
     def active_throwable(self):
@@ -65,6 +86,14 @@ class FieldInventory:
             if type(count) is not int or count <= 0:
                 raise ValueError("잘못된 인벤토리 수량")
         return values
+
+    def validate_cargo(self):
+        stock = self.play.campaign.simulation.state.player_stock
+        inventories = [self.carried, *self.stored.values(), *(items for _, items in self.ground)]
+        for resource in CARGO_ITEMS:
+            key = f"cargo:{resource}"
+            if sum(items.get(key, 0) for items in inventories) > stock[resource]:
+                raise ValueError("캠페인 재고를 초과한 탈취품")
 
     @property
     def bag_weight(self):
@@ -131,6 +160,7 @@ class FieldInventory:
             self.ground.append((self.play.player.xy, self.carried))
             self.carried = {}
         self.selected_throwable = None
+        self.sync_night_gear()
 
     @staticmethod
     def _remove(items, key, amount):
@@ -138,14 +168,44 @@ class FieldInventory:
         if not items[key]:
             del items[key]
 
+    def _pickup_amount(self, key, available):
+        capacity = math.floor((BAG_LIMIT - self.bag_weight + 1e-8) / self.item(key)[1])
+        return min(available, max(0, capacity))
+
     def _take_items(self, source, key):
-        limit = math.floor((BAG_LIMIT - self.bag_weight + 1e-8) / self.item(key)[1])
-        amount = min(source[key], max(0, limit))
+        amount = self._pickup_amount(key, source[key])
         if amount:
             self._remove(source, key, amount)
             self.carried[key] = self.carried.get(key, 0) + amount
         else:
             self.play.message = "가방 용량 부족"
+
+    def _take_cargo(self, operation_id, resource):
+        play = self.play
+        operation = play.transports.nearby_cargo(play.player, operation_id)
+        if operation is None or not operation.cargo[resource]:
+            play.message = "회수할 수 있는 화물이 없습니다"
+            return
+        key = f"cargo:{resource}"
+        amount = self._pickup_amount(key, operation.cargo[resource])
+        if not amount:
+            play.message = "가방 용량 부족"
+            return
+        play.campaign.simulation.apply_action({"type": "capture", "operation_id": operation.id,
+                                               "amount": {resource: amount}})
+        self.carried[key] = self.carried.get(key, 0) + amount
+        play.message = f"{self.item(key)[0]} ×{amount} 회수"
+
+    def _unpack_ammunition(self, ammo_type):
+        name, weight, rounds = AMMUNITION[ammo_type]
+        if self.bag_weight - self.item(AMMO_CRATE)[1] + weight * rounds > BAG_LIMIT + 1e-8:
+            self.play.message = "가방 용량 부족"
+            return
+        self.play.campaign.simulation.apply_action({"type": "unpack_player_ammunition"})
+        self._remove(self.carried, AMMO_CRATE, 1)
+        key = f"ammo:{ammo_type}"
+        self.carried[key] = self.carried.get(key, 0) + rounds
+        self.play.message = f"탄약 상자 개봉 · {name} {rounds}발"
 
     def _change_part(self, key, equip):
         weapon = self.play.player.weapon
@@ -192,6 +252,11 @@ class FieldInventory:
         if pile is not None:
             for key, count in sorted(self.ground[pile][1].items()):
                 rows.append((f"현장  ·  {self.item(key)[0]} ×{count} 회수", ("ground", pile, key)))
+        cargo = play.transports.nearby_cargo(player)
+        if cargo is not None:
+            for resource, count in cargo.cargo.items():
+                if count:
+                    rows.append((f"수송대  ·  {CARGO_ITEMS[resource][0]} ×{count} 회수", ("cargo", cargo.id, resource)))
         site = nearby_facility(play.world, player.xy)
         safehouse = site["id"] if site and site["kind"] == "safehouse" else None
         if safehouse:
@@ -206,6 +271,10 @@ class FieldInventory:
             if key.startswith("throwable:"):
                 state = "선택 중 · G 투척" if key == active_throwable else "투척물 선택"
                 rows.append((f"{label}  ·  {state}", ("select_throwable", key)))
+            if key == AMMO_CRATE and player.weapon and player.weapon.spec.ammo_type in AMMUNITION:
+                ammo_type = player.weapon.spec.ammo_type
+                name, _, rounds = AMMUNITION[ammo_type]
+                rows.append((f"{label}  ·  {name} {rounds}발 꺼내기", ("unpack_ammunition", ammo_type)))
             rows.append((f"{label} {'보관' if safehouse else '내려놓기'}", ("put", safehouse, key)))
         return rows
 
@@ -237,6 +306,10 @@ class FieldInventory:
             self._take_items(self.ground[pile][1], key)
             if not self.ground[pile][1]:
                 self.ground.pop(pile)
+        elif kind == "cargo":
+            self._take_cargo(*args)
+        elif kind == "unpack_ammunition":
+            self._unpack_ammunition(*args)
         elif kind == "stash_gun":
             from .interactions import exchange_safehouse_weapon
             self.play.message = exchange_safehouse_weapon(self.play, args[0])
@@ -258,3 +331,5 @@ class FieldInventory:
                 else:
                     stored = self.ground[pile][1]
                     stored[key] = stored.get(key, 0) + amount
+            if key == NIGHT_KIT:
+                self.sync_night_gear()

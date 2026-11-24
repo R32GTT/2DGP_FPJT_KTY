@@ -99,5 +99,6 @@ def build_generated_state(scene, setup=None):
                         for region in regions],
             "demand": {**setup["demand"], "node_id": scene.get("campaign_exit", network["terminals"].get("entry/1")),
                        "collection_facility_id": scene["campaign_facility"]},
-            "rules": {**setup["rules"], "setup_version": setup["version"]}, "resource_priority": setup["resource_priority"]}
+            "rules": {**setup["rules"], "setup_version": setup["version"]}, "resource_priority": setup["resource_priority"],
+            "player_stock": setup.get("player_stock", {})}
     return build_state(data, seed=scene["generation"]["seed"])

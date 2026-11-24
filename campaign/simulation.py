@@ -216,6 +216,10 @@ class Simulation:
                 inventory = state.facilities[owner_id].inventory
             remove(state, inventory, action["amount"],
                    outcome="captured" if kind == "capture" else "destroyed", owner_id=owner_id)
+        elif kind == "unpack_player_ammunition":
+            if not state.player_stock["ammunition"]:
+                raise ValueError("확보한 탄약 상자 부족")
+            consume(state, state.player_stock, {"ammunition": 1}, reason="player_ammunition_unpacked")
         elif kind in {"destroy_vehicle", "damage_unit"}:
             self._damage_asset(action)
         elif kind == "resume_transport":

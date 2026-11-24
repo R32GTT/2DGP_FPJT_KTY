@@ -15,7 +15,7 @@ from .throwables import DATA_PATH as THROWABLE_DATA_PATH
 from .world import ROOT
 
 
-SAVE_VERSION = 4
+SAVE_VERSION = 5
 SAVE_FORMAT = "revenant_lost.generated_play"
 DEFAULT_SAVE = ROOT / "saves" / "prototype.json.gz"
 MAX_BYTES = 16 * 1024 * 1024

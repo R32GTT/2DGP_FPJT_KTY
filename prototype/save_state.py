@@ -164,6 +164,8 @@ def restore(play, row):
         if len(point) != 2 or not all(math.isfinite(value) for value in point):
             raise ValueError("잘못된 현장 물자 위치")
         play.inventory.ground.append((tuple(point), play.inventory.validate_items(items)))
+    play.inventory.validate_cargo()
+    play.inventory.sync_night_gear()
     play.combat.random.setstate(tuples(row["random"]))
     play.campaign._reports, play.campaign._resumed_at = row["reports"], row["resumed_at"]
     play.presence.received = set(map(tuple, row["received"]))

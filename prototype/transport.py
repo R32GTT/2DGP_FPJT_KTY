@@ -9,6 +9,7 @@ from .actors import Actor
 from .ai import Brain
 from .bridge import ConvoyView
 from .geometry import Rect
+from .inventory import PICKUP_REACH
 
 
 TRUCK_SIZE = (5.6, 2.4)
@@ -205,6 +206,27 @@ class TransportCrew:
                 self.bridge.resume_transport(key, seconds)
                 resumed = True
         return resumed
+
+    def nearby_cargo(self, actor, operation_id=None):
+        if actor.hp <= 0 or actor.position.floor != 0:
+            return None
+        state = self.bridge.simulation.state
+        closest = None
+        for truck in self.trucks:
+            if operation_id is not None and truck.convoy.id != operation_id:
+                continue
+            operation = state.operations[truck.convoy.id]
+            if not any(operation.cargo.values()) or not (
+                    operation.phase in {"unloading", "working", "stranded"}
+                    or (operation.phase in {"outbound", "returning"}
+                        and operation.waiting_reason in {"driver_down", "route_unavailable", "no_provisions"})):
+                continue
+            rear = truck.world_point(-BODY.right, 0)
+            distance = math.dist(actor.xy, rear)
+            if (distance <= PICKUP_REACH and (closest is None or distance < closest[0])
+                    and self.world.geometry.raycast(actor.xy, rear) is None):
+                closest = distance, operation
+        return closest[1] if closest is not None else None
 
     def raycast(self, start, end):
         result = None

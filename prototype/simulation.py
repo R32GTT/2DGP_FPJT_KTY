@@ -19,7 +19,7 @@ from .interactions import (
     nearby_watch_post, use_facility, use_road_control,
 )
 from .geometry import Rect
-from .inventory import AMMUNITION, PICKUP_REACH, FieldInventory, weapon_slots
+from .inventory import AMMUNITION, NIGHT_KIT, PICKUP_REACH, FieldInventory, weapon_slots
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
 from .throwables import BURST_SECONDS, SmokeCloud, Throwables
@@ -92,7 +92,8 @@ class PlaySimulation:
             key = row.get("weapon", "ar_a")
             actor.loadout = {key: WeaponState.ready(self.specs[key])}
             actor.active_weapon = key
-        campaign = campaign if campaign is not None else create_campaign(self.world)
+        new_campaign = campaign is None
+        campaign = create_campaign(self.world) if new_campaign else campaign
         self.campaign = CampaignBridge(campaign, self.world.data["campaign_facility"])
         self.roster = CampaignRoster(self.campaign, self.guard_records, self.world)
         self.roster.materialized = materialized
@@ -128,6 +129,8 @@ class PlaySimulation:
         self.dropped = []
         self.safehouse_stash = {}
         self.inventory = FieldInventory(self, parts)
+        if new_campaign and self.presence and campaign.state.player_stock["night_gear"]:
+            self.inventory.carried[NIGHT_KIT] = campaign.state.player_stock["night_gear"]
         self.throwables = Throwables(self.inventory.throwable_specs)
         self.world.geometry.smoke = self.throwables.smoke
         self.throwable_bursts = []
@@ -385,12 +388,16 @@ class PlaySimulation:
         player = self.player
         if player.hp <= 0:
             return
+        if action in {"night_vision", "ir_laser"} and not self.inventory.has_night_gear:
+            self.message = "야간 장비 세트를 휴대해야 합니다"
+            return
         if action == "night_vision":
             player.night_vision = not player.night_vision
         elif action == "ir_laser":
             player.ir_laser = not player.ir_laser
         elif action == "lamp":
-            player.lamp = OPTICS_MODES[(OPTICS_MODES.index(player.lamp) + 1) % len(OPTICS_MODES)]
+            modes = OPTICS_MODES if self.inventory.has_night_gear else OPTICS_MODES[:2]
+            player.lamp = modes[(OPTICS_MODES.index(player.lamp) + 1) % len(modes)]
 
     def throw_selected(self, target):
         player = self.player
