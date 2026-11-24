@@ -11,6 +11,7 @@ from campaign.simulation import Simulation
 from .generated_world import generate_world
 from .save_state import capture, restore
 from .simulation import PlaySimulation
+from .throwables import DATA_PATH as THROWABLE_DATA_PATH
 from .world import ROOT
 
 
@@ -23,6 +24,8 @@ MAX_BYTES = 16 * 1024 * 1024
 def content_version():
     paths = [ROOT / "prototype/data/campaign_setup.json", ROOT / "prototype/data/weapons.json",
              ROOT / "prototype/data/attachments.json"]
+    if THROWABLE_DATA_PATH.is_file():
+        paths.append(THROWABLE_DATA_PATH)
     paths += sorted((ROOT / "prototype/data/prefabs").glob("*.json"))
     digest = sha256()
     for path in paths:

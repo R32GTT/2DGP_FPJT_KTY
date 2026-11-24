@@ -3,6 +3,7 @@
 import math
 
 from .interactions import nearby_facility
+from .throwables import load_throwables
 
 
 AMMUNITION = {
@@ -25,6 +26,7 @@ def weapon_slots(loadout):
 class FieldInventory:
     def __init__(self, play, parts):
         self.play, self.parts = play, parts
+        self.throwable_specs = load_throwables()
         self.carried, self.stored = {}, {}
         self.ground = [
             (tuple(site["terminal"]), {**dict.fromkeys(parts, 1),
@@ -35,6 +37,9 @@ class FieldInventory:
     def item(self, key):
         if key.startswith("ammo:"):
             return AMMUNITION[key[5:]][:2]
+        if key.startswith("throwable:"):
+            spec = self.throwable_specs[key.removeprefix("throwable:")]
+            return spec.name, spec.weight
         part = self.parts[key]
         return part.name, part.weight
 
