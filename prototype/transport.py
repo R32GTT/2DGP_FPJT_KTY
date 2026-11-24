@@ -25,10 +25,18 @@ class Truck:
     y: float
     crew: list[Actor]
     stopped: bool
+    direction: float | None = None
 
     @property
     def heading(self):
-        return self.convoy.heading
+        return self.convoy.heading if self.direction is None else self.direction
+
+    @property
+    def bounds(self):
+        c, s = abs(math.cos(self.heading)), abs(math.sin(self.heading))
+        width = TRUCK_SIZE[0] * c + TRUCK_SIZE[1] * s
+        height = TRUCK_SIZE[0] * s + TRUCK_SIZE[1] * c
+        return Rect(self.x - width / 2, self.y - height / 2, width, height)
 
     def world_point(self, x, y):
         c, s = math.cos(self.heading), math.sin(self.heading)
@@ -68,6 +76,7 @@ class TransportCrew:
         self.ai, self.weapon, self.events = ai, weapon, events
         self.trips = {}
         self.trucks = []
+        self.display_trucks = []
         self.dismounted = []
 
     @staticmethod
@@ -107,38 +116,39 @@ class TransportCrew:
                 self.ai.brains[actor.id] = Brain([point])
 
     def sync(self, seconds):
-        self.trucks, self.dismounted = [], []
+        self.trucks, self.display_trucks, self.dismounted = [], [], []
         if not self.world.campaign_map or not self.roster.materialized:
             return
         state = self.bridge.simulation.state
         active = set()
+        bounds = self.world.bounds.expanded(12)
         for view in self.bridge.convoys(seconds):
             operation = state.operations[view.id]
             active.add(view.id)
-            if not self.world.detail_loaded((view.x, view.y)):
-                continue
-            trip = self.trips.get(view.id)
             ids = [key for key in operation.vehicle_ids if state.vehicles[key].status != "destroyed"]
             if not ids:
                 continue
+            stopped = operation.waiting_reason in {"driver_down", "no_driver"}
+            moving = view.phase in {"outbound", "returning"} and not stopped
+            trucks = [Truck(ids[0], view, view.x, view.y, [], stopped)]
+            for index, key in enumerate(ids[1:], 1):
+                x, y, heading = self.bridge.following_pose(view, index * 6.4)
+                trucks.append(Truck(key, view, x, y, [], stopped, heading))
+            self.display_trucks.extend(trucks)
+            # 화면 복제본은 유지하고, 청크와 겹치는 대열만 현장에서 상호작용한다.
+            if not any(bounds.overlaps(truck.bounds) and self.world.detail_overlaps(truck.bounds)
+                       for truck in trucks):
+                continue
+            trip = self.trips.get(view.id)
             if trip is None:
-                bounds = self.world.bounds.expanded(12)
-                if not (bounds.x <= view.x <= bounds.right and bounds.y <= view.y <= bounds.bottom):
-                    continue
                 crew = self.roster.transport_members(operation, self.weapon)
                 for actor in crew:
                     self.ai.brains.setdefault(actor.id, Brain([]))
                 trip = self.trips[view.id] = Trip(self.assign(ids, crew))
 
-            stopped = operation.waiting_reason in {"driver_down", "no_driver"}
-            moving = view.phase in {"outbound", "returning"} and not stopped
-            trucks = []
-            for index, key in enumerate(ids):
-                offset = -index * 6.4
-                truck = Truck(key, view, view.x + offset * math.cos(view.heading),
-                              view.y + offset * math.sin(view.heading),
-                              trip.seats.get(key, []) if moving or stopped else [], stopped)
-                trucks.append(truck)
+            for truck in trucks:
+                if moving or stopped:
+                    truck.crew = trip.seats.get(truck.id, [])
                 if moving:
                     for seat, actor in enumerate(truck.crew):
                         if seat < 2 and actor.hp > 0:

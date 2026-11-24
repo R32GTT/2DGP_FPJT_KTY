@@ -31,6 +31,11 @@ class WorldChunks:
     def contains(self, point):
         return self.key(point) in self.loaded
 
+    def overlaps(self, rect):
+        left, top = self.key((rect.x, rect.y))
+        right, bottom = self.key((rect.right, rect.bottom))
+        return any((x, y) in self.loaded for x in range(left, right + 1) for y in range(top, bottom + 1))
+
     def remember(self):
         for key, baseline in self.baselines.items():
             active = self.world.geometry.objects[key].active

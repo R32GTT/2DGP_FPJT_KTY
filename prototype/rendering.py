@@ -14,6 +14,7 @@ from .hud import HUD
 from .lighting import Lighting, smooth
 from .map_images import MapImages
 from .perception import INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS
+from .transport import TRUCK_SIZE
 from .visual_assets import (
     actor_image, draw_polygon, prop_image, tree_canopy_image, tree_trunk_image, truck_image, vignette_image, weapon_image,
 )
@@ -254,11 +255,10 @@ class Renderer:
             for x, y, _ in simulation.campaign.parked(simulation.roster.nodes):
                 if view.visible(Rect(x - 2.8, y - 1.2, 5.6, 2.4)):
                     self.truck.draw(*view.pico(x, y), 5.6 * view.scale, 2.4 * view.scale)
-            for truck in simulation.transports.trucks:
-                bounds = self._rotated_bounds((truck.x, truck.y), (5.6, 2.4), truck.heading)
-                if view.visible(bounds):
+            for truck in simulation.transports.display_trucks:
+                if view.visible(truck.bounds):
                     x, y = view.pico(truck.x, truck.y)
-                    self.truck.rotate_draw(-truck.heading, x, y, 5.6 * view.scale, 2.4 * view.scale)
+                    self.truck.rotate_draw(-truck.heading, x, y, TRUCK_SIZE[0] * view.scale, TRUCK_SIZE[1] * view.scale)
                     if truck.stopped:
                         for side in (-0.7, 0.7):
                             px, py = truck.world_point(2.45, side)

@@ -110,11 +110,10 @@ class CampaignPresence:
                 brain = self.ai.brains.setdefault(actor.id, Brain([actor.xy]))
                 self.roster.in_transit.add(actor.id)
                 if not held:
-                    distance = index * 0.7
-                    point = view.x - math.cos(view.heading) * distance, view.y - math.sin(view.heading) * distance
-                    point = next(self.world.navigation.nearby_goals(point, False), (view.x, view.y))
+                    x, y, heading = self.bridge.following_pose(view, index * 0.7)
+                    point = next(self.world.navigation.nearby_goals((x, y), False), (view.x, view.y))
                     actor.position = Position(*point)
-                    actor.facing = view.heading
+                    actor.facing = heading
                     brain.patrol, brain.waypoint, brain.post_facing = [point], 0, None
                 actor.last_node = ""
 

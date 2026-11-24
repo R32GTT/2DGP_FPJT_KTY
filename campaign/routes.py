@@ -97,13 +97,19 @@ def _replan(state: CampaignState, operation: Operation) -> bool:
     return False
 
 
-def _pay_distance(state, operation, distance, vehicle_count):
+def movement_supply_cost(state, before, distance, vehicle_count):
     quantum = state.rules.get("road_cost_distance_m")
     if quantum is None or not vehicle_count:
-        return True
-    before = operation.operating_distance_m
+        return 0, before
     after = round(before + distance, 9)
     cost = (math.ceil(after / quantum) - math.ceil(before / quantum)) * vehicle_count * state.rules["road_cost_per_vehicle"]
+    return cost, after
+
+
+def _pay_distance(state, operation, distance, vehicle_count):
+    if "road_cost_distance_m" not in state.rules or not vehicle_count:
+        return True
+    cost, after = movement_supply_cost(state, operation.operating_distance_m, distance, vehicle_count)
     if operation.provisions["supplies"] < cost:
         operation.waiting_reason = "no_provisions"
         return False

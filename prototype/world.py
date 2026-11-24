@@ -122,6 +122,9 @@ class World:
     def detail_loaded(self, point):
         return self.chunks is None or self.chunks.contains(point)
 
+    def detail_overlaps(self, rect):
+        return self.chunks is None or self.chunks.overlaps(rect)
+
     def collider_changes(self):
         if self.chunks:
             return self.chunks.remember()

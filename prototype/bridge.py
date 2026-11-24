@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 
 from campaign.models import FOOT_OPERATIONS, Node, Position, Road
-from campaign.routes import FOOT_SPEED_MPS, position, road_between
+from campaign.routes import FOOT_SPEED_MPS, movement_supply_cost
 from campaign.scenario import load_scenario
 from campaign.simulation import Simulation
 
@@ -20,6 +20,8 @@ class ConvoyView:
     cargo: int
     phase: str
     progress_m: float
+    edge_index: int = 0
+    reversing: bool = False
 
 
 def create_campaign(world):
@@ -48,6 +50,7 @@ class CampaignBridge:
         self.facility_id = facility_id
         state = simulation.state
         self.node_facilities = {facility.node_id: facility for facility in state.facilities.values()}
+        self.route_roads = {frozenset((road.start, road.end)): road for road in state.roads.values()}
         self._convoy_time = -1
         self._convoy_ids = []
         self._resumed_at = {}
@@ -128,42 +131,96 @@ class CampaignBridge:
                 result.append((point.x, point.y, count))
         return result
 
+    def _route_pose(self, route, edge, progress, reversing):
+        state = self.simulation.state
+        if len(route) == 1:
+            point = state.nodes[route[0]].position
+            return point.x, point.y, 0.0
+        if edge == len(route) - 1:
+            edge -= 1
+            progress = self.route_roads[frozenset(route[edge:edge + 2])].length_m
+        start, end = route[edge:edge + 2]
+        a, b = state.nodes[start].position, state.nodes[end].position
+        fraction = progress / self.route_roads[frozenset((start, end))].length_m
+        heading = math.atan2(b.y - a.y, b.x - a.x)
+        return a.x + (b.x - a.x) * fraction, a.y + (b.y - a.y) * fraction, heading + (math.pi if reversing else 0)
+
+    def _preview_motion(self, operation, speed, vehicle_count, fraction):
+        """다음 전략 틱이 실제로 지나갈 도로를 따라 현재 프레임 위치를 구한다."""
+        state = self.simulation.state
+        edge, progress = operation.edge_index, operation.progress_m
+        paid, reversing = operation.edge_paid, operation.reversing
+        supplies = operation.provisions["supplies"]
+        odometer = operation.operating_distance_m
+        budget, travel = speed, speed * fraction
+        quantum_cost = "road_cost_distance_m" in state.rules
+        while travel > 0 and edge < len(operation.route) - 1:
+            road = self.route_roads[frozenset(operation.route[edge:edge + 2])]
+            if road.blocked and not reversing:
+                break
+            if not paid and not reversing and not quantum_cost:
+                supplies -= vehicle_count * state.rules["road_cost_per_vehicle"]
+            segment = min(budget, progress if reversing else road.length_m - progress)
+            cost, odometer = movement_supply_cost(state, odometer, segment, vehicle_count)
+            if cost > supplies:
+                break
+            supplies -= cost
+            distance = min(segment, travel)
+            progress += -distance if reversing else distance
+            if reversing or distance < segment or progress < road.length_m:
+                break
+            edge, progress, paid = edge + 1, 0.0, False
+            budget, travel = budget - segment, travel - segment
+        return edge, progress
+
+    def following_pose(self, view, distance):
+        """후속 대열도 선두의 접선이 아닌 실제 도로를 따라간다."""
+        if not distance:
+            return view.x, view.y, view.heading
+        route = self.simulation.state.operations[view.id].route
+        if len(route) < 2:
+            return view.x - distance * math.cos(view.heading), view.y - distance * math.sin(view.heading), view.heading
+        edge, progress = view.edge_index, view.progress_m
+        if edge == len(route) - 1:
+            edge -= 1
+            progress = self.route_roads[frozenset(route[edge:edge + 2])].length_m
+        if view.reversing:
+            progress += distance
+            while edge < len(route) - 2:
+                length = self.route_roads[frozenset(route[edge:edge + 2])].length_m
+                if progress <= length:
+                    break
+                edge, progress = edge + 1, progress - length
+        else:
+            progress -= distance
+            while progress < 0 and edge > 0:
+                edge -= 1
+                progress += self.route_roads[frozenset(route[edge:edge + 2])].length_m
+        return self._route_pose(route, edge, progress, view.reversing)
+
     def convoys(self, seconds):
         state = self.simulation.state
+        visible_phases = {"outbound", "returning", "unloading", "turnaround", "working", "stranded"}
         if state.world_time != self._convoy_time:
             self._convoy_time = state.world_time
             self._convoy_ids = [op.id for op in state.operations.values()
-                                if op.phase in {"outbound", "returning", "unloading", "turnaround", "stranded"}]
+                                if op.phase in visible_phases]
         result = []
         for key in self._convoy_ids:
             op = state.operations[key]
-            if op.phase not in {"outbound", "returning", "unloading", "turnaround", "stranded"}:
+            if op.phase not in visible_phases:
                 continue
-            point = position(state, op)
-            heading = 0.0
-            progress = op.progress_m
-            if len(op.route) > 1 and op.edge_index == len(op.route) - 1:
-                a, b = state.nodes[op.route[-2]].position, state.nodes[op.route[-1]].position
-                heading = math.atan2(b.y - a.y, b.x - a.x)
-            if op.route and op.edge_index < len(op.route) - 1:
-                start, end = op.route[op.edge_index:op.edge_index + 2]
-                a, b = state.nodes[start].position, state.nodes[end].position
-                heading = math.atan2(b.y - a.y, b.x - a.x)
-                if op.reversing:
-                    heading += math.pi
-                road = road_between(state, start, end)
-                vehicles = [state.vehicles[vid] for vid in op.vehicle_ids if state.vehicles[vid].status != "destroyed"]
-                if ((vehicles or op.kind in FOOT_OPERATIONS) and op.edge_paid and not op.waiting_reason
-                        and op.phase in {"outbound", "returning"} and (not road.blocked or op.reversing)):
-                    since = max(state.world_time, self._resumed_at.get(key, 0.0))
-                    fraction = max(0, min(1, seconds - since))
-                    speed = FOOT_SPEED_MPS if op.kind in FOOT_OPERATIONS else min(vehicle.speed_mps for vehicle in vehicles)
-                    progress = (max(0, op.progress_m - speed * fraction) if op.reversing
-                                else min(math.nextafter(road.length_m, 0), op.progress_m + speed * fraction))
-                    point = Position(a.x + (b.x - a.x) * progress / road.length_m,
-                                     a.y + (b.y - a.y) * progress / road.length_m)
-            result.append(ConvoyView(key, point.x, point.y, heading,
-                                     sum(state.vehicles[vid].status != "destroyed" for vid in op.vehicle_ids),
+            route = op.route or [op.home_node]
+            edge, progress = op.edge_index, op.progress_m
+            vehicles = [state.vehicles[vid] for vid in op.vehicle_ids if state.vehicles[vid].status != "destroyed"]
+            if (edge < len(route) - 1 and (vehicles or op.kind in FOOT_OPERATIONS)
+                    and not op.waiting_reason and op.phase in {"outbound", "returning"}):
+                since = max(state.world_time, self._resumed_at.get(key, 0.0))
+                fraction = max(0, min(1, seconds - since))
+                speed = FOOT_SPEED_MPS if op.kind in FOOT_OPERATIONS else min(vehicle.speed_mps for vehicle in vehicles)
+                edge, progress = self._preview_motion(op, speed, len(vehicles), fraction)
+            x, y, heading = self._route_pose(route, edge, progress, op.reversing)
+            result.append(ConvoyView(key, x, y, heading, len(vehicles),
                                      sum(state.units[uid].soldiers for uid in op.unit_ids),
-                                     sum(op.cargo.values()), op.phase, progress))
+                                     sum(op.cargo.values()), op.phase, progress, edge, op.reversing))
         return result
