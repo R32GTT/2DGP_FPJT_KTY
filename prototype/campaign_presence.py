@@ -10,6 +10,10 @@ from .ai_state import Brain, Incident
 from .ai_config import COMBAT_ALERT_SECONDS
 from .geometry import Rect
 from .perception import SIGHT_RANGE
+from .roster import ASSEMBLY_RADIUS_M
+
+
+MARCH_SPACING_M = 0.7
 
 
 class CampaignPresence:
@@ -198,7 +202,7 @@ class CampaignPresence:
                 brain = self.ai.brains.setdefault(actor.id, Brain([actor.xy]))
                 self.roster.in_transit.add(actor.id)
                 if (marching and not held) or (stranded and actor.id not in previous):
-                    x, y, heading = self.bridge.following_pose(view, index * 0.7)
+                    x, y, heading = self.bridge.following_pose(view, index * MARCH_SPACING_M)
                     point = next(self.world.navigation.nearby_goals((x, y), False), (view.x, view.y))
                     actor.position = Position(*point)
                     actor.facing = heading
@@ -253,7 +257,9 @@ class CampaignPresence:
                 operation.waiting_reason = ""
             return True
         point = position(self.bridge.simulation.state, operation)
-        ready = not self._in_contact(members) and all(math.dist(actor.xy, (point.x, point.y)) <= 3.5 for actor in members)
+        ready = not self._in_contact(members) and all(
+            math.dist(actor.xy, (point.x, point.y)) <= ASSEMBLY_RADIUS_M + index * MARCH_SPACING_M
+            for index, actor in enumerate(members))
         if not ready:
             operation.waiting_reason = "local_engagement"
             for actor in members:

@@ -8,6 +8,10 @@ from .actors import Actor
 from .weapons import WeaponState
 
 
+ASSEMBLY_RADIUS_M = 3.5
+WITHDRAWAL_SLOT_TOLERANCE_M = 3.0
+
+
 class CampaignRoster:
     def __init__(self, bridge, actors, world):
         self.bridge, self.actors, self.world = bridge, actors, world
@@ -42,15 +46,20 @@ class CampaignRoster:
             return True
         state = self.bridge.simulation.state
         point = state.nodes[operation.home_node].position
+        center = point.x, point.y
         for unit_id in operation.unit_ids:
             if unit_id not in self.unit_ids:
                 continue
             members = [actor for actor in self.actors if actor.source_unit == unit_id and actor.hp > 0]
             if len(members) != state.units[unit_id].soldiers:
                 return False
-            if any(math.dist(actor.xy, (point.x, point.y)) > 3.5
-                   or actor.state in {"alert", "combat", "combat_guard", "search", "retreat", "radio"} for actor in members):
-                return False
+            for actor in members:
+                if actor.state in {"alert", "combat", "combat_guard", "search", "retreat", "radio"}:
+                    return False
+                near_slot = (operation.kind == "withdrawal" and actor.boarding_goal is not None
+                             and math.dist(actor.xy, actor.boarding_goal) <= WITHDRAWAL_SLOT_TOLERANCE_M)
+                if not near_slot and math.dist(actor.xy, center) > ASSEMBLY_RADIUS_M:
+                    return False
         return True
 
     def members(self, unit_id, weapon):
