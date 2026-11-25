@@ -92,38 +92,111 @@ class SquadCoordinator:
             members = [a for a in actors if a.hp > 0 and not a.transport_boarding and self.brains[a.id].incident == key]
             if not members or any(self.brains[a.id].visible or self.brains[a.id].search.investigating_priority
                                   or self.brains[a.id].search.task.scanning for a in members):
+                sweep.regroup_advanced_at = time
+                sweep.regroup_until = None
+                sweep.regroup_progress.clear()
                 continue
-            sweep.regroup_slots = {a.id: point for a in members
-                if (point := sweep.regroup_slots.get(a.id)) is not None and nav.walkable(point)
-                and not self.brains[a.id].motion.failed(point, revision)}
+            if sweep.regroup_revision != revision:
+                sweep.regroup_revision = revision
+                sweep.regroup_rejected.clear()
+            if sweep.regroup_advanced_at is None:
+                sweep.regroup_advanced_at = time
+            live = {actor.id for actor in members}
+            sweep.regroup_slots = {key: point for key, point in sweep.regroup_slots.items() if key in live}
+            sweep.regroup_progress = {key: progress for key, progress in sweep.regroup_progress.items()
+                                      if key in sweep.regroup_slots}
+            for actor in members:
+                point = sweep.regroup_slots.get(actor.id)
+                if point is None:
+                    continue
+                motion = self.brains[actor.id].motion
+                direct = math.dist(actor.xy, point)
+                path = motion.path if motion.goal == point and motion.path_revision == revision else []
+                remaining = sum(math.dist(a, b) for a, b in zip([actor.xy, *path], [*path, point]))
+                best, advanced_at, had_path = sweep.regroup_progress.get(actor.id, (None, time, False))
+                if best is None or (path and not had_path):
+                    sweep.regroup_progress[actor.id] = remaining, advanced_at, bool(path)
+                    if direct <= config.REGROUP_ARRIVAL_M:
+                        sweep.regroup_advanced_at = time
+                elif ((path or not had_path) and remaining <= best - config.REGROUP_PROGRESS_M
+                      or direct <= config.REGROUP_ARRIVAL_M < best):
+                    sweep.regroup_progress[actor.id] = remaining, time, bool(path)
+                    sweep.regroup_advanced_at = advanced_at = time
+                if (not nav.walkable(point) or motion.failed(point, revision)
+                        or direct > config.REGROUP_ARRIVAL_M and time - advanced_at >= config.REGROUP_REASSIGN_S):
+                    sweep.regroup_rejected.add((actor.id, point))
+                    del sweep.regroup_slots[actor.id]
+                    sweep.regroup_progress.pop(actor.id, None)
             if len(sweep.regroup_slots) < len(members) and time >= sweep.regroup_retry_at:
                 sweep.regroup_retry_at = time + 0.5
                 positions = [a.xy for a in members]
                 spacing = max(0.9, 2 * max(a.radius for a in members) + 0.16)
-                if min(cKDTree(positions).query(positions, k=2)[0][:, 1]) >= spacing:
+                if (sweep.regroup_anchor is None and not sweep.regroup_rejected
+                        and min(cKDTree(positions).query(positions, k=2)[0][:, 1]) >= spacing):
                     slots = positions
                 else:
-                    center = tuple(sum(p[i] for p in positions) / len(positions) for i in range(2))
+                    center = sweep.regroup_anchor or tuple(sum(p[i] for p in positions) / len(positions) for i in range(2))
                     if not nav.walkable(center):
                         center = min(sweep.area.points, key=lambda p: math.dist(p, center))
                     slots = self.rally_slots(nav, center, floors=sweep.area.floors, spacing=spacing,
-                        extent=max(math.hypot(r.w, r.h) for r in sweep.area.floors), required=len(members))
+                        extent=max(math.hypot(r.w, r.h) for r in sweep.area.floors),
+                        required=len(members) + min(len(sweep.regroup_rejected), len(members)))
                 slots = [p for p in slots if all(math.dist(p, taken) >= spacing for taken in sweep.regroup_slots.values())]
                 remaining = [a for a in members if a.id not in sweep.regroup_slots]
                 if remaining and slots:
-                    rows, columns = linear_sum_assignment([[math.dist(a.xy, p) for p in slots] for a in remaining])
-                    sweep.regroup_slots.update((remaining[i].id, slots[j]) for i, j in zip(rows, columns)
-                                              if nav.route(remaining[i].xy, slots[j], allow_doors=True))
-            arrived = all(a.id in sweep.regroup_slots and math.dist(a.xy, sweep.regroup_slots[a.id]) <= config.REGROUP_ARRIVAL_M for a in members)
-            sweep.regroup_until = (sweep.regroup_until or time + config.REGROUP_HOLD_S) if arrived else None
-            if sweep.regroup_until is not None and time >= sweep.regroup_until:
-                sweep.regroup_done = True
-                for actor in members:
-                    brain = self.brains[actor.id]
-                    brain.incident, brain.combat.combat_alert_until, brain.search.next_sweep_at = "", 0.0, 0.0
-                    brain.clear_contact()
-                    brain.search.task.sweep = brain.search.task.target = brain.motion.yield_point = None
-                    brain.search.task.execution = None
+                    self._assign_regroup(nav, sweep, remaining, slots)
+            arrived = [a for a in members if a.id in sweep.regroup_slots
+                       and math.dist(a.xy, sweep.regroup_slots[a.id]) <= config.REGROUP_ARRIVAL_M]
+            if len(arrived) == len(members):
+                sweep.regroup_until = sweep.regroup_until or time + config.REGROUP_HOLD_S
+                if time >= sweep.regroup_until:
+                    self._release_regroup(sweep, members)
+                    sweep.regroup_done = True
+            else:
+                sweep.regroup_until = None
+                if time - sweep.regroup_advanced_at >= config.REGROUP_STALL_S:
+                    if arrived:
+                        sweep.regroup_anchor = min(arrived, key=lambda actor: math.dist(actor.xy, sweep.anchor)).xy
+                        self._release_regroup(sweep, arrived)
+                        sweep.regroup_advanced_at = time
+                    else:
+                        self._release_regroup(sweep, members)
+                        sweep.regroup_done = True
+
+    @staticmethod
+    def _assign_regroup(nav, sweep, members, slots):
+        distances = [[math.dist(actor.xy, point) for point in slots] for actor in members]
+        unassigned_cost = 1 + sum(max(row) for row in distances)
+        costs = [[2 * unassigned_cost if (actor.id, point) in sweep.regroup_rejected else distance
+                  for point, distance in zip(slots, row)] + [unassigned_cost] * len(members)
+                 for actor, row in zip(members, distances)]
+        reachable = set()
+        while True:
+            rows, columns = linear_sum_assignment(costs)
+            pairs = [(i, j) for i, j in zip(rows, columns) if j < len(slots) and costs[i][j] < unassigned_cost]
+            failed = False
+            for i, j in pairs:
+                if (i, j) in reachable:
+                    continue
+                if nav.route(members[i].xy, slots[j], allow_doors=True):
+                    reachable.add((i, j))
+                else:
+                    sweep.regroup_rejected.add((members[i].id, slots[j]))
+                    costs[i][j] = 2 * unassigned_cost
+                    failed = True
+            if not failed:
+                sweep.regroup_slots.update((members[i].id, slots[j]) for i, j in pairs)
+                return
+
+    def _release_regroup(self, sweep, actors):
+        for actor in actors:
+            sweep.regroup_slots.pop(actor.id, None)
+            sweep.regroup_progress.pop(actor.id, None)
+            brain = self.brains[actor.id]
+            brain.incident, brain.combat.combat_alert_until, brain.search.next_sweep_at = "", 0.0, 0.0
+            brain.clear_contact()
+            brain.search.task.sweep = brain.search.task.target = brain.motion.yield_point = None
+            brain.search.task.execution = None
 
     def unblock_search(self, actors, time):
         living = {actor.id: actor for actor in actors if actor.hp > 0}

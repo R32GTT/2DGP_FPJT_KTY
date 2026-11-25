@@ -220,6 +220,11 @@ class IndoorSweep(Reservations):
     regroup_until: float | None = None
     regroup_retry_at: float = 0.0
     regroup_done: bool = False
+    regroup_advanced_at: float | None = None
+    regroup_progress: dict[str, tuple[float, float, bool]] = field(default_factory=dict)
+    regroup_rejected: set[tuple[str, tuple[float, float]]] = field(default_factory=set)
+    regroup_revision: int | None = None
+    regroup_anchor: tuple[float, float] | None = None
     _sight_revision: int | None = field(default=None, init=False, repr=False)
     _sight_cache: dict = field(default_factory=dict, init=False, repr=False)
 
@@ -299,6 +304,11 @@ class IndoorSweep(Reservations):
         self.regroup_until = None
         self.regroup_retry_at = 0.0
         self.regroup_done = False
+        self.regroup_advanced_at = None
+        self.regroup_progress.clear()
+        self.regroup_rejected.clear()
+        self.regroup_revision = None
+        self.regroup_anchor = None
 
     def look(self, xy, facing, room, geometry, *, walking=False, continue_scan=False, points=None):
         if points is None:
