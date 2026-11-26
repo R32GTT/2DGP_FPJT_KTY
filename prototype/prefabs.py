@@ -1,7 +1,6 @@
 """시설 한 단위의 그림·벽·문·노드를 같은 변환으로 배치한다."""
 
 from dataclasses import dataclass
-from copy import deepcopy
 import json
 import math
 
@@ -109,7 +108,12 @@ def _placed_lights(definition, placement):
 
 
 def expand_instances(scene, root):
-    scene = deepcopy(scene)
+    scene = {**scene,
+             "layers": list(scene["layers"]),
+             "colliders": list(scene["colliders"]),
+             "navigation": dict(scene["navigation"]),
+             "navigation_edges": list(scene["navigation_edges"]),
+             "search_areas": dict(scene.get("search_areas", {}))}
     definitions = {}
     scene["placed_prefabs"] = []
     for row in scene.get("prefab_instances", ()):

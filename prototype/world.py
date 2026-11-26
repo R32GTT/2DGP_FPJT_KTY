@@ -1,7 +1,6 @@
 """이미지 레이어·미터 판정·내비게이션을 별도로 읽는 목업 월드."""
 
 from dataclasses import dataclass
-from copy import deepcopy
 import json
 import math
 from functools import cached_property
@@ -45,7 +44,7 @@ class World:
     def __init__(self, path=DEFAULT_SCENE, *, world_root=None, initial_position=None):
         # 생성기는 기존 장면 형식의 데이터를 직접 전달할 수 있다.
         self.path = None if isinstance(path, dict) else Path(path)
-        self.source = deepcopy(path) if self.path is None else self.path
+        self.source = path if self.path is None else self.path
         self.data = self.source if self.path is None else json.loads(self.path.read_text(encoding="utf-8"))
         if self.data.get("format") == "revenant.region_scene.v1":
             self.data = build_region(self.data, ROOT)
