@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from zlib import error as CompressionError
 
-from campaign.persistence import CampaignSaveError, deserialize_campaign, serialize_campaign
+from campaign.persistence import CampaignSaveError, campaign_payload, restore_campaign
+from campaign.resources import TERMINAL_PHASES
 from campaign.simulation import Simulation
 from .generated_world import GENERATION_VERSION, WORLD_VERSION, generate_world
 from .save_state import capture, restore
@@ -21,6 +22,7 @@ SAVE_FORMAT = "revenant_lost.generated_play"
 DEFAULT_SAVE = ROOT / "saves" / "prototype.json.gz"
 QUICK_SAVE = DEFAULT_SAVE.with_name("quick.json.gz")
 MAX_BYTES = 16 * 1024 * 1024
+ARCHIVE_PAGE_ROWS = 256
 
 
 def content_version():
@@ -50,6 +52,47 @@ def _read_verified(path, digest, limit):
     return json.loads(data)
 
 
+def _archive_pages(files, rows):
+    pages = []
+    for start in range(0, len(rows), ARCHIVE_PAGE_ROWS):
+        data = json_bytes(rows[start:start + ARCHIVE_PAGE_ROWS])
+        digest = sha256(data).hexdigest()
+        _save_once(files.archive_path(digest), data, MAX_BYTES)
+        pages.append(digest)
+    return pages
+
+
+def _archive_campaign(files, campaign):
+    state = campaign["state"]
+    archived = [(index, key, op) for index, (key, op) in enumerate(state["operations"].items())
+                if op["phase"] in TERMINAL_PHASES]
+    for _, key, _ in archived:
+        del state["operations"][key]
+    return {"operations": _archive_pages(files, archived),
+            "history": _archive_pages(files, state.pop("history"))}
+
+
+def _restore_archive(files, campaign, archive):
+    state = campaign["state"]
+    history = []
+    for digest in archive["history"]:
+        history.extend(_read_verified(files.archive_path(digest), digest, MAX_BYTES))
+    state["history"] = history
+    ended = {}
+    keys = set(state["operations"])
+    for digest in archive["operations"]:
+        for index, key, op in _read_verified(files.archive_path(digest), digest, MAX_BYTES):
+            if (type(index) is not int or index < 0 or index in ended or key in keys
+                    or op["phase"] not in TERMINAL_PHASES):
+                raise ValueError("저장한 종료 작전 상태가 잘못됐습니다")
+            ended[index] = key, op
+            keys.add(key)
+    if any(index >= len(keys) for index in ended):
+        raise ValueError("저장한 종료 작전 순서가 잘못됐습니다")
+    active = iter(state["operations"].items())
+    state["operations"] = dict(ended[index] if index in ended else next(active) for index in range(len(keys)))
+
+
 def save_game(play, path=DEFAULT_SAVE):
     generation = play.world.data.get("generation", {})
     if "region_count" not in generation:
@@ -61,7 +104,9 @@ def save_game(play, path=DEFAULT_SAVE):
             scene = json.loads(scene.read_text(encoding="utf-8"))
         world = json_bytes(scene)
         files = WorldFiles(path.parent / "worlds", sha256(world).hexdigest())
-        state = json_bytes({"campaign": json.loads(serialize_campaign(play.campaign.simulation.state)),
+        campaign = campaign_payload(play.campaign.simulation.state)
+        archive = _archive_campaign(files, campaign)
+        state = json_bytes({"campaign": campaign, "archive": archive,
                             "local": capture(play), "changes": play.world.collider_changes()})
         revision = sha256(state).hexdigest()
         _save_once(files.scene_path, world, MAX_WORLD_BYTES)
@@ -99,8 +144,10 @@ def load_game(path=DEFAULT_SAVE):
                 raise ValueError("지원하지 않는 월드·지역 생성 버전")
             revision = payload["revision"]
             state = _read_verified(files.snapshot_path(revision), revision, MAX_BYTES)
+            if "archive" in state:
+                _restore_archive(files, state["campaign"], state["archive"])
         json.dumps(state, allow_nan=False)
-        campaign = Simulation(deserialize_campaign(json.dumps(state["campaign"])))
+        campaign = Simulation(restore_campaign(state["campaign"]))
         position = state["local"]["player"]["position"]
         play = PlaySimulation(scene, campaign=campaign, materialized=False, world_root=world_root,
                               initial_position=(position["x"], position["y"]))

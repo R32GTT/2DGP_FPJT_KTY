@@ -48,6 +48,10 @@ class WorldFiles:
         _check_digest(revision)
         return self.directory / "snapshots" / f"{revision}.json.gz"
 
+    def archive_path(self, digest):
+        _check_digest(digest)
+        return self.directory / "archive" / f"{digest}.json.gz"
+
     @classmethod
     def for_scene(cls, root, scene):
         # 같은 시드라도 생성 옵션과 실제 도로·시설 배치가 다르면 캐시를 분리한다.

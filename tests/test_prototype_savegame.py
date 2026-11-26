@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from campaign.models import Position
+from campaign.persistence import campaign_payload
 from campaign.resources import assert_invariants
 from prototype.generated_world import generate_world
 from prototype.launcher import ROOT, build_command, discover_targets
@@ -307,10 +308,33 @@ class PlaySaveTests(unittest.TestCase):
             # 이전 형식은 내장된 생성 설정과 상태를 사용한다.
             old = quick.with_name("legacy.json.gz")
             snapshot = json.loads(gzip.decompress(files.snapshot_path(quick_slot["revision"]).read_bytes()))
+            snapshot.pop("archive")
+            snapshot["campaign"] = campaign_payload(quick_play.campaign.simulation.state)
             write_bytes(old, json_bytes({"format": quick_slot["format"], "version": 6,
                                          "content": quick_slot["content"], "generation": self.scene["generation"],
                                          **snapshot}))
             self.assertEqual(load_game(old).player.hp, quick_play.player.hp)
+
+    def test_completed_operations_and_history_round_trip_through_archive_pages(self):
+        play = PlaySimulation(self.scene)
+        play.time = 120
+        play.campaign.advance_to(120)
+        state = play.campaign.simulation.state
+        for index in range(600):
+            state.record("archive_test", sequence=index)
+        self.assertTrue(any(op.phase == "completed" for op in state.operations.values()))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quick.json.gz"
+            save_game(play, path)
+            slot = json.loads(gzip.decompress(path.read_bytes()))
+            files = WorldFiles(path.parent / "worlds", slot["world"])
+            snapshot = json.loads(gzip.decompress(files.snapshot_path(slot["revision"]).read_bytes()))
+            self.assertGreaterEqual(len(snapshot["archive"]["history"]), 3)
+            self.assertTrue(snapshot["archive"]["operations"])
+            self.assertNotIn("history", snapshot["campaign"]["state"])
+            restored = load_game(path).campaign.simulation.state
+            self.assertEqual(list(restored.operations), list(state.operations))
+            self.assertEqual(asdict(restored), asdict(state))
 
     def test_stopped_vehicle_seats_casualty_and_dismount_positions_survive_load(self):
         play = PlaySimulation(self.scene)

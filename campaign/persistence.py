@@ -19,10 +19,13 @@ class CampaignSaveError(ValueError):
     """저장 파일 부재·손상·버전 불일치를 호출자에게 전달한다."""
 
 
-def serialize_campaign(state: CampaignState) -> str:
+def campaign_payload(state: CampaignState) -> dict:
     assert_invariants(state)
-    return json.dumps({"format": SAVE_FORMAT, "save_version": SAVE_VERSION,
-                       "state": asdict(state)}, ensure_ascii=False, allow_nan=False, indent=2)
+    return {"format": SAVE_FORMAT, "save_version": SAVE_VERSION, "state": asdict(state)}
+
+
+def serialize_campaign(state: CampaignState) -> str:
+    return json.dumps(campaign_payload(state), ensure_ascii=False, allow_nan=False, indent=2)
 
 
 def _construct(cls, row):
@@ -38,6 +41,15 @@ def _tuples(value):
 def deserialize_campaign(text: str) -> CampaignState:
     try:
         payload = json.loads(text)
+        return restore_campaign(payload)
+    except (ValueError, TypeError) as exc:
+        if isinstance(exc, CampaignSaveError):
+            raise
+        raise CampaignSaveError(f"손상된 캠페인 저장 데이터: {exc}") from exc
+
+
+def restore_campaign(payload) -> CampaignState:
+    try:
         if (payload["format"] != SAVE_FORMAT or type(payload["save_version"]) is not int
                 or payload["save_version"] != SAVE_VERSION):
             raise CampaignSaveError("지원하지 않는 캠페인 저장 형식·버전")
