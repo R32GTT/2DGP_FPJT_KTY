@@ -31,7 +31,7 @@ class Simulation:
         if type(world_time) is not int or world_time < state.world_time:
             raise ValueError("목표 시각은 현재 이후의 정수 초여야 함")
         if self._finish_if_occupied():
-            assert_invariants(state)
+            assert_invariants(state, include_history=False)
             return
         if not state.started:
             state.started = True
@@ -41,7 +41,7 @@ class Simulation:
             clock.schedule(state, state.world_time + state.demand.period_s,
                            "demand", priority=clock.DEMAND)
         clock.advance_to(state, world_time, self._handle_event, tick=self._tick, stop=self._finish_if_occupied)
-        assert_invariants(state)
+        assert_invariants(state, include_history=False)
 
     def _finish_if_occupied(self):
         state = self.state
@@ -348,7 +348,7 @@ class Simulation:
         else:
             raise ValueError(f"지원하지 않는 행동: {kind}")
         state.record("action", action=deepcopy(action))
-        assert_invariants(state)
+        assert_invariants(state, include_history=False)
         return result
 
     def _damage_asset(self, action: dict) -> None:

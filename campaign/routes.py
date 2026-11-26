@@ -9,11 +9,62 @@ from .resources import consume
 FOOT_SPEED_MPS = 3.0
 
 
+class _RoadTable(dict):
+    topology = None
+
+    def __setitem__(self, key, road):
+        self.topology = None
+        super().__setitem__(key, road)
+
+    def __delitem__(self, key):
+        self.topology = None
+        super().__delitem__(key)
+
+    def pop(self, key, *default):
+        self.topology = None
+        return super().pop(key, *default)
+
+    def popitem(self):
+        self.topology = None
+        return super().popitem()
+
+    def clear(self):
+        self.topology = None
+        super().clear()
+
+    def update(self, *args, **kwargs):
+        self.topology = None
+        super().update(*args, **kwargs)
+
+    def setdefault(self, key, default=None):
+        self.topology = None
+        return super().setdefault(key, default)
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
+
+def _topology(state):
+    if not isinstance(state.roads, _RoadTable):
+        state.roads = _RoadTable(state.roads)
+    table = state.roads
+    if table.topology is None:
+        pairs, graph = {}, {}
+        for road in sorted(table.values(), key=lambda item: item.id):
+            pairs[frozenset((road.start, road.end))] = road
+            graph.setdefault(road.start, []).append((road.end, road))
+            graph.setdefault(road.end, []).append((road.start, road))
+        table.topology = pairs, graph
+    return table.topology
+
+
 def road_between(state: CampaignState, start: str, end: str) -> Road:
-    for road in state.roads.values():
-        if {road.start, road.end} == {start, end}:
-            return road
-    raise ValueError(f"연결 도로 없음: {start} -> {end}")
+    pairs, _ = _topology(state)
+    road = pairs.get(frozenset((start, end)))
+    if road is None:
+        raise ValueError(f"연결 도로 없음: {start} -> {end}")
+    return road
 
 
 def find_route(state: CampaignState, start: str, end: str,
@@ -21,25 +72,27 @@ def find_route(state: CampaignState, start: str, end: str,
     if start not in state.nodes or end not in state.nodes:
         raise ValueError("경로 노드 누락")
     blocked = set(known_blocked)
-    graph = {node: [] for node in state.nodes}
-    for road in sorted(state.roads.values(), key=lambda item: item.id):
-        # 실제 차단 여부는 관측 전까지 경로 계획에 유출하지 않는다.
-        if road.id not in blocked:
-            graph[road.start].append((road.end, road.length_m))
-            graph[road.end].append((road.start, road.length_m))
-    pending = [(0.0, start, [start])]
-    distances = {start: 0.0}
+    _, graph = _topology(state)
+    pending = [(0.0, start)]
+    distances, parents = {start: 0.0}, {}
     while pending:
-        distance, node, path = heapq.heappop(pending)
+        distance, node = heapq.heappop(pending)
         if distance != distances[node]:
             continue
         if node == end:
-            return path
-        for neighbor, length in graph[node]:
-            candidate = distance + length
-            if candidate < distances.get(neighbor, float("inf")):
+            path = [end]
+            while path[-1] != start:
+                path.append(parents[path[-1]])
+            return path[::-1]
+        for neighbor, road in graph.get(node, ()):
+            # 실제 차단 여부는 관측 전까지 경로 계획에 유출하지 않는다.
+            if road.id in blocked:
+                continue
+            candidate = distance + road.length_m
+            if candidate < distances.get(neighbor, math.inf):
                 distances[neighbor] = candidate
-                heapq.heappush(pending, (candidate, neighbor, path + [neighbor]))
+                parents[neighbor] = node
+                heapq.heappush(pending, (candidate, neighbor))
     return []
 
 

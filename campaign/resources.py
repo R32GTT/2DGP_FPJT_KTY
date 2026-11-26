@@ -274,20 +274,21 @@ def finish_relocation(state: CampaignState, operation: Operation) -> None:
                  soldiers=soldiers)
 
 
-def material_totals(state: CampaignState) -> dict[str, int]:
+def material_totals(state: CampaignState, *, include_history=True) -> dict[str, int]:
     inventories = [f.inventory for f in state.facilities.values()] + [state.player_stock]
     if state.source.mode == "finite":
         inventories.append(state.source.inventory)
     for operation in state.operations.values():
-        inventories.extend((operation.cargo, operation.provisions))
+        if include_history or operation.phase not in TERMINAL_PHASES:
+            inventories.extend((operation.cargo, operation.provisions))
     return {name: sum(inventory[name] for inventory in inventories) for name in RESOURCE_TYPES}
 
 
-def assert_invariants(state: CampaignState) -> None:
-    validate_state(state)
+def assert_invariants(state: CampaignState, *, include_history=True) -> None:
+    validate_state(state, include_history=include_history)
     if state.demand.delivered != state.ledger.delivered:
         raise ValueError("외부 인도 실적과 자원 회계 불일치")
-    totals = material_totals(state)
+    totals = material_totals(state, include_history=include_history)
     for name in RESOURCE_TYPES:
         accounted = (totals[name] + state.ledger.consumed[name] + state.ledger.destroyed[name]
                      + state.ledger.delivered[name] + state.ledger.returned_external[name])

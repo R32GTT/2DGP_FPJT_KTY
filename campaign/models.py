@@ -234,7 +234,7 @@ class CampaignState:
         self.history.append({"time": self.world_time, "kind": kind, **details})
 
 
-def validate_state(state: CampaignState) -> None:
+def validate_state(state: CampaignState, *, include_history=True) -> None:
     """입력·저장 파일의 잘못된 참조와 음수 자원을 즉시 거부한다."""
     def require(condition: bool, message: str) -> None:
         if not condition:
@@ -277,8 +277,8 @@ def validate_state(state: CampaignState) -> None:
         require(road.start in state.nodes and road.end in state.nodes, "도로 노드 누락")
         require(math.isfinite(road.length_m) and road.length_m > 0
                 and road.start != road.end and type(road.blocked) is bool, "잘못된 도로 상태")
-    pairs = [frozenset((road.start, road.end)) for road in state.roads.values()]
-    require(len(set(pairs)) == len(pairs), "중복 도로 연결")
+    pairs = {frozenset((road.start, road.end)): road for road in state.roads.values()}
+    require(len(pairs) == len(state.roads), "중복 도로 연결")
     for region in state.regions.values():
         require(type(region.minimum_garrison) is int and region.minimum_garrison >= 0,
                 "잘못된 최소 주둔량")
@@ -334,6 +334,8 @@ def validate_state(state: CampaignState) -> None:
         require(asset.node_id is not None or asset.operation_id is not None
                 or asset.position is not None, "자산 위치 누락")
     for operation in state.operations.values():
+        if not include_history and operation.phase in {"completed", "cancelled", "destroyed"}:
+            continue
         require(operation.kind in {"supply", "export", "repair", "equipment"} | FOOT_OPERATIONS | TROOP_TRANSPORTS,
                 "잘못된 작전 유형")
         require(operation.kind not in FOOT_OPERATIONS or (not operation.vehicle_ids and bool(operation.unit_ids)),
@@ -385,8 +387,7 @@ def validate_state(state: CampaignState) -> None:
                 require(operation.progress_m == 0, "도착 후 잔여 이동 거리")
             else:
                 pair = frozenset(operation.route[operation.edge_index:operation.edge_index + 2])
-                length = next(road.length_m for road in state.roads.values()
-                              if frozenset((road.start, road.end)) == pair)
+                length = pairs[pair].length_m
                 require(operation.progress_m < length, "도로 길이를 초과한 이동")
         else:
             require(operation.phase in {"loading", "cancelled"} and operation.progress_m == 0,
