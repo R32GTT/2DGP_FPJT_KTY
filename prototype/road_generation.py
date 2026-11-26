@@ -178,15 +178,20 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None, 
     pieces = merged.geoms if merged.geom_type == "MultiLineString" else (merged,)
     rank = {kind: index for index, kind in enumerate(ROAD_WIDTHS)}
 
-    def owner(line, sources):
+    def owner(line, sources, source_index):
         middle = line.interpolate(0.5, normalized=True)
-        return min(sources, key=lambda item: (round(item[0].distance(middle), 6), rank[item[1]["kind"]]))[1]
+        nearest = source_index.nearest(middle)
+        distance = sources[nearest][0].distance(middle)
+        candidates = source_index.query(middle, predicate="dwithin", distance=distance + 1e-6)
+        return min((sources[index] for index in candidates),
+                   key=lambda item: (round(item[0].distance(middle), 6), rank[item[1]["kind"]]))[1]
 
     forbidden = prep(union_all([box(x, y, x + w, y + h) for x, y, w, h in (site['rect'] for site in sites)]).buffer(-1e-6))
     envelope = box(bounds.x, bounds.y, bounds.right, bounds.bottom).buffer(1e-6)
     refined = []
+    source_index = STRtree([line for line, _ in routes])
     for line in pieces:
-        spec = owner(line, routes)
+        spec = owner(line, routes, source_index)
         clearance = max(spec['width'] / 2, math.hypot(VEHICLE_SIZE[0] / 2, VEHICLE_SIZE[1] / 2) + VEHICLE_MARGIN)
         def valid(candidate):
             bed = candidate.buffer(clearance, cap_style='flat', join_style='bevel')
@@ -195,6 +200,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None, 
         candidate = candidate if valid(candidate) else line
         refined.append((LineString(smooth_path(candidate.coords, valid)), spec))
     routes = refined
+    source_index = STRtree([line for line, _ in routes])
     merged = union_all([line for line, _ in routes])
     nodes, segments = {}, {}
 
@@ -210,7 +216,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None, 
             edge = tuple(sorted((node(a), node(b))))
             if edge[0] == edge[1]:
                 continue
-            segments[edge] = {"nodes": list(edge), **owner(LineString([a, b]), routes)}
+            segments[edge] = {"nodes": list(edge), **owner(LineString([a, b]), routes, source_index)}
     terminals = {key: node(point) for key, point in sorted(gates.items())}
     spawn_node = terminals[next(site["id"] for site in sites if site["kind"] == "safehouse")] if trunks else node(points["spawn"])
     junctions = build_junctions(nodes, [segments[edge] for edge in sorted(segments)], bounds)
