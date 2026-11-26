@@ -344,7 +344,7 @@ class Renderer:
                 if view.visible(marker):
                     self._rect(view, marker, (219, 100, 69) if roads[control["road"]].blocked else (238, 197, 92))
                     self._rect(view, marker, (47, 52, 48), filled=False)
-            for x, y, _ in simulation.campaign.parked(simulation.roster.nodes):
+            for x, y, _ in simulation.campaign.parked(simulation.roster.active_nodes):
                 if view.visible(Rect(x - 2.8, y - 1.2, 5.6, 2.4)):
                     self.truck.draw(*view.pico(x, y), 5.6 * view.scale, 2.4 * view.scale)
             for truck in simulation.transports.display_trucks:

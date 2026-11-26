@@ -40,7 +40,7 @@ def collect(play):
         key = site["campaign_id"]
         departures = {event.operation_id: event.time for event in state.events if event.kind == "depart"}
         count = 0
-        for operation in state.operations.values():
+        for operation in state.active_operations():
             if (operation.kind not in OPERATION_NAMES or operation.phase not in {"loading", "outbound", "unloading", "working"}
                     or key not in {operation.origin_id, operation.destination_id}):
                 continue

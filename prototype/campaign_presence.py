@@ -23,6 +23,7 @@ class CampaignPresence:
         self.weapon = weapon_roles["patrol"]
         self.sites = {site["service_node"]: site for site in world.facilities if site["campaign_id"]}
         self.marches, self.received = {}, set()
+        self._garrison_stamp, self._garrisons = None, {}
         self._orders_at, self.completed = -1, []
         self._ammo_points = {}
         self.roles = {}
@@ -177,16 +178,22 @@ class CampaignPresence:
         if not self.roster.materialized:
             return
         state = self.bridge.simulation.state
+        stamp = self.bridge.simulation.revision, len(state.units)
+        if self._garrison_stamp != stamp:
+            self._garrison_stamp = stamp
+            self._garrisons = defaultdict(list)
+            for unit in state.units.values():
+                if unit.faction == "enemy" and unit.soldiers and unit.node_id in self.sites:
+                    self._garrisons[unit.node_id].append(unit)
+        units = (unit for node in self.roster.active_nodes for unit in self._garrisons.get(node, ()))
         garrisons = defaultdict(list)
-        for unit in sorted(state.units.values(), key=lambda unit: (unit.can_escort, unit.id)):
-            if unit.node_id not in self.roster.active_nodes or unit.faction != "enemy" or not unit.soldiers:
-                continue
+        for unit in sorted(units, key=lambda unit: (unit.can_escort, unit.id)):
             site = self.sites[unit.node_id]
             members = self.roster.members(unit.id, lambda member: self._garrison_weapon(site, unit.id, member))
             garrisons[unit.node_id].extend((actor, unit.status == "reserved") for actor in members)
         for node, members in garrisons.items():
             self._guard_posts(node, members)
-        for view in self.bridge.convoys(seconds):
+        for view in self.bridge.convoys(seconds, bounds=Rect(*player, 0, 0).expanded(60)):
             operation = state.operations[view.id]
             marching = operation.kind in FOOT_OPERATIONS and operation.phase in {"outbound", "returning"}
             stranded = operation.phase == "stranded" and not view.vehicles
@@ -273,16 +280,17 @@ class CampaignPresence:
         state = self.bridge.simulation.state
         if self._orders_at != state.world_time:
             self._orders_at = state.world_time
-            self.completed = [operation for operation in state.operations.values()
-                              if operation.kind in QRF_OPERATIONS and operation.phase == "completed" and operation.report_xy is not None
+            self.completed = [operation for kind in sorted(QRF_OPERATIONS) for operation in state.operations_of_kind(kind)
+                              if operation.phase == "completed" and operation.report_xy is not None
                               and seconds - operation.completed_at <= COMBAT_ALERT_SECONDS]
+            self.completed.sort(key=lambda op: int(op.id[10:]))
             active = {operation.id for operation in self.completed}
             self.received = {key for key in self.received if key[0] in active}
         for operation in self.completed:
             point = tuple(operation.report_xy)
             for unit_id in operation.unit_ids:
-                for actor in self.roster.actors:
-                    if actor.source_unit != unit_id or not actor.present or actor.hp <= 0 or (operation.id, actor.id) in self.received:
+                for actor in self.roster.by_unit.get(unit_id, ()):
+                    if not actor.present or actor.hp <= 0 or (operation.id, actor.id) in self.received:
                         continue
                     brain = self.ai.brains[actor.id]
                     self.ai.incidents.setdefault(operation.id, Incident(seconds, point))

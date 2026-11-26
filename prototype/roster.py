@@ -1,5 +1,6 @@
 """동일한 캠페인 병력의 개별 멤버를 유지한다. 이탈·재접근으로 손실을 초기화하지 않는다."""
 
+from collections import defaultdict
 import math
 
 from campaign.models import Position
@@ -21,21 +22,32 @@ class CampaignRoster:
         self.seated_deaths = set()
         self.materialized = True
         self.nodes = {facility["service_node"] for facility in world.facilities if facility["campaign_id"]}
-        self.node_territories = {facility["service_node"]: world.territory_at(facility["position"])
-                                 for facility in world.facilities if facility["campaign_id"]}
+        self.nodes_by_territory = defaultdict(set)
+        for facility in world.facilities:
+            if facility["campaign_id"]:
+                territory = world.territory_at(facility["position"])
+                self.nodes_by_territory[territory].add(facility["service_node"])
         self.active_nodes = self.nodes
-        self.unit_ids = sorted({actor.source_unit for actor in actors if actor.source_unit})
+        self.index_members()
         self.in_transit = set()
         self._stamp, self._active = None, []
         self.bridge.simulation.departure_ready = self.ready
+
+    def index_members(self):
+        self.by_unit = defaultdict(list)
+        for actor in self.actors:
+            if actor.source_unit:
+                self.by_unit[actor.source_unit].append(actor)
+        self.unit_ids = sorted(self.by_unit)
+        self._unit_stamp, self._unit_status = None, ()
 
     def track_player(self, point):
         if not self.world.territories:
             return
         nearby = {key for key, rect in self.world.territories.items()
                   if rect.expanded(48).segment_entry(point, point) is not None}
-        self.active_nodes = {key for key, territory in self.node_territories.items()
-                             if territory is None or territory in nearby}
+        nearby.add(None)
+        self.active_nodes = {node for territory in nearby for node in self.nodes_by_territory.get(territory, ())}
         if self.world.chunks:
             nodes = self.bridge.simulation.state.nodes
             self.active_nodes = {key for key in self.active_nodes
@@ -48,9 +60,9 @@ class CampaignRoster:
         point = state.nodes[operation.home_node].position
         center = point.x, point.y
         for unit_id in operation.unit_ids:
-            if unit_id not in self.unit_ids:
+            if unit_id not in self.by_unit:
                 continue
-            members = [actor for actor in self.actors if actor.source_unit == unit_id and actor.hp > 0]
+            members = [actor for actor in self.by_unit[unit_id] if actor.hp > 0]
             if len(members) != state.units[unit_id].soldiers:
                 return False
             for actor in members:
@@ -65,7 +77,8 @@ class CampaignRoster:
     def members(self, unit_id, weapon):
         state = self.bridge.simulation.state
         unit = state.units[unit_id]
-        if unit_id not in self.unit_ids:
+        if unit_id not in self.by_unit:
+            members = self.by_unit[unit_id]
             node = unit.node_id or state.operations[unit.operation_id].home_node
             home = state.nodes[node].position
             for index in range(unit.soldiers):
@@ -75,10 +88,11 @@ class CampaignRoster:
                 actor.loadout = {spec.id: WeaponState.ready(spec)}
                 actor.active_weapon = spec.id
                 self.actors.append(actor)
+                members.append(actor)
                 self.by_id[actor.id] = actor
                 self.spawns[actor.id] = actor.xy
             self.unit_ids.append(unit_id)
-        members = [actor for actor in self.actors if actor.source_unit == unit_id and actor.hp > 0][:unit.soldiers]
+        members = [actor for actor in self.by_unit[unit_id] if actor.hp > 0][:unit.soldiers]
         if "night_kits_per_garrison" in state.rules:
             for index, actor in enumerate(members):
                 actor.night_kit = index < unit.night_kits
@@ -96,16 +110,20 @@ class CampaignRoster:
                 self.seated_deaths.add(actor.id)
 
     def sync(self, *, restore=False):
-        state = self.bridge.simulation.state
+        simulation = self.bridge.simulation
+        state = simulation.state
+        unit_stamp = simulation.revision, len(self.unit_ids)
+        if unit_stamp != self._unit_stamp:
+            self._unit_stamp = unit_stamp
+            self._unit_status = tuple((key, state.units[key].node_id, state.units[key].soldiers,
+                                       state.units[key].status, state.units[key].operation_id) for key in self.unit_ids)
         stamp = (self.materialized, self.active_nodes, frozenset(self.in_transit), len(self.local_deaths),
-                 self.world.revision,
-                 tuple((key, state.units[key].node_id, state.units[key].soldiers,
-                        state.units[key].status, state.units[key].operation_id) for key in self.unit_ids))
+                 self.world.revision, self._unit_status)
         if not restore and stamp == self._stamp:
             return self._active
         repositioned = []
         for unit_id in self.unit_ids:
-            members = [actor for actor in self.actors if actor.source_unit == unit_id]
+            members = self.by_unit[unit_id]
             unit = state.units[unit_id]
             alive = [actor for actor in members if actor.hp > 0]
             # 원거리 군수 사건에서 난 손실도 다시 생성하지 않는다.

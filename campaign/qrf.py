@@ -59,7 +59,7 @@ def order_troop_transport(state, origin, target, unit, route, kind, reason, dela
 
 
 def plan_redeployments(state):
-    pending = {op.destination_id for op in state.operations.values()
+    pending = {op.destination_id for op in state.active_operations()
                if op.kind in QRF_OPERATIONS | {"redeployment"} and op.phase not in TERMINAL_PHASES
                and op.phase not in {"returning", "stranded"}}
     for target in sorted(state.facilities.values(), key=lambda site: (-state.regions[site.region_id].importance, site.id)):
@@ -96,7 +96,7 @@ def dispatch_response(state, facility_id, *, report_xy=None, sighting=False):
     region = state.regions[target.region_id]
     command = regional_command(state, region.id)
     signal = external_support_link(state, region.id)
-    pending = next((op for op in state.operations.values() if op.kind in QRF_OPERATIONS
+    pending = next((op for op in state.active_operations() if op.kind in QRF_OPERATIONS
                     and state.facilities[op.destination_id].region_id == region.id
                     and op.phase not in TERMINAL_PHASES and op.phase not in {"stranded", "returning"}), None)
     if pending is not None:

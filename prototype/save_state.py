@@ -130,7 +130,7 @@ def restore(play, row):
         if (actor.source_unit not in state.units or type(actor.member) is not int or actor.member < 0
                 or actor.id != f"{actor.source_unit}:{actor.member}" or actor.home_node not in state.nodes):
             raise ValueError("캠페인 병사 참조 불일치")
-    roster.unit_ids = sorted({actor.source_unit for actor in roster.actors})
+    roster.index_members()
     roster.spawns = {key: tuple(point) for key, point in row["roster"]["spawns"].items()}
     roster.local_deaths, roster.seated_deaths = (set(row["roster"][key]) for key in ("deaths", "seated_deaths"))
     if (set(roster.spawns) != set(roster.by_id) or not roster.seated_deaths <= roster.local_deaths <= roster.by_id.keys()

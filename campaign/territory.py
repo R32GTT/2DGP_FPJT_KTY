@@ -35,8 +35,8 @@ def _plan_withdrawals(state, region, facilities, stationed):
         units = sorted(unit.id for unit in stationed if unit.node_id == origin.node_id and unit.status == "available")
         if not units:
             continue
-        known_blocked = sorted({road_id for op in state.operations.values()
-                                if op.kind == "withdrawal" and op.origin_id == origin.id
+        known_blocked = sorted({road_id for op in state.operations_of_kind("withdrawal")
+                                if op.origin_id == origin.id
                                 for road_id in op.known_blocked if state.roads[road_id].blocked})
         routes = []
         for refuge in refuges:
@@ -76,6 +76,10 @@ def _has_field_troops(state, region, nodes, operations):
 
 
 def evaluate_regions(state):
+    units_by_node = {}
+    for unit in state.units.values():
+        if unit.faction == "enemy" and unit.soldiers and unit.node_id is not None:
+            units_by_node.setdefault(unit.node_id, []).append(unit)
     for region in sorted(state.regions.values(), key=lambda item: item.id):
         if region.owner != "enemy":
             continue
@@ -83,11 +87,10 @@ def evaluate_regions(state):
         if not facilities:
             continue
         nodes = {facility.node_id for facility in facilities}
-        stationed = [unit for unit in state.units.values()
-                     if unit.faction == "enemy" and unit.soldiers and unit.node_id in nodes]
+        stationed = [unit for facility in facilities for unit in units_by_node.get(facility.node_id, ())]
         if not _unsustainable(region, facilities, stationed):
             if region.withdrawal_started_at is not None:
-                for operation in state.operations.values():
+                for operation in list(state.active_operations()):
                     if operation.kind == "withdrawal" and operation.home_node in nodes and operation.phase == "loading":
                         cancel(state, operation.id)
                 state.record("withdrawal_cancelled", region_id=region.id, reason="지역 유지 능력 회복")
@@ -98,7 +101,7 @@ def evaluate_regions(state):
             state.record("region_unstable", region_id=region.id)
         if state.world_time - region.weak_since < WITHDRAWAL_DELAY_S:
             continue
-        active = [op for op in state.operations.values() if op.phase not in TERMINAL_PHASES]
+        active = list(state.active_operations())
         local_orders = [op for op in active if op.home_node in nodes]
         if region.withdrawal_started_at is None:
             region.withdrawal_started_at = state.world_time
@@ -143,9 +146,8 @@ def plan_recaptures(state):
                 and unit.soldiers >= state.rules["recapture_min_troops"]):
             units.setdefault(unit.node_id, []).append(unit)
     attempts = {}
-    for op in state.operations.values():
-        if op.kind == "recapture":
-            attempts.setdefault(state.facilities[op.destination_id].region_id, []).append(op)
+    for op in state.operations_of_kind("recapture"):
+        attempts.setdefault(state.facilities[op.destination_id].region_id, []).append(op)
 
     for region in targets:
         prior = attempts.get(region.id, ())

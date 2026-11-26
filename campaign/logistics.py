@@ -12,7 +12,7 @@ EXTERNAL_FRONT = "external_front"
 
 def incoming(state: CampaignState, destination_id: str) -> dict[str, int]:
     result = stock()
-    for operation in state.operations.values():
+    for operation in state.active_operations():
         if (operation.kind not in {"supply", "export", "equipment"} or operation.destination_id != destination_id
                 or operation.phase not in {"loading", "outbound", "unloading"}):
             continue
@@ -36,7 +36,7 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
     if origin_id == state.source.id:
         if (state.world_time < state.source.next_departure
                 or any(op.origin_id == origin_id and op.phase == "loading"
-                       for op in state.operations.values())):
+                       for op in state.active_operations())):
             return None
         limit = min(sum(requested.values()), state.rules["external_cargo_limit"])
     else:
@@ -98,7 +98,7 @@ def plan_supplies(state: CampaignState) -> None:
             continue
         if any(op.kind == "supply" and op.destination_id == destination.id
                and op.phase in {"loading", "outbound", "unloading"}
-               for op in state.operations.values()):
+               for op in state.active_operations()):
             continue
         inbound = incoming(state, destination.id)
         extra = stock()

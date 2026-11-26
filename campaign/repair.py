@@ -17,7 +17,7 @@ def queue_repairs(state, *, delay=RETRY_SECONDS):
 
 
 def plan_repairs(state):
-    active = {op.destination_id for op in state.operations.values()
+    active = {op.destination_id for op in state.active_operations()
               if op.kind == "repair" and op.phase in {"loading", "outbound", "working"}}
     for target_id in sorted(state.repair_requests):
         destination = state.facilities[target_id]

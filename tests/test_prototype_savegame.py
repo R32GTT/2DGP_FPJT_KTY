@@ -167,20 +167,28 @@ class PlaySaveTests(unittest.TestCase):
 
     def test_qrf_mid_route_and_future_campaign_continue_without_duplication(self):
         play = PlaySimulation(self.scene)
+        simulation = play.campaign.simulation
+        state = simulation.state
+        # 도보 증원 저장을 재현하도록 차량 증원에 필요한 수송차를 제거한다.
+        for vehicle in state.vehicles.values():
+            if vehicle.troop_seats:
+                simulation.apply_action({"type": "destroy_vehicle", "vehicle_id": vehicle.id})
         witness = next(actor for actor in play.guards if '/hq/' in actor.id)
-        play.player.position = Position(witness.position.x + math.cos(witness.facing) * 4,
-                                        witness.position.y + math.sin(witness.facing) * 4)
-        for index in range(1, 49):
-            play.time = index / 60
-            play.ai.update(play.guards, play.player, play.time)
-        operation, = [op for op in play.campaign.simulation.state.operations.values() if op.kind == 'qrf']
-        play.player.position = Position(0, 0)
+        site = play.campaign.node_facilities[witness.home_node]
+        status, operation_id = play.campaign.report_contact(witness, site.region_id, witness.xy, play.time)
+        self.assertEqual(status, "ordered")
+        operation = state.operations[operation_id]
+        self.assertEqual(operation.kind, "qrf")
+        home = state.nodes[operation.home_node].position
+        play.player.position = Position(home.x + 35, home.y)
         play._sync_guards()
-        while operation.id not in play.presence.marches and play.time < 150:
+        while not (operation.id in play.presence.marches and (operation.edge_index or operation.progress_m)) and play.time < 150:
             play.time = float(play.campaign.simulation.state.world_time + 1)
             play.campaign.advance_to(play.time)
             play._sync_guards()
         self.assertIn(operation.id, play.presence.marches)
+        self.assertEqual(operation.phase, "outbound")
+        self.assertTrue(operation.edge_index or operation.progress_m)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'play.json.gz'
             save_game(play, path)

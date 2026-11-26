@@ -9,6 +9,13 @@ from campaign.routes import FOOT_SPEED_MPS, movement_supply_cost
 from campaign.scenario import load_scenario
 from campaign.simulation import Simulation
 
+from .geometry import Rect
+from .spatial import BoundsIndex
+
+
+VISIBLE_PHASES = {"outbound", "returning", "unloading", "turnaround", "working", "stranded"}
+CONVOY_SPACING_M = 6.4
+
 
 @dataclass(frozen=True)
 class ConvoyView:
@@ -52,8 +59,13 @@ class CampaignBridge:
         state = simulation.state
         self.node_facilities = {facility.node_id: facility for facility in state.facilities.values()}
         self.route_roads = {frozenset((road.start, road.end)): road for road in state.roads.values()}
-        self._convoy_time = -1
-        self._convoy_ids = []
+        self._transport_stamp = None
+        self._convoy_ids, self._parked_nodes = [], {}
+        self._convoy_index = BoundsIndex()
+        self._road_scale = max((math.dist((state.nodes[road.start].position.x, state.nodes[road.start].position.y),
+                                          (state.nodes[road.end].position.x, state.nodes[road.end].position.y))
+                                / road.length_m for road in state.roads.values()), default=1)
+        self._road_scale = max(1, self._road_scale)
         self._resumed_at = {}
         self._reports = {}
 
@@ -146,14 +158,9 @@ class CampaignBridge:
 
     def parked(self, nodes):
         state = self.simulation.state
-        result = []
-        for node in sorted(nodes):
-            count = sum(vehicle.node_id == node and vehicle.status in {"available", "reserved"}
-                        for vehicle in state.vehicles.values())
-            if count:
-                point = state.nodes[node].position
-                result.append((point.x, point.y, count))
-        return result
+        self._index_transports()
+        return [(state.nodes[node].position.x, state.nodes[node].position.y, self._parked_nodes[node])
+                for node in sorted(self._parked_nodes.keys() & nodes)]
 
     def _route_pose(self, route, edge, progress, reversing):
         state = self.simulation.state
@@ -222,17 +229,36 @@ class CampaignBridge:
                 progress += self.route_roads[frozenset(route[edge:edge + 2])].length_m
         return self._route_pose(route, edge, progress, view.reversing)
 
-    def convoys(self, seconds):
+    def _index_transports(self):
         state = self.simulation.state
-        visible_phases = {"outbound", "returning", "unloading", "turnaround", "working", "stranded"}
-        if state.world_time != self._convoy_time:
-            self._convoy_time = state.world_time
-            self._convoy_ids = [op.id for op in state.operations.values()
-                                if op.phase in visible_phases]
+        stamp = self.simulation.revision, state.world_time, len(state.operations), len(state.vehicles)
+        if stamp == self._transport_stamp:
+            return
+        self._convoy_ids, self._parked_nodes = [], {}
+        self._convoy_index = BoundsIndex()
+        for vehicle in state.vehicles.values():
+            if vehicle.node_id is not None and vehicle.status in {"available", "reserved"}:
+                self._parked_nodes[vehicle.node_id] = self._parked_nodes.get(vehicle.node_id, 0) + 1
+        for op in state.active_operations():
+            if op.phase not in VISIBLE_PHASES:
+                continue
+            x, y, _ = self._route_pose(op.route or [op.home_node], op.edge_index, op.progress_m, op.reversing)
+            speed = (FOOT_SPEED_MPS if op.kind in FOOT_OPERATIONS
+                     else max((state.vehicles[key].speed_mps for key in op.vehicle_ids), default=0))
+            # 다음 전략 틱까지의 이동과 후속 차량의 차체를 모두 포함한다.
+            reach = (speed + CONVOY_SPACING_M * max(0, len(op.vehicle_ids) - 1)) * self._road_scale + 4
+            self._convoy_index.add(len(self._convoy_ids), Rect(x, y, 0, 0).expanded(reach), op.id)
+            self._convoy_ids.append(op.id)
+        self._transport_stamp = stamp
+
+    def convoys(self, seconds, *, bounds=None):
+        state = self.simulation.state
+        self._index_transports()
         result = []
-        for key in self._convoy_ids:
+        ids = self._convoy_ids if bounds is None else self._convoy_index.query(bounds)
+        for key in ids:
             op = state.operations[key]
-            if op.phase not in visible_phases:
+            if op.phase not in VISIBLE_PHASES:
                 continue
             route = op.route or [op.home_node]
             edge, progress = op.edge_index, op.progress_m

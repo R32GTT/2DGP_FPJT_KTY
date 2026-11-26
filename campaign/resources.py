@@ -3,10 +3,8 @@
 import math
 
 from .models import (FOOT_OPERATIONS, TROOP_TRANSPORTS, CampaignState, Operation, Reservation, RESOURCE_TYPES,
-                     stock, validate_state)
+                     TERMINAL_PHASES, stock, validate_state)
 
-
-TERMINAL_PHASES = {"completed", "cancelled", "destroyed"}
 
 
 def quantities(values: dict[str, int]) -> dict[str, int]:
@@ -87,7 +85,7 @@ def reserve(state: CampaignState, operation: Operation, cargo: dict[str, int],
         for name in RESOURCE_TYPES:
             if available(state, origin.id, name) - cargo[name] - provisions[name] < minimum(state, origin.id, name):
                 raise ValueError("가용 재고 또는 최소 비축량 부족")
-    state.operations[operation.id] = operation
+    state.add_operation(operation)
     state.reservations[operation.id] = Reservation(operation.id, origin.id, cargo, provisions)
     for asset in assets:
         asset.status, asset.operation_id = "reserved", operation.id
@@ -102,7 +100,7 @@ def cancel(state: CampaignState, operation_id: str) -> bool:
     for asset in _assets(state, operation):
         if asset.status != "destroyed":
             asset.status, asset.operation_id = "available", None
-    operation.phase, operation.completed_at = "cancelled", state.world_time
+    state.end_operation(operation, "cancelled")
     state.record("cancelled", operation_id=operation_id)
     return True
 
@@ -251,7 +249,7 @@ def finish_return(state: CampaignState, operation_id: str) -> bool:
     for asset in _assets(state, operation):
         if asset.status != "destroyed":
             asset.node_id, asset.operation_id, asset.status = operation.home_node, None, "available"
-    operation.phase, operation.completed_at = "completed", state.world_time
+    state.end_operation(operation, "completed")
     operation.waiting_reason = ""
     state.record("returned", operation_id=operation_id)
     return True
@@ -267,9 +265,9 @@ def finish_relocation(state: CampaignState, operation: Operation) -> None:
     for name in RESOURCE_TYPES:
         destination.inventory[name] += operation.cargo[name] + operation.provisions[name]
         operation.cargo[name] = operation.provisions[name] = 0
-    operation.phase = "completed"
+    state.end_operation(operation, "completed")
     operation.waiting_reason = ""
-    operation.delivered_at = operation.completed_at = state.world_time
+    operation.delivered_at = state.world_time
     state.record(f"{operation.kind}_arrived", operation_id=operation.id, facility_id=operation.destination_id,
                  soldiers=soldiers)
 
@@ -278,9 +276,9 @@ def material_totals(state: CampaignState, *, include_history=True) -> dict[str, 
     inventories = [f.inventory for f in state.facilities.values()] + [state.player_stock]
     if state.source.mode == "finite":
         inventories.append(state.source.inventory)
-    for operation in state.operations.values():
-        if include_history or operation.phase not in TERMINAL_PHASES:
-            inventories.extend((operation.cargo, operation.provisions))
+    operations = state.operations.values() if include_history else state.active_operations()
+    for operation in operations:
+        inventories.extend((operation.cargo, operation.provisions))
     return {name: sum(inventory[name] for inventory in inventories) for name in RESOURCE_TYPES}
 
 
@@ -307,7 +305,8 @@ def assert_invariants(state: CampaignState, *, include_history=True) -> None:
                for name in RESOURCE_TYPES):
             raise ValueError("예약 재고 초과")
     assigned = set()
-    for operation in state.operations.values():
+    operations = state.operations.values() if include_history else state.active_operations()
+    for operation in operations:
         if operation.phase in TERMINAL_PHASES:
             if any(operation.cargo.values()) or any(operation.provisions.values()):
                 raise ValueError("종료 작전에 남은 화물")

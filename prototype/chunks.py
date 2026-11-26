@@ -44,6 +44,14 @@ class WorldChunks:
     def contains(self, point):
         return self.key(point) in self.loaded
 
+    @property
+    def loaded_bounds(self):
+        if not self.loaded:
+            return self.world.bounds
+        x, y = zip(*self.loaded)
+        return Rect(min(x) * CHUNK_SIZE, min(y) * CHUNK_SIZE,
+                    (max(x) - min(x) + 1) * CHUNK_SIZE, (max(y) - min(y) + 1) * CHUNK_SIZE)
+
     def overlaps(self, rect):
         left, top = self.key((rect.x, rect.y))
         right, bottom = self.key((rect.right, rect.bottom))

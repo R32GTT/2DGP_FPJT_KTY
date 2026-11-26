@@ -11,6 +11,7 @@ RESOURCE_TYPES = ("supplies", "ammunition", "repair_parts", "night_gear")
 FOOT_OPERATIONS = frozenset({"qrf", "withdrawal"})
 TROOP_TRANSPORTS = frozenset({"redeployment", "motor_qrf", "recapture"})
 QRF_OPERATIONS = frozenset({"qrf", "motor_qrf"})
+TERMINAL_PHASES = frozenset({"completed", "cancelled", "destroyed"})
 RULES_VERSION = 1
 RULE_KEYS = {"planning_period_s", "consumption_period_s", "supplies_per_soldier",
              "loading_s", "unloading_s", "turnaround_s", "external_departure_interval_s",
@@ -217,6 +218,41 @@ class CampaignState:
     resource_priority: list[str] = field(default_factory=lambda: list(RESOURCE_TYPES))
     repair_requests: dict[str, int] = field(default_factory=dict)
 
+    def _index_operations(self):
+        if (getattr(self, "_indexed_operations", None) is not self.operations
+                or self._indexed_count != len(self.operations)):
+            self._indexed_operations = self.operations
+            self._indexed_count = len(self.operations)
+            self._active_operations = {}
+            self._operations_by_kind = {}
+            for key, operation in self.operations.items():
+                if operation.phase not in TERMINAL_PHASES:
+                    self._active_operations[key] = operation
+                self._operations_by_kind.setdefault(operation.kind, []).append(operation)
+
+    def _active_operation_table(self):
+        self._index_operations()
+        return self._active_operations
+
+    def active_operations(self):
+        return self._active_operation_table().values()
+
+    def operations_of_kind(self, kind):
+        self._index_operations()
+        return self._operations_by_kind.get(kind, ())
+
+    def add_operation(self, operation):
+        self._index_operations()
+        self.operations[operation.id] = operation
+        self._indexed_count += 1
+        self._active_operations[operation.id] = operation
+        self._operations_by_kind.setdefault(operation.kind, []).append(operation)
+
+    def end_operation(self, operation, phase):
+        self._index_operations()
+        operation.phase, operation.completed_at = phase, self.world_time
+        self._active_operations.pop(operation.id, None)
+
     def new_id(self) -> str:
         result = f"operation_{self.next_id}"
         self.next_id += 1
@@ -263,9 +299,10 @@ def validate_state(state: CampaignState, *, include_history=True) -> None:
     require(state.demand.node_id in state.nodes, "외부 출하 노드 누락")
     require(state.demand.collection_facility_id in state.facilities, "집적 창고 누락")
     require(type(state.demand.period_s) is int and state.demand.period_s > 0, "잘못된 출하 주기")
-    for mapping in (state.nodes, state.roads, state.regions, state.facilities,
-                    state.units, state.vehicles, state.operations):
+    for mapping in (state.nodes, state.roads, state.regions, state.facilities, state.units, state.vehicles):
         require(all(key == item.id for key, item in mapping.items()), "ID와 키 불일치")
+    operations = state.operations if include_history else state._active_operation_table()
+    require(all(key == operation.id for key, operation in operations.items()), "ID와 키 불일치")
     positions = [node.position for node in state.nodes.values()]
     positions.extend(asset.position for asset in (*state.units.values(), *state.vehicles.values())
                      if asset.position is not None)
@@ -333,9 +370,7 @@ def validate_state(state: CampaignState, *, include_history=True) -> None:
                 "자산 작전 누락")
         require(asset.node_id is not None or asset.operation_id is not None
                 or asset.position is not None, "자산 위치 누락")
-    for operation in state.operations.values():
-        if not include_history and operation.phase in {"completed", "cancelled", "destroyed"}:
-            continue
+    for operation in operations.values():
         require(operation.kind in {"supply", "export", "repair", "equipment"} | FOOT_OPERATIONS | TROOP_TRANSPORTS,
                 "잘못된 작전 유형")
         require(operation.kind not in FOOT_OPERATIONS or (not operation.vehicle_ids and bool(operation.unit_ids)),

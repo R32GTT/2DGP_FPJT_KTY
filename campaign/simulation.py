@@ -19,17 +19,19 @@ class Simulation:
     def __init__(self, state: CampaignState, *, departure_ready=None, repair_ready=None, movement_ready=None,
                  recapture_ready=None):
         self.state = state
+        self.revision = 0
         self.departure_ready = departure_ready
         self.repair_ready = repair_ready
         self.movement_ready = movement_ready
         self.recapture_ready = recapture_ready
-        self._moving = {op.id for op in state.operations.values()
+        self._moving = {op.id for op in state.active_operations()
                         if op.phase in {"outbound", "returning"}}
 
     def advance_to(self, world_time: int) -> None:
         state = self.state
         if type(world_time) is not int or world_time < state.world_time:
             raise ValueError("목표 시각은 현재 이후의 정수 초여야 함")
+        self.revision += 1
         if self._finish_if_occupied():
             assert_invariants(state, include_history=False)
             return
@@ -231,7 +233,7 @@ class Simulation:
             if consumed["supplies"] < soldiers * rate:
                 state.record("shortage", facility_id=facility.id,
                              missing=soldiers * rate - consumed["supplies"])
-        for operation in state.operations.values():
+        for operation in state.active_operations():
             if operation.kind in FOOT_OPERATIONS or operation.phase in TERMINAL_PHASES or operation.phase == "loading":
                 continue
             soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
@@ -326,7 +328,7 @@ class Simulation:
             facility = state.facilities[action["facility_id"]]
             facility.damage = min(100, facility.damage + damage)
             if facility.damage == 100:
-                for operation in list(state.operations.values()):
+                for operation in list(state.active_operations()):
                     if ((operation.origin_id == facility.id and operation.kind != "withdrawal")
                             or (operation.destination_id == facility.id
                                 and operation.kind in TROOP_TRANSPORTS | {"supply", "equipment"})):
@@ -349,6 +351,7 @@ class Simulation:
             raise ValueError(f"지원하지 않는 행동: {kind}")
         state.record("action", action=deepcopy(action))
         assert_invariants(state, include_history=False)
+        self.revision += 1
         return result
 
     def _damage_asset(self, action: dict) -> None:
@@ -410,14 +413,14 @@ class Simulation:
                 soldiers = sum(state.units[uid].soldiers for uid in operation.unit_ids)
                 if operation.kind in FOOT_OPERATIONS:
                     if not soldiers:
-                        operation.phase = "destroyed"
-                        operation.completed_at = state.world_time
+                        state.end_operation(operation, "destroyed")
                         self._moving.discard(operation.id)
                 elif not vehicles:
-                    operation.phase = "stranded" if soldiers else "destroyed"
+                    if soldiers:
+                        operation.phase = "stranded"
+                    else:
+                        state.end_operation(operation, "destroyed")
                     operation.waiting_reason = "no_vehicle"
-                    if not soldiers:
-                        operation.completed_at = state.world_time
                     self._moving.discard(operation.id)
                 elif operation.kind in TROOP_TRANSPORTS and not soldiers:
                     operation.phase = "stranded"
@@ -444,7 +447,7 @@ class Simulation:
                         self._abort_recapture(operation, "insufficient_force_or_cargo")
         if asset.node_id is not None:
             # 주둔 손실 이후 미출발 동원이 최소 주둔량을 침해하지 않게 한다.
-            for candidate in reversed(list(state.operations.values())):
+            for candidate in reversed(list(state.active_operations())):
                 if candidate.phase != "loading" or candidate.origin_id == state.source.id or candidate.kind == "withdrawal":
                     continue
                 origin = state.facilities[candidate.origin_id]

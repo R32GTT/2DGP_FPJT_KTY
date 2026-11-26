@@ -7,7 +7,7 @@ from campaign.models import Position
 
 from .actors import Actor
 from .ai import Brain
-from .bridge import ConvoyView
+from .bridge import CONVOY_SPACING_M, VISIBLE_PHASES, ConvoyView
 from .geometry import Rect
 from .inventory import PICKUP_REACH
 
@@ -130,11 +130,10 @@ class TransportCrew:
         if not self.world.campaign_map or not self.roster.materialized:
             return
         state = self.bridge.simulation.state
-        active = set()
         bounds = self.world.bounds.expanded(12)
-        for view in self.bridge.convoys(seconds):
+        local_bounds = self.world.chunks.loaded_bounds if self.world.chunks else bounds
+        for view in self.bridge.convoys(seconds, bounds=local_bounds):
             operation = state.operations[view.id]
-            active.add(view.id)
             ids = [key for key in operation.vehicle_ids if state.vehicles[key].status != "destroyed"]
             if not ids:
                 continue
@@ -143,10 +142,10 @@ class TransportCrew:
             moving = view.phase in {"outbound", "returning"} and not stopped
             trucks = [Truck(ids[0], view, view.x, view.y, [], stopped)]
             for index, key in enumerate(ids[1:], 1):
-                x, y, heading = self.bridge.following_pose(view, index * 6.4)
+                x, y, heading = self.bridge.following_pose(view, index * CONVOY_SPACING_M)
                 trucks.append(Truck(key, view, x, y, [], stopped, heading))
             self.display_trucks.extend(trucks)
-            # 화면 복제본은 유지하고, 청크와 겹치는 대열만 현장에서 상호작용한다.
+            # 활성 청크와 겹치는 대열만 현장에서 상호작용한다.
             if not any(bounds.overlaps(truck.bounds) and self.world.detail_overlaps(truck.bounds)
                        for truck in trucks):
                 continue
@@ -180,8 +179,9 @@ class TransportCrew:
                     self._dismount(trip, trucks, seconds)
                 self.dismounted.extend(actor for truck in trucks for actor in truck.crew
                                        if actor.hp > 0 and actor.id in trip.exits)
-        for key in self.trips.keys() - active:
-            del self.trips[key]
+        for key in tuple(self.trips):
+            if state.operations[key].phase not in VISIBLE_PHASES:
+                del self.trips[key]
 
     def blocks_movement(self, actor, start, end):
         if actor.position.floor != 0:
