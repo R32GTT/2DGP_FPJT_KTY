@@ -3,13 +3,20 @@
 import math
 
 
+def _reachable_terminal(world, point, terminal, radius):
+    return (math.dist(point, terminal) <= radius
+            and world.geometry.raycast(point, tuple(terminal), category="movement") is None)
+
+
 def nearby_facility(world, point, radius=1.8):
-    return min((facility for facility in world.facilities if math.dist(point, facility["terminal"]) <= radius),
+    return min((facility for facility in world.facilities
+                if _reachable_terminal(world, point, facility["terminal"], radius)),
                key=lambda facility: math.dist(point, facility["terminal"]), default=None)
 
 
 def nearby_road_control(world, point):
-    control = min((control for control in world.road_controls if math.dist(point, control["position"]) <= 1.8),
+    control = min((control for control in world.road_controls
+                   if _reachable_terminal(world, point, control["position"], 1.8)),
                   key=lambda item: math.dist(point, item["position"]), default=None)
     if control is None:
         return None

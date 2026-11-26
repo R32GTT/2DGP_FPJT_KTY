@@ -294,6 +294,20 @@ class WeaponIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(far.hp, 50 - expected)
         self.assertEqual(combat.hits, 2)
 
+    def test_later_pellets_skip_an_actor_killed_in_the_same_shot(self):
+        spec = next(spec for spec in load_weapons().values() if spec.category == "shotgun")
+        shooter = Actor("player", Position(0, 0), team="player", active_weapon=spec.id)
+        shooter.loadout[spec.id] = WeaponState.ready(spec)
+        y = weapon_pose(shooter)[1][1]
+        front = Actor("front", Position(3, y), hp=1)
+        rear = Actor("rear", Position(5, y))
+        combat = Combat(EventBus())
+        combat.prepare([shooter, front, rear], FIXED_DT)
+        with patch.object(combat.random, "uniform", return_value=0):
+            self.assertTrue(combat.fire(shooter, SimpleNamespace(geometry=SpatialIndex()), 0))
+        self.assertEqual(front.hp, 0)
+        self.assertLess(rear.hp, 50)
+
     def test_vehicle_driver_hit_retains_kill_context(self):
         shooter = Actor("player", Position(0, 0), team="player", active_weapon="ar_a")
         shooter.loadout["ar_a"] = WeaponState.ready(load_weapons()["ar_a"])

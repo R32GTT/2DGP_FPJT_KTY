@@ -24,6 +24,7 @@ class Combat:
         self.traces = deque(maxlen=128)
         self.actor_indexes = defaultdict(SpatialIndex)
         self.actors = {}
+        self._fallen = set()
         self.shots = self.hits = 0
         self.random = random.Random(42)
 
@@ -42,7 +43,8 @@ class Combat:
             return False
         if floor == 0 and self.transports is not None and self.transports.raycast(muzzle, target.xy) is not None:
             return False
-        hit = self.actor_indexes[floor].raycast(muzzle, target.xy, category="bullet", ignore_ids={actor.id})
+        hit = self.actor_indexes[floor].raycast(muzzle, target.xy, category="bullet",
+                                                ignore_ids={actor.id} | self._fallen)
         return hit is not None and hit[1] == target.id
 
     def _pressure(self, shooter, world, start, end, time, damaged, *, impact=False):
@@ -84,6 +86,7 @@ class Combat:
                 remaining.append(trace)
         self.traces = remaining
         self.actor_indexes.clear()
+        self._fallen.clear()
         self.actors = {actor.id: actor for actor in actors if actor.hp > 0}
         for actor in self.actors.values():
             radius = actor.radius
@@ -100,6 +103,7 @@ class Combat:
         self.hits += 1
         self.events.emit("damaged", time, victim, damage=damage - absorbed)
         if victim.hp == 0:
+            self._fallen.add(victim.id)
             self.events.emit("killed", time, victim, **context)
         return True
 
@@ -155,7 +159,7 @@ class Combat:
     def _trace_round(self, actor, world, muzzle, angle, time, targets, transports, damaged):
         spec = actor.weapon.spec
         end = (muzzle[0] + math.cos(angle) * spec.range_m, muzzle[1] + math.sin(angle) * spec.range_m)
-        ignored_actors, ignored_walls, endpoint = {actor.id}, set(), end
+        ignored_actors, ignored_walls, endpoint = {actor.id} | self._fallen, set(), end
         impact = False
         vehicle_hit = transports.raycast(muzzle, end) if transports is not None else None
         for count in range(spec.penetration + 1):

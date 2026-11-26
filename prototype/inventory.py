@@ -107,12 +107,15 @@ class FieldInventory:
             for weapon in self.play.player.loadout.values())
         return max(0.78, 1.0 - 0.025 * max(0.0, weapon_weight + self.bag_weight - 9.0))
 
+    def _reachable_piles(self, rows):
+        origin = self.play.player.xy
+        return (index for index, (point, _) in enumerate(rows)
+                if math.dist(point, origin) <= PICKUP_REACH
+                and self.play.world.geometry.raycast(origin, point) is None)
+
     def nearby(self, rows):
-        player = self.play.player
-        return min((index for index, (point, _) in enumerate(rows)
-                    if math.dist(point, player.xy) <= PICKUP_REACH
-                    and self.play.world.geometry.raycast(player.xy, point) is None),
-                   key=lambda index: math.dist(rows[index][0], player.xy), default=None)
+        return min(self._reachable_piles(rows), key=lambda index: math.dist(rows[index][0], self.play.player.xy),
+                   default=None)
 
     def take_gun(self, index=None, key=None):
         play, player = self.play, self.play.player
@@ -244,8 +247,7 @@ class FieldInventory:
                 elif self.carried.get(part.id):
                     rows.append((f"{part.name} 장착", ("part", part.id, True)))
             rows.append((f"{player.weapon.spec.name} 내려놓기", ("drop_gun",)))
-        drop = self.nearby(play.dropped)
-        if drop is not None:
+        for drop in self._reachable_piles(play.dropped):
             for key, weapon in play.dropped[drop][1].items():
                 rows.append((f"현장  ·  {weapon.spec.name} 회수·교환", ("gun", drop, key)))
         pile = self.nearby(self.ground)
