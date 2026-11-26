@@ -1,7 +1,10 @@
 from dataclasses import asdict
 import json
 import math
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from campaign.persistence import deserialize_campaign, serialize_campaign
 from campaign.resources import assert_invariants
@@ -29,6 +32,35 @@ class GeneratedWorldTests(unittest.TestCase):
         self.assertNotEqual(*[row["seed"] for row in scene["generated_regions"]])
         single = generate_world(42)
         self.assertEqual(single['generated_regions'][0]['seed'], scene['generated_regions'][0]['seed'])
+
+    def test_new_world_reuses_generated_scene_and_recovers_cache(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            scene = generate_world(42, region_count=2, world_root=root)
+            with patch("prototype.generated_world._assemble_world", side_effect=AssertionError("cached scene expected")):
+                self.assertEqual(generate_world(42, region_count=2, world_root=root), scene)
+            cached, = root.glob("*/scene.json.gz")
+            cached.write_bytes(b"broken")
+            self.assertEqual(generate_world(42, region_count=2, world_root=root), scene)
+            with patch("prototype.generated_world._assemble_world", side_effect=AssertionError("repaired scene expected")):
+                self.assertEqual(generate_world(42, region_count=2, world_root=root), scene)
+
+    def test_respawn_selects_a_safehouse_on_the_second_page(self):
+        play = PlaySimulation(generate_world(42, region_count=5, basic=True))
+        sites = list(play.respawn_sites)
+        play.player.hp = 0
+        play.request_respawn()
+        self.assertEqual(play.respawn_pages, 2)
+        play.change_respawn_page(10)
+        self.assertEqual(play.respawn_page, 1)
+        play.choose_respawn_slot(3)
+        self.assertIsNone(play.respawn_target)
+        play.choose_respawn_slot(0)
+        self.assertEqual(play.respawn_site_id, sites[4])
+        play.respawn_target = play.campaign.simulation.state.world_time + 1
+        play.step()
+        self.assertEqual(play.player.xy, tuple(play.respawn_sites[sites[4]]["position"]))
+        self.assertEqual(play.player.hp, 100)
 
     def test_player_starts_in_the_first_regions_safehouse(self):
         play = PlaySimulation(self.scene)

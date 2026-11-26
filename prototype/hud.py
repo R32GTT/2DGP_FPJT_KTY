@@ -364,7 +364,10 @@ class HUD:
         self.text(key, center - half_width, y)
 
     def _draw_respawn_options(self, simulation, camera, point):
-        for number, site in enumerate(simulation.respawn_sites.values(), 1):
+        from .simulation import RESPAWN_PAGE_SIZE
+        start = simulation.respawn_page * RESPAWN_PAGE_SIZE
+        sites = list(simulation.respawn_sites.values())[start:start + RESPAWN_PAGE_SIZE]
+        for number, site in enumerate(sites, 1):
             x, y = point(*site["position"])
             marker = f"respawn_marker/{number}"
             self.label(marker, str(number), 16, (17, 28, 31))
@@ -522,7 +525,7 @@ class HUD:
 
     @staticmethod
     def _field_terrain(world):
-        return ((layer.rect, layer.color) for layer in world.map_layers if layer.role in {"water", "roof"})
+        return ((layer.rect, layer.color) for layer in world.overview_landmarks)
 
     def draw_search_overlay(self, simulation, view):
         world = simulation.world
@@ -579,7 +582,8 @@ class HUD:
         self.panel(60, 166, camera.width - 120, camera.height - 246)
         if selecting:
             self.label("respawn_title", "복귀할 안전가옥 선택", 24, (118, 215, 191))
-            self.label("respawn_help", "숫자 키로 선택 · C 닫기", 13)
+            self.label("respawn_help", f"← → 페이지 {simulation.respawn_page + 1}/{simulation.respawn_pages}"
+                       " · 1~4 선택 · C 닫기", 13)
         self.text("respawn_title" if selecting else "map_title", 84, camera.height - 111)
         self.text("respawn_help" if selecting else "map_help", 84, camera.height - 140)
         world = simulation.world
@@ -604,7 +608,7 @@ class HUD:
         for control in world.road_controls:
             x, y = point(*control["position"])
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 241, 211, 135, filled=True)
-        if not world.facilities or generated:
+        if not selecting and (not world.facilities or generated):
             ground = ((layer.rect, layer.color) for layer in world.map_layers
                       if not layer.role.startswith("road") and layer.role != "pavement")
             self._draw_map_batch("full terrain", world, layout, map_rectangles(ground, point, canvas_height))

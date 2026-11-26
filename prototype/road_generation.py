@@ -1,5 +1,6 @@
 """지형 비용 기반 도로망. 연결 그래프와 표시·통행 경로를 같은 선분에서 만든다."""
 
+from collections import defaultdict
 import math
 
 import numpy as np
@@ -79,6 +80,23 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None, 
     keys = sorted(points)
     indices = [int(round((points[key][1] - bounds.y) / step)) * columns
                + int(round((points[key][0] - bounds.x) / step)) for key in keys]
+    if step > 4:
+        used_anchors = set()
+        for number, key in enumerate(keys):
+            px, py = points[key]
+            gx, gy = gates[key]
+            row, column = divmod(indices[number], columns)
+            candidates = []
+            for iy in range(max(0, row - 2), min(rows, row + 3)):
+                for ix in range(max(0, column - 2), min(columns, column + 3)):
+                    cell = iy * columns + ix
+                    ahead = (xs[ix] - gx) * (px - gx) + (ys[iy] - gy) * (py - gy)
+                    if free[iy, ix] and cell not in used_anchors and ahead > 0:
+                        candidates.append((math.hypot(xs[ix] - px, ys[iy] - py), cell))
+            if not candidates:
+                raise ValueError("시설 진입로 주변에 비어 있는 도로 격자가 없음")
+            indices[number] = min(candidates)[1]
+            used_anchors.add(indices[number])
     anchors = {index: tuple(points[key]) for key, index in zip(keys, indices)}
     if len(anchors) != len(set(map(tuple, points.values()))):
         raise ValueError("같은 도로 격자에 놓인 진입점")
@@ -282,18 +300,23 @@ def validate_roads(network, sites, bounds, colliders):
     surface = road_surface(network)
     if not box(bounds.x, bounds.y, bounds.right, bounds.bottom).buffer(1e-6).covers(surface):
         raise ValueError("월드 경계를 벗어난 도로 폭")
+    incident = defaultdict(list)
+    for segment in network["segments"]:
+        a, b = segment["nodes"]
+        incident[a].append((b, segment["width"]))
+        incident[b].append((a, segment["width"]))
     for site in sites:
         x, y, width, height = site["rect"]
         footprint = box(x, y, x + width, y + height)
         connector = site["connector"]
         gate = connector["position"]
         key = network["terminals"][site["id"]]
-        neighbors = [b if a == key else a for a, b in network["edges"] if key in (a, b)]
+        neighbors = incident[key]
         if (math.dist(gate, network["nodes"][key]) > 1e-6 or len(neighbors) != 1
                 or footprint.boundary.distance(Point(gate)) > 1e-6
-                or any(segment["width"] > connector["width_m"] for segment in network["segments"] if key in segment["nodes"])):
+                or neighbors[0][1] > connector["width_m"]):
             raise ValueError(f"시설 도로 연결점 오류: {site['id']}")
-        dx, dy = (network["nodes"][neighbors[0]][i] - gate[i] for i in (0, 1))
+        dx, dy = (network["nodes"][neighbors[0][0]][i] - gate[i] for i in (0, 1))
         nx, ny = connector["direction"]
         if abs(dx * ny - dy * nx) > 1e-6 or dx * nx + dy * ny <= 0:
             raise ValueError(f"시설 방향과 어긋난 진입로: {site['id']}")

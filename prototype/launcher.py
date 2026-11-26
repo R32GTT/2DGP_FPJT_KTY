@@ -13,6 +13,7 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from .ai_scenarios import SCENARIOS
+from .world_layout import MAX_REGIONS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,12 +58,18 @@ def build_command(target, values):
             seed = int(values["seed"])
         except ValueError:
             raise ValueError("시드는 정수로 입력하세요") from None
+        try:
+            regions = int(values.get("regions", "1"))
+        except (TypeError, ValueError):
+            raise ValueError(f"지역 수는 1~{MAX_REGIONS} 정수로 입력하세요") from None
+        if not 1 <= regions <= MAX_REGIONS:
+            raise ValueError(f"지역 수는 1~{MAX_REGIONS} 정수로 입력하세요")
         command += ["--generate", str(seed), "--region-size", REGIONS[values["region"]],
-                    "--importance", IMPORTANCE[values["importance"]], "--regions", values.get("regions", "1")]
+                    "--importance", IMPORTANCE[values["importance"]], "--regions", str(regions)]
         for key, mapping in (("region_sizes", REGIONS), ("region_importances", IMPORTANCE)):
             if values.get(key, '').strip():
                 items = [mapping.get(item.strip(), item.strip()) for item in values[key].split(',')]
-                if len(items) != int(values.get('regions', '1')) or any(item not in mapping.values() for item in items):
+                if len(items) != regions or any(item not in mapping.values() for item in items):
                     raise ValueError("지역별 설정은 지역 수만큼 쉼표로 구분해 입력하세요")
                 command += ['--' + key.replace('_', '-'), ','.join(items)]
     command += list(target["modes"][values["mode"]])
@@ -130,7 +137,7 @@ class Launcher:
         self.fields = {}
         rows = [("mode", "훈련 종류", ["기본"]), ("seed", "생성 시드", None),
                 ("region", "지역 크기", list(REGIONS)), ("importance", "지역 중요도", list(IMPORTANCE)),
-                ("regions", "지역 수", ["1", "2", "3", "4"]),
+                ("regions", "지역 수", [str(count) for count in range(1, MAX_REGIONS + 1)]),
                 ("region_sizes", "지역별 크기 (선택)", None), ("region_importances", "지역별 중요도 (선택)", None),
                 ("zoom", "시작 줌", ["장면 기본값", "0.5", "0.55", "1.0", "1.5", "2.0", "4.0"]),
                 ("paused", "시작 일시정지", list(SWITCHES)), ("debug", "개발 정보", list(SWITCHES)),

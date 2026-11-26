@@ -6,6 +6,7 @@ import random
 from .site_planning import IMPORTANCE, REGION_PROFILES, LayoutUnavailable
 
 
+MAX_REGIONS = 16
 REGION_GAP = 32
 WORLD_REGION_EXTENTS = {"small": 160, "medium": 256, "large": 384, "xlarge": 512}
 

@@ -91,8 +91,10 @@ def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range
 
 def _assign_rooms(world, points, spacing):
     # 문을 열어도 이미 나눈 수색 구역의 경계는 유지한다.
-    doors = [item.rect for item in world.geometry.objects.values() if item.kind == "door"]
     ordered = tuple(sorted(points))
+    xs, ys = zip(*ordered)
+    area = Rect(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)).expanded(1e-6)
+    doors = [item.rect for item in world.geometry.index.query(area) if item.kind == "door"]
     tree = cKDTree(ordered)
     remaining = set(range(len(ordered)))
     rooms = {}
@@ -123,76 +125,90 @@ def _sample_corners(points):
     ))
 
 
-def build_search_areas(world):
+def search_area_layouts(world):
     areas = dict(world.data.get("search_areas", {}))
-    for facility in world.facilities:
-        prefix = f"{facility['id']}/"
-        floors = [layer.rect for layer in world.layers if layer.style == "floor" and layer.id.startswith(prefix)]
-        if floors and facility["id"] not in areas:
-            areas[facility["id"]] = floors
-    result = []
-    for key, rows in areas.items():
-        defaults = next((facility.get("search_layout", {}) for facility in world.facilities if facility["id"] == key), {})
-        layout = {**defaults, **world.data.get("search_layouts", {}).get(key, {})}
-        spacing = layout.get("sample_spacing", SAMPLE_M)
-        if not math.isfinite(spacing) or spacing <= 0:
-            raise ValueError(f"수색 표본 간격 오류: {key}")
-        floors = tuple(row if isinstance(row, Rect) else Rect(*row) for row in rows)
-        points = set()
-        for rect in floors:
-            columns, lines = math.ceil(rect.w / spacing), math.ceil(rect.h / spacing)
-            for col in range(columns):
-                for row in range(lines):
-                    point = (rect.x + (col + 0.5) * rect.w / columns, rect.y + (row + 0.5) * rect.h / lines)
-                    if world.navigation.walkable(point):
-                        points.add(point)
-        # 장애물 뒤에 설 수 있는 지점을 추가해 바닥 격자 사이의 은신 공간도 살핀다.
-        for floor in floors:
-            for blocker in world.geometry.query(floor, category="sight"):
-                rect = blocker.rect.expanded(Actor.radius + 0.08)
-                for point in ((rect.x, rect.y), (rect.right, rect.y), (rect.right, rect.bottom), (rect.x, rect.bottom)):
-                    if any(f.segment_entry(point, point) is not None for f in floors) and world.navigation.walkable(point):
-                        points.add(point)
-        authored_corners = tuple(tuple(point) for point in layout.get("corner_points", ()))
-        for point in authored_corners:
-            if (not any(rect.segment_entry(point, point) is not None for rect in floors)
-                    or not world.navigation.walkable(point)):
-                raise ValueError(f"수색 코너 위치에 접근할 수 없음: {key} {point}")
-            points.add(point)
-        if points:
-            ordered = tuple(sorted(points))
-            rooms = _assign_rooms(world, points, spacing)
-            by_room = defaultdict(list)
-            for point in ordered:
-                by_room[rooms[point]].append(point)
-            room_points = {room: tuple(samples) for room, samples in by_room.items()}
-            corner_first = layout.get("corner_first", True)
-            corners_by_room = defaultdict(list)
-            for point in dict.fromkeys(authored_corners):
-                corners_by_room[rooms[point]].append(point)
-            room_corners = {room: (tuple(corners_by_room[room]) or _sample_corners(samples)) if corner_first else ()
-                            for room, samples in room_points.items()}
-            observations = {}
-            for row in layout.get("observation_points", ()):
-                point = tuple(row)
-                if not world.navigation.walkable(point):
-                    continue
-                sample = min((p for p in ordered if world.navigation.clear(point, p)),
-                             key=lambda p: (math.dist(point, p), p), default=None)
-                if sample is not None:
-                    observations[point] = rooms[sample]
-            poses = []
-            for row in layout.get("entry_poses", ()):
-                position = tuple(row["position"])
-                nearest = min((p for p in ordered if world.navigation.clear(position, p)),
-                              key=lambda p: (math.dist(position, p), p), default=None)
-                if nearest is None or not world.navigation.walkable(position):
-                    raise ValueError(f"수색 시작 위치에 접근할 수 없음: {key} {position}")
-                poses.append(SearchPose(position, tuple(row["look"]), rooms[nearest]))
-            result.append(SearchArea(key, floors, ordered, rooms, room_points, room_corners,
-                                     entry_poses=tuple(poses),
-                                     observations=observations))
-    return tuple(result)
+    facility_layouts = {facility["id"]: facility.get("search_layout", {}) for facility in world.facilities}
+    facility_floors = defaultdict(list)
+    for layer in world.layers if facility_layouts else ():
+        if layer.style != "floor":
+            continue
+        prefix = layer.id
+        while "/" in prefix:
+            prefix = prefix.rsplit("/", 1)[0]
+            if prefix in facility_layouts:
+                facility_floors[prefix].append(layer.rect)
+    for key in facility_layouts:
+        if key in facility_floors and key not in areas:
+            areas[key] = facility_floors[key]
+    layouts = world.data.get("search_layouts", {})
+    return {key: (tuple(row if isinstance(row, Rect) else Rect(*row) for row in rows),
+                  {**facility_layouts.get(key, {}), **layouts.get(key, {})})
+            for key, rows in areas.items()}
+
+
+def build_search_area(world, key, floors, layout):
+    spacing = layout.get("sample_spacing", SAMPLE_M)
+    if not math.isfinite(spacing) or spacing <= 0:
+        raise ValueError(f"수색 표본 간격 오류: {key}")
+    points = set()
+    for rect in floors:
+        columns, lines = math.ceil(rect.w / spacing), math.ceil(rect.h / spacing)
+        for col in range(columns):
+            for row in range(lines):
+                point = (rect.x + (col + 0.5) * rect.w / columns, rect.y + (row + 0.5) * rect.h / lines)
+                if world.navigation.walkable(point):
+                    points.add(point)
+    # 장애물 뒤에 설 수 있는 지점을 추가해 바닥 격자 사이의 은신 공간도 살핀다.
+    for floor in floors:
+        for blocker in world.geometry.query(floor, category="sight"):
+            rect = blocker.rect.expanded(Actor.radius + 0.08)
+            for point in ((rect.x, rect.y), (rect.right, rect.y), (rect.right, rect.bottom), (rect.x, rect.bottom)):
+                if any(f.segment_entry(point, point) is not None for f in floors) and world.navigation.walkable(point):
+                    points.add(point)
+    authored_corners = tuple(tuple(point) for point in layout.get("corner_points", ()))
+    for point in authored_corners:
+        if (not any(rect.segment_entry(point, point) is not None for rect in floors)
+                or not world.navigation.walkable(point)):
+            raise ValueError(f"수색 코너 위치에 접근할 수 없음: {key} {point}")
+        points.add(point)
+    if points:
+        ordered = tuple(sorted(points))
+        rooms = _assign_rooms(world, points, spacing)
+        by_room = defaultdict(list)
+        for point in ordered:
+            by_room[rooms[point]].append(point)
+        room_points = {room: tuple(samples) for room, samples in by_room.items()}
+        corner_first = layout.get("corner_first", True)
+        corners_by_room = defaultdict(list)
+        for point in dict.fromkeys(authored_corners):
+            corners_by_room[rooms[point]].append(point)
+        room_corners = {room: (tuple(corners_by_room[room]) or _sample_corners(samples)) if corner_first else ()
+                        for room, samples in room_points.items()}
+        observations = {}
+        for row in layout.get("observation_points", ()):
+            point = tuple(row)
+            if not world.navigation.walkable(point):
+                continue
+            sample = min((p for p in ordered if world.navigation.clear(point, p)),
+                         key=lambda p: (math.dist(point, p), p), default=None)
+            if sample is not None:
+                observations[point] = rooms[sample]
+        poses = []
+        for row in layout.get("entry_poses", ()):
+            position = tuple(row["position"])
+            nearest = min((p for p in ordered if world.navigation.clear(position, p)),
+                          key=lambda p: (math.dist(position, p), p), default=None)
+            if nearest is None or not world.navigation.walkable(position):
+                raise ValueError(f"수색 시작 위치에 접근할 수 없음: {key} {position}")
+            poses.append(SearchPose(position, tuple(row["look"]), rooms[nearest]))
+        return SearchArea(key, floors, ordered, rooms, room_points, room_corners,
+                          entry_poses=tuple(poses), observations=observations)
+    return None
+
+
+def build_search_areas(world):
+    return tuple(area for key, (floors, layout) in search_area_layouts(world).items()
+                 if (area := build_search_area(world, key, floors, layout)) is not None)
 
 
 class Reservations:

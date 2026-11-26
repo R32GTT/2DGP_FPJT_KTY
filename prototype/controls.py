@@ -68,6 +68,8 @@ class Controls:
                     actions.append({sdl2.SDLK_l: "lamp", sdl2.SDLK_n: "night_vision", sdl2.SDLK_k: "ir_laser"}[key])
                 elif key == sdl2.SDLK_e and event.key.keysym.mod & sdl2.KMOD_SHIFT:
                     actions.append("facility_alternate")
+                elif key in (sdl2.SDLK_LEFT, sdl2.SDLK_RIGHT):
+                    actions.append("respawn_previous" if key == sdl2.SDLK_LEFT else "respawn_next")
                 elif sdl2.SDLK_1 <= key <= sdl2.SDLK_4:
                     actions.append(f"slot_{key - sdl2.SDLK_1}")
                 elif key in (sdl2.SDLK_f, sdl2.SDLK_e, sdl2.SDLK_r, sdl2.SDLK_c,

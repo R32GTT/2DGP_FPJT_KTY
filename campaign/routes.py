@@ -1,5 +1,6 @@
 """도로 거리 기반 이동. 차단은 현장에서 발견하며 진행 위치를 보존한다."""
 
+from collections import OrderedDict
 import heapq
 import math
 
@@ -7,6 +8,7 @@ from .models import FOOT_OPERATIONS, CampaignState, Operation, Position, Road
 from .resources import consume
 
 FOOT_SPEED_MPS = 3.0
+ROUTE_TREE_NODE_BUDGET = 256_000
 
 
 class _RoadTable(dict):
@@ -55,6 +57,7 @@ def _topology(state):
             pairs[frozenset((road.start, road.end))] = road
             graph.setdefault(road.start, []).append((road.end, road))
             graph.setdefault(road.end, []).append((road.start, road))
+        table.trees = OrderedDict()
         table.topology = pairs, graph
     return table.topology
 
@@ -67,12 +70,7 @@ def road_between(state: CampaignState, start: str, end: str) -> Road:
     return road
 
 
-def find_route(state: CampaignState, start: str, end: str,
-               known_blocked=()) -> list[str]:
-    if start not in state.nodes or end not in state.nodes:
-        raise ValueError("경로 노드 누락")
-    blocked = set(known_blocked)
-    _, graph = _topology(state)
+def _shortest_paths(graph, start, blocked=(), end=None):
     pending = [(0.0, start)]
     distances, parents = {start: 0.0}, {}
     while pending:
@@ -80,10 +78,7 @@ def find_route(state: CampaignState, start: str, end: str,
         if distance != distances[node]:
             continue
         if node == end:
-            path = [end]
-            while path[-1] != start:
-                path.append(parents[path[-1]])
-            return path[::-1]
+            break
         for neighbor, road in graph.get(node, ()):
             # 실제 차단 여부는 관측 전까지 경로 계획에 유출하지 않는다.
             if road.id in blocked:
@@ -93,7 +88,51 @@ def find_route(state: CampaignState, start: str, end: str,
                 distances[neighbor] = candidate
                 parents[neighbor] = node
                 heapq.heappush(pending, (candidate, neighbor))
-    return []
+    return distances, parents
+
+
+def _path_from_tree(start, end, parents):
+    if start != end and end not in parents:
+        return []
+    path = [end]
+    while path[-1] != start:
+        path.append(parents[path[-1]])
+    return path[::-1]
+
+
+def route_distance(state: CampaignState, start: str, end: str) -> float | None:
+    """여러 목적지를 비교할 때 출발지별 최단 경로 트리를 재사용한다."""
+    if start not in state.nodes or end not in state.nodes:
+        raise ValueError("경로 노드 누락")
+    pairs, graph = _topology(state)
+    trees = state.roads.trees
+    if start not in trees:
+        _, parents = _shortest_paths(graph, start)
+        trees[start] = parents, {}
+        limit = max(1, min(128, ROUTE_TREE_NODE_BUDGET // len(state.nodes)))
+        if len(trees) > limit:
+            trees.popitem(last=False)
+    trees.move_to_end(start)
+    parents, lengths = trees[start]
+    if end not in lengths:
+        route = _path_from_tree(start, end, parents)
+        lengths[end] = sum(pairs[frozenset((a, b))].length_m for a, b in zip(route, route[1:])) if route else None
+    return lengths[end]
+
+
+def find_route(state: CampaignState, start: str, end: str,
+               known_blocked=()) -> list[str]:
+    if start not in state.nodes or end not in state.nodes:
+        raise ValueError("경로 노드 누락")
+    blocked = set(known_blocked)
+    _, graph = _topology(state)
+    trees = state.roads.trees
+    if not blocked and start in trees:
+        trees.move_to_end(start)
+        parents, _ = trees[start]
+    else:
+        _, parents = _shortest_paths(graph, start, blocked, end)
+    return _path_from_tree(start, end, parents)
 
 
 def position(state: CampaignState, operation: Operation) -> Position:

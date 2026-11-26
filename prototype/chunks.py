@@ -14,6 +14,7 @@ from .world_files import MAX_CHUNK_BYTES, read_bytes
 
 
 PREFETCH_DISTANCE = CHUNK_SIZE / 4
+PREFETCH_LEAD_SECONDS = 4
 
 
 class WorldChunks:
@@ -140,7 +141,7 @@ class WorldChunks:
         if len(self.prepared) > 5:
             self.prepared.popitem(last=False)
 
-    def _prefetch(self, point):
+    def _prefetch(self, point, velocity):
         if self.worker is None:
             return
         if self.pending is not None:
@@ -153,25 +154,30 @@ class WorldChunks:
         x, y = point[0] - cx * CHUNK_SIZE, point[1] - cy * CHUNK_SIZE
         x_neighbors = ((0, 0), (-1, x), (1, CHUNK_SIZE - x))
         y_neighbors = ((0, 0), (-1, y), (1, CHUNK_SIZE - y))
-        neighbors = sorted((math.hypot(a, b), (cx + dx, cy + dy))
-                           for dx, a in x_neighbors for dy, b in y_neighbors if dx or dy)
-        for distance, center in neighbors:
-            if distance > PREFETCH_DISTANCE:
-                break
+        vx, vy = velocity
+        lead = min(CHUNK_SIZE / 2, math.hypot(vx, vy) * PREFETCH_LEAD_SECONDS)
+        projected = self.key((point[0] + vx * PREFETCH_LEAD_SECONDS, point[1] + vy * PREFETCH_LEAD_SECONDS))
+        neighbors = sorted((key != projected, math.hypot(a, b), key)
+                           for dx, a in x_neighbors for dy, b in y_neighbors if dx or dy
+                           for key in ((cx + dx, cy + dy),))
+        for other_direction, distance, center in neighbors:
+            limit = PREFETCH_DISTANCE if other_direction else max(PREFETCH_DISTANCE, lead)
+            if distance > limit:
+                continue
             desired = frozenset(self._desired(center))
             if desired != self.loaded.keys() and desired not in self.prepared:
                 self.pending = (desired, self.worker.submit(self._prepare, desired, self.loaded.copy()))
                 break
 
-    def update(self, point):
+    def update(self, point, velocity=(0.0, 0.0)):
         center = self.key(point)
         if center == self.center:
-            self._prefetch(point)
+            self._prefetch(point, velocity)
             return
         desired = self._desired(center)
         if desired == self.loaded.keys():
             self.center = center
-            self._prefetch(point)
+            self._prefetch(point, velocity)
             return
         chunks, static, layer_index, collider_index = self._window(desired)
         self.remember()
@@ -204,4 +210,4 @@ class WorldChunks:
         self.world.layers = [item[1] for item in self.world.layer_index.items.values()]
         self.world.revision += 1
         self.world.navigation.invalidate()
-        self._prefetch(point)
+        self._prefetch(point, velocity)

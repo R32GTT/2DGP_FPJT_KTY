@@ -10,6 +10,7 @@ from .intelligence import collect as collect_intel
 from .simulation import FIXED_DT, PlaySimulation
 from .savegame import CampaignSaveError, DEFAULT_SAVE, QUICK_SAVE, load_game, save_game
 from .world import DEFAULT_SCENE
+from .world_layout import MAX_REGIONS
 
 
 SIMULATION_FRAME_BUDGET_S = 0.012
@@ -149,8 +150,10 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         continue
                     if simulation.respawn_selecting:
                         if action.startswith("slot_"):
-                            simulation.request_respawn(int(action[-1]))
+                            simulation.choose_respawn_slot(int(action[-1]))
                             controls.map_open = False
+                        elif action in {"respawn_previous", "respawn_next"}:
+                            simulation.change_respawn_page(1 if action == "respawn_next" else -1)
                         elif action == "cancel":
                             simulation.respawn_selecting = False
                         continue
@@ -251,7 +254,7 @@ def main(argv=None):
     scene_options.add_argument("--load", type=Path, nargs="?", const=DEFAULT_SAVE, help="생성 월드 이어하기")
     scene_options.add_argument("--equipment-range", action="store_true", help="장비 시험장 실행")
     parser.add_argument("--region-size", choices=("small", "medium", "large", "xlarge"))
-    parser.add_argument("--regions", type=int, choices=(1, 2, 3, 4), help="생성할 지역 수")
+    parser.add_argument("--regions", type=int, choices=range(1, MAX_REGIONS + 1), help="생성할 지역 수")
     parser.add_argument("--importance", choices=("normal", "important", "core"))
     parser.add_argument("--region-sizes", help="지역 순서별 크기, 쉼표로 구분 (예: small,medium,small,small)")
     parser.add_argument("--region-importances", help="지역 순서별 중요도, 쉼표로 구분")
@@ -279,21 +282,22 @@ def main(argv=None):
     if args.ai_scenario and (args.generate is not None or args.scene.resolve() != DEFAULT_SCENE.resolve()):
         parser.error("--ai-scenario는 기본 지역 장면에서 실행하세요")
     scene = EQUIPMENT_RANGE_SCENE if args.equipment_range else args.scene
+    world_root = DEFAULT_SAVE.parent / "worlds" if args.generate is not None and not args.headless else None
     if args.generate is not None:
         from .generated_world import generate_world
         try:
             scene = generate_world(args.generate, region_count=args.regions or 1,
                                    region_size=args.region_size or "small", importance=args.importance or "normal",
                                    region_sizes=args.region_sizes.split(',') if args.region_sizes else None,
-                                   region_importances=args.region_importances.split(',') if args.region_importances else None)
+                                   region_importances=args.region_importances.split(',') if args.region_importances else None,
+                                   world_root=world_root)
         except ValueError as error:
             parser.error(str(error))
     try:
         simulation = load_game(args.load) if args.load else PlaySimulation(
             scene, ai_scenario=args.ai_scenario, search_drill=args.search_drill,
             stack_drill=args.stack_variant is not None, stack_variant=args.stack_variant or 0,
-            equipment_range=args.equipment_range,
-            world_root=DEFAULT_SAVE.parent / "worlds" if args.generate is not None and not args.headless else None)
+            equipment_range=args.equipment_range, world_root=world_root)
     except CampaignSaveError as error:
         parser.error(str(error))
     if args.generate is not None:

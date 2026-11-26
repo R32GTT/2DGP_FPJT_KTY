@@ -30,6 +30,7 @@ from .world import DEFAULT_SCENE, World
 
 
 FIXED_DT = 1 / 60
+RESPAWN_PAGE_SIZE = 4
 ALARM_SECONDS = 60
 ALARM_NOTICE_RANGE = 100.0
 
@@ -123,12 +124,14 @@ class PlaySimulation:
         campaign.recapture_ready = self.transports.recapture_ready
         self.combat = Combat(self.events, self.transports)
         self.time, self.footstep_at = float(campaign.state.world_time), 0.0
+        self._chunk_velocity = (0.0, 0.0)
         self.message = "R 재장전 / C 취소 / 1·2·3 총기 교체 / V 단발·연사 / F 문 / E 상호작용"
         if self.world.territories:
             self.message = "M 지도에서 동서 보급로 확인 · 차단기 가까이에서 E"
         self.respawn_target = None
         self.respawn_site_id = None
         self.respawn_selecting = False
+        self.respawn_page = 0
         self.respawn_sites = {site["id"]: site for site in self.world.facilities if site["kind"] == "safehouse"}
         self.dropped = []
         self.safehouse_stash = {}
@@ -251,7 +254,7 @@ class PlaySimulation:
 
     def _sync_guards(self, *, restore=False):
         previous = self.guards
-        self.world.update_chunks(self.player.xy)
+        self.world.update_chunks(self.player.xy, self._chunk_velocity)
         self.roster.track_player(self.player.xy)
         if self.presence:
             self.presence.prepare(self.time, self.player.xy)
@@ -502,7 +505,7 @@ class PlaySimulation:
             return
         self.time += FIXED_DT
         self._expire_alarms()
-        self.world.update_chunks(self.player.xy)
+        self.world.update_chunks(self.player.xy, self._chunk_velocity)
         if trigger_pressed and self.player.weapon is not None and self.player.weapon.reloading:
             self.cancel_reload()
         if aim_offset is not None and self.player.hp > 0:
@@ -514,6 +517,7 @@ class PlaySimulation:
                 self._signals(actor, actor.weapon.tick(FIXED_DT))
         previous = self.player.xy
         player_motion = 1.0
+        self._chunk_velocity = (0.0, 0.0)
         if self.player.hp > 0:
             speed = 1.5 if walking else 5 if sprint else 3
             speed *= self.inventory.movement_multiplier
@@ -521,6 +525,8 @@ class PlaySimulation:
                 speed *= self.player.weapon.spec.reload_move_multiplier
             move_actor(self.player, direction, self.world, FIXED_DT, speed=speed,
                        vehicle_blocked=self.transports.blocks_movement)
+            self._chunk_velocity = ((self.player.xy[0] - previous[0]) / FIXED_DT,
+                                    (self.player.xy[1] - previous[1]) / FIXED_DT)
             moved = math.dist(previous, self.player.xy)
             if moved > 0.001:
                 player_motion = 0.72 if walking else 1.25 if sprint else 1.0
@@ -676,10 +682,21 @@ class PlaySimulation:
         else:
             self.message = "안전가옥·물류창고·HQ 단말 가까이에서 Shift+E"
 
+    @property
+    def respawn_pages(self):
+        return max(1, math.ceil(len(self.respawn_sites) / RESPAWN_PAGE_SIZE))
+
+    def change_respawn_page(self, delta):
+        self.respawn_page = max(0, min(self.respawn_pages - 1, self.respawn_page + delta))
+
+    def choose_respawn_slot(self, key):
+        self.request_respawn(self.respawn_page * RESPAWN_PAGE_SIZE + key)
+
     def request_respawn(self, slot=None):
         if self.player.hp > 0 or self.respawn_target is not None:
             return
         if slot is None and len(self.respawn_sites) > 1:
+            self.respawn_page = 0
             self.respawn_selecting = True
             return
         sites = tuple(self.respawn_sites)

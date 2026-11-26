@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from copy import deepcopy
 import json
 import math
+from functools import cached_property
 from pathlib import Path
+from types import SimpleNamespace
 
 from .geometry import Collider, Rect, SpatialIndex
-from .indoor_search import build_search_areas
+from .indoor_search import build_search_area, search_area_layouts
 from .navigation import Navigation
 from .region import build_region
 from .prefabs import expand_instances
@@ -77,13 +79,29 @@ class World:
         if self.data.get("road_network") and self.data.get("prefab_instances"):
             from .road_generation import validate_roads
             validate_roads(self.data["road_network"], self.data["planned_facilities"], self.bounds, self.data["colliders"])
-        self.search_areas = build_search_areas(self)
+        self._search_layouts = search_area_layouts(self)
+        self._search_samples = {}
+        self._search_floor_index = BoundsIndex()
+        for order, (key, (floors, _)) in enumerate(self._search_layouts.items()):
+            for index, rect in enumerate(floors):
+                self._search_floor_index.add((order, index), rect, key)
+        self._search_world = self
         self.light_roofs = BoundsIndex()
         roofs = {layer.rect for layer in self.layers if layer.role in {"floor", "roof"}}
-        roofs.update(rect for area in self.search_areas for rect in area.floors)
+        if self.data.get("stream_terrain"):
+            # 수색 표본은 문을 조작하거나 청크를 떠나도 처음 배치된 실내 형상을 기준으로 한다.
+            geometry = SpatialIndex()
+            for collider in self.geometry.objects.values():
+                geometry.add(collider)
+            self._search_world = SimpleNamespace(geometry=geometry,
+                                                 navigation=Navigation({}, (), geometry, bounds=self.bounds))
+            roofs.update(rect for floors, _ in self._search_layouts.values() for rect in floors)
+        else:
+            roofs.update(rect for area in self.search_areas for rect in area.floors)
         for index, rect in enumerate(sorted(roofs, key=lambda item: (item.x, item.y, item.w, item.h))):
             self.light_roofs.add(index, rect, rect)
-        self.map_layers = self.layers
+        self._authored_layers = self.layers
+        self.overview_landmarks = tuple(layer for layer in self.layers if layer.role in {"water", "roof"})
         self.chunks = None
         if self.data.get('stream_terrain'):
             from .chunks import WorldChunks
@@ -91,9 +109,15 @@ class World:
             scene = self.source if self.path is None else json.loads(self.path.read_text(encoding="utf-8"))
             files = WorldFiles.for_scene(world_root, scene) if world_root is not None else None
             self.chunks = WorldChunks(self, files)
-            self.map_layers = [self.make_layer(row, -2 if row['style'] == 'grass' else -1)
-                               for row in self.chunks.terrain.ground(self.bounds)] + self.map_layers
             self.update_chunks(self.data['player_spawn'] if initial_position is None else initial_position)
+
+    @cached_property
+    def map_layers(self):
+        if self.chunks is None:
+            return self._authored_layers
+        ground = [self.make_layer(row, -2 if row['style'] == 'grass' else -1)
+                  for row in self.chunks.terrain.ground(self.bounds)]
+        return ground + self._authored_layers
 
     @staticmethod
     def make_layer(row, order):
@@ -118,9 +142,9 @@ class World:
         self.geometry.add(collider)
         self.collider_index.add(collider.id, rect, collider)
 
-    def update_chunks(self, point):
+    def update_chunks(self, point, velocity=(0.0, 0.0)):
         if self.chunks:
-            self.chunks.update(point)
+            self.chunks.update(point, velocity)
 
     def detail_loaded(self, point):
         return self.chunks is None or self.chunks.contains(point)
@@ -158,9 +182,22 @@ class World:
         return next((key for key, rect in self.territories.items()
                      if rect.segment_entry(point, point) is not None), None)
 
+    def _search_area(self, key):
+        if key not in self._search_samples:
+            self._search_samples[key] = build_search_area(self._search_world, key, *self._search_layouts[key])
+        return self._search_samples[key]
+
+    @property
+    def search_areas(self):
+        return tuple(area for key in self._search_layouts if (area := self._search_area(key)) is not None)
+
     def indoor_search_area(self, point):
         nearby = []
-        for area in self.search_areas:
+        candidates = self._search_floor_index.query(Rect(*point, 0, 0).expanded(3.000001))
+        for key in dict.fromkeys(candidates):
+            area = self._search_area(key)
+            if area is None:
+                continue
             for rect in area.floors:
                 if rect.segment_entry(point, point) is not None:
                     return area

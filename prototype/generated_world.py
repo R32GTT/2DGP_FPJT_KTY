@@ -1,7 +1,10 @@
 """지역별 시설을 배치하고 월드 단위의 도로망을 조립한다."""
 
-from hashlib import blake2b
+from hashlib import blake2b, sha256
+import json
 import math
+from pathlib import Path
+from zlib import error as CompressionError
 
 from shapely.errors import GEOSException
 
@@ -13,12 +16,14 @@ from .geometry import Rect
 from .road_generation import validate_roads
 from .road_visuals import road_layers
 from .site_planning import REGION_PROFILES, LayoutUnavailable, plan_sites
-from .world_layout import plan_world
+from .world_files import MAX_WORLD_BYTES, WorldFiles, json_bytes, read_bytes, write_bytes
+from .world_layout import MAX_REGIONS, plan_world
 from .world_roads import build_world_roads
 
 
 WORLD_VERSION = 6
 LAYOUT_VERSION = 3
+WORLD_CACHE_VERSION = 1
 
 
 def region_seed(seed, region_id, version=GENERATION_VERSION):
@@ -82,9 +87,9 @@ def generate_region(seed, region_id, *, origin=(0, 0), version=GENERATION_VERSIO
 
 def generate_world(seed=42, *, region_count=1, version=WORLD_VERSION, region_version=GENERATION_VERSION,
                    region_size="small", importance="normal", prefab_versions=None,
-                   region_sizes=None, region_importances=None, basic=False):
-    if type(seed) is not int or type(region_count) is not int or not 1 <= region_count <= 4:
-        raise ValueError("시드는 정수, 지역 수는 1~4여야 합니다")
+                   region_sizes=None, region_importances=None, basic=False, world_root=None):
+    if type(seed) is not int or type(region_count) is not int or not 1 <= region_count <= MAX_REGIONS:
+        raise ValueError(f"시드는 정수, 지역 수는 1~{MAX_REGIONS}여야 합니다")
     if type(version) is not int or type(region_version) is not int or version != WORLD_VERSION or region_version != GENERATION_VERSION:
         raise ValueError("지원하지 않는 월드·지역 생성 버전")
     if region_size not in REGION_PROFILES:
@@ -95,6 +100,38 @@ def generate_world(seed=42, *, region_count=1, version=WORLD_VERSION, region_ver
                     region_size=region_size, importance=importance, region_sizes=sizes, region_importances=importances,
                     prefab_versions=prefab_versions)
     catalog, settings["prefab_versions"] = generation_catalog(prefab_versions)
+    if world_root is None:
+        return _build_world(settings, catalog, basic)
+    root = Path(world_root)
+    key = sha256(json_bytes([WORLD_CACHE_VERSION, LAYOUT_VERSION, basic, settings, catalog])).hexdigest()
+    recipe = root / "recipes" / f"{key}.json.gz"
+    try:
+        cached_id = json.loads(read_bytes(recipe, 128))
+        files = WorldFiles(root, cached_id)
+        data = read_bytes(files.scene_path, MAX_WORLD_BYTES)
+        if sha256(data).hexdigest() == cached_id:
+            scene = json.loads(data)
+            saved = scene["generation"]
+            if (all(saved.get(key) == value for key, value in settings.items())
+                    and (not basic or saved.get("basic") is True)):
+                return scene
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, EOFError, CompressionError):
+        pass
+    scene = _build_world(settings, catalog, basic)
+    data = json_bytes(scene)
+    if len(data) <= MAX_WORLD_BYTES:
+        files = WorldFiles(root, sha256(data).hexdigest())
+        try:
+            write_bytes(files.scene_path, data)
+            write_bytes(recipe, json_bytes(files.world_id))
+        except (OSError, ValueError):
+            pass
+    return json.loads(data)
+
+
+def _build_world(settings, catalog, basic):
+    seed, region_count = settings["seed"], settings["region_count"]
+    sizes, importances = settings["region_sizes"], settings["region_importances"]
     if not basic:
         try:
             plans = plan_world(seed, LAYOUT_VERSION, region_count, sizes, importances)
@@ -136,8 +173,9 @@ def _assemble_world(settings, plans, catalog, attempt=0, *, basic=False):
     left, right = min(area.x for area in areas) - padding, max(area.right for area in areas) + padding
     top, bottom = min(area.y for area in areas) - padding, max(area.bottom for area in areas) + padding
     bounds = Rect(left, top, right - left, bottom - top)
+    large_world = settings["region_count"] > 4
     try:
-        network = build_world_roads(settings["seed"], bounds, sites, basic=basic)
+        network = build_world_roads(settings["seed"], bounds, sites, basic=basic, large_world=large_world)
         validate_roads(network, sites, bounds, site_colliders(sites, catalog))
     except ValueError as error:
         raise LayoutUnavailable(f"월드 도로 연결 조건 불충족: {error}") from error
@@ -148,6 +186,7 @@ def _assemble_world(settings, plans, catalog, attempt=0, *, basic=False):
             "bounds": [bounds.x, bounds.y, bounds.w, bounds.h], "generation": {**settings, **({"basic": True} if basic else {})},
             "planned_facilities": sites, "generated_regions": regions,
             "territories": {region["id"]: region for region in regions}, "stream_terrain": True,
+            **({"terrain_sampling": "coordinate-v1"} if large_world else {}),
             "road_network": network, "roads": road_records(network), "navigation": dict(network["nodes"]),
             "navigation_edges": list(network["edges"]), "campaign_entry": network["terminals"]["entry/0"],
             "campaign_exit": network["terminals"]["entry/1"], "player_spawn": spawn, "safehouse_spawn": spawn,

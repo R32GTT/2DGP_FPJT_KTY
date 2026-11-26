@@ -4,7 +4,7 @@ from .clock import TRANSFER, schedule
 from .models import CampaignState, Operation, RESOURCE_TYPES, stock
 from .qrf import external_support_link, regional_command
 from .resources import available, consume, minimum, owner, quantities, reserve
-from .routes import find_route, road_between, transport_provisions
+from .routes import find_route, route_distance, transport_provisions
 
 
 EXTERNAL_FRONT = "external_front"
@@ -30,8 +30,7 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
     origin = owner(state, origin_id)
     destination_node = (state.demand.node_id if kind == "export"
                         else state.facilities[destination_id].node_id)
-    route = find_route(state, origin.node_id, destination_node)
-    if not route or origin.node_id == destination_node:
+    if origin.node_id == destination_node:
         return None
     if origin_id == state.source.id:
         if (state.world_time < state.source.next_departure
@@ -43,6 +42,11 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
         limit = sum(requested.values())
     pool = sorted(v.id for v in state.vehicles.values()
                   if v.node_id == origin.node_id and v.status == "available" and not v.troop_seats)
+    if not pool:
+        return None
+    route = find_route(state, origin.node_id, destination_node)
+    if not route:
+        return None
     provisions = transport_provisions(state, route) if kind == "equipment" else state.rules["provisions_per_vehicle"]
     vehicle_ids, capacity = [], 0
     while pool and capacity - len(vehicle_ids) * provisions < limit:
@@ -118,9 +122,8 @@ def plan_supplies(state: CampaignState) -> None:
             if (facility.id == destination.id or "logistics" not in facility.capabilities
                     or facility.damage == 100 or state.regions[facility.region_id].owner != "enemy"):
                 continue
-            route = find_route(state, facility.node_id, destination.node_id)
-            if route:
-                distance = sum(road_between(state, a, b).length_m for a, b in zip(route, route[1:]))
+            distance = route_distance(state, facility.node_id, destination.node_id)
+            if distance is not None:
                 candidates.append((facility.region_id != destination.region_id, distance, facility.id))
         for _, _, origin_id in sorted(candidates):
             if plan_transport(state, origin_id, destination.id, needed) is not None:
@@ -183,9 +186,8 @@ def plan_equipment(state):
             if origin.region_id != target.region_id and not all(external_support_link(state, key)
                                                                 for key in (origin.region_id, target.region_id)):
                 continue
-            route = find_route(state, origin.node_id, target.node_id)
-            if route:
-                distance = sum(road_between(state, a, b).length_m for a, b in zip(route, route[1:]))
+            distance = route_distance(state, origin.node_id, target.node_id)
+            if distance is not None:
                 candidates.append((distance, origin.id))
         for _, origin_id in sorted(candidates):
             if plan_transport(state, origin_id, target.id, {"night_gear": needed}, kind="equipment",

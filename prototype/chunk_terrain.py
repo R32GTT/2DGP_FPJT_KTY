@@ -20,13 +20,38 @@ class ChunkTerrain:
         self.seed, self.bounds = data['generation']['seed'], Rect(*data['bounds'])
         self.center = self.bounds.x + self.bounds.w / 2, self.bounds.y + self.bounds.h / 2
         extent = math.ceil(max(self.bounds.w, self.bounds.h) / 2) * 2
-        self.vegetation = _density(self.seed, 'world-vegetation', extent)
-        self.soil = _density(self.seed, 'world-soil', extent)
+        if data.get("terrain_sampling") == "coordinate-v1":
+            self._noise_vertex = lru_cache(maxsize=4096)(self._noise_vertex)
+            self.vegetation = self.soil = None
+        else:
+            self.vegetation = _density(self.seed, 'world-vegetation', extent)
+            self.soil = _density(self.seed, 'world-soil', extent)
         self.reserved = prep(union_all([road_surface(data['road_network']).buffer(1.8)] +
                              [box(x, y, x + w, y + h) for x, y, w, h in
                               (site['reserved'] for site in data['planned_facilities'])]))
         # 후보만 제한적으로 캐시한다. 방문했던 청크의 상세 데이터는 보유하지 않는다.
         self.candidate = lru_cache(maxsize=4096)(self._candidate)
+
+    def _noise_vertex(self, kind, spacing, x, y):
+        return random.Random(f"{self.seed}:{kind}:{spacing}:{x}:{y}").random()
+
+    def _density_at(self, tree, x, y):
+        field = self.vegetation if tree else self.soil
+        if field is not None:
+            return _sample(field, x - self.center[0], y - self.center[1])
+        layers = []
+        for spacing in (16, 40):
+            ix, iy = math.floor(x / spacing), math.floor(y / spacing)
+            sx, sy = x / spacing - ix, y / spacing - iy
+            sx, sy = sx * sx * (3 - 2 * sx), sy * sy * (3 - 2 * sy)
+            left = self._noise_vertex(tree, spacing, ix, iy)
+            right = self._noise_vertex(tree, spacing, ix + 1, iy)
+            top = left + (right - left) * sx
+            left = self._noise_vertex(tree, spacing, ix, iy + 1)
+            right = self._noise_vertex(tree, spacing, ix + 1, iy + 1)
+            bottom = left + (right - left) * sx
+            layers.append(top + (bottom - top) * sy)
+        return layers[0] * .7 + layers[1] * .3
 
     def ground(self, area):
         layers = []
@@ -41,7 +66,7 @@ class ChunkTerrain:
                 layers.append(dict(id=key, rect=[x, y, w, h], image='', style='grass',
                                    color=[45, 65, 48], variant=rng.randrange(4)))
                 px, py = x + w / 2, y + h / 2
-                if _sample(self.soil, px - self.center[0], py - self.center[1]) >= .5:
+                if self._density_at(False, px, py) >= .5:
                     dw, dh = min(w, rng.uniform(7, 14)), min(h, rng.uniform(6, 13))
                     layers.append(dict(id=key + '/soil', rect=[px - dw / 2, py - dh / 2, dw, dh],
                                        image='', style='dirt', color=[104, 91, 62]))
@@ -51,7 +76,7 @@ class ChunkTerrain:
         rng = random.Random(f'{self.seed}:obstacle:{ix}:{iy}')
         x, y = ix * 2 + rng.uniform(.4, 1.6), iy * 2 + rng.uniform(.4, 1.6)
         tree = rng.random() < .9
-        density = _sample(self.vegetation if tree else self.soil, x - self.center[0], y - self.center[1])
+        density = self._density_at(tree, x, y)
         if rng.random() > .03 + .9 * density ** 2:
             return None
         w, h = (.9, .9) if tree else (rng.uniform(1.5, 2.5), rng.uniform(1.2, 2.5))
