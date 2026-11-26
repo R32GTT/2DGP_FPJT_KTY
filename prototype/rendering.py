@@ -57,6 +57,7 @@ class Renderer:
         self.vignette = self._image("assets/prototype/alert_vignette.png") or vignette_image(self.backend)
         self.smoke = smoke_image(self.backend)
         self.hud = HUD(self.backend)
+        self.hud.prepare_map(world)
         self.last_draw_ms = 0.0
         for name in self.missing:
             print(f"임시 그래픽 사용: {name}")

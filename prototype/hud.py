@@ -59,6 +59,21 @@ class HUD:
         self.ai_rows = 0
         self._map_world = None
         self._map_batches = {}
+        self._map_image = None
+
+    def _draw_map_background(self, world, left, top, width, height):
+        if world.map_background_path is None:
+            return False
+        if self._map_world is not world:
+            self.prepare_map(world)
+        self._map_image.draw(left + width / 2, top - height / 2, width, height)
+        return True
+
+    def prepare_map(self, world):
+        if world.map_background_path is not None and self._map_world is not world:
+            self._map_world = world
+            self._map_batches.clear()
+            self._map_image = pico.load_image(str(world.map_background_path))
 
     def label(self, key, text, size=16, color=(223, 230, 218)):
         if not text:
@@ -493,7 +508,9 @@ class HUD:
         world = simulation.world
         canvas_height = pico.get_canvas_height()
         layout = x0, y0, scale, canvas_height
-        if world.facilities:
+        background = self._draw_map_background(world, *point(bounds.x, bounds.y),
+                                               bounds.w * scale, bounds.h * scale)
+        if not background and world.facilities:
             facilities = ((Rect(*facility["rect"]), (116, 133, 108)) for facility in world.facilities)
             terrain = chain(self._field_terrain(world), facilities)
             self._draw_map_batch("mini terrain", world, layout, map_rectangles(terrain, point, canvas_height))
@@ -501,7 +518,8 @@ class HUD:
             terrain = ((collider.rect, (93, 111, 94)) for collider in world.geometry.objects.values())
             self._draw_map_batch("mini obstacles", world, (*layout, world.revision),
                                  map_rectangles(terrain, point, canvas_height))
-        self._draw_map_batch("mini roads", world, layout, map_roads(world, point, scale, canvas_height, ()))
+        if not background:
+            self._draw_map_batch("mini roads", world, layout, map_roads(world, point, scale, canvas_height, ()))
         for actor in [*simulation.guards, simulation.player]:
             if actor.hp > 0 and (actor.team == "player" or debug or actor.id in seen_enemies):
                 x, y = point(*actor.xy)
@@ -602,20 +620,28 @@ class HUD:
         pico.draw_rectangle(left, bottom, right, top, 34, 49, 43, filled=True)
         canvas_height = pico.get_canvas_height()
         layout = left, top, scale, canvas_height
-        self._draw_map_batch("full field", world, layout, map_rectangles(self._field_terrain(world), point, canvas_height))
+        background = self._draw_map_background(world, left, top, world.bounds.w * scale, world.bounds.h * scale)
+        if not background:
+            self._draw_map_batch("full field", world, layout, map_rectangles(self._field_terrain(world), point, canvas_height))
         state = simulation.campaign.simulation.state
         controlled_roads = {control["road"] for control in world.road_controls}
         for control in world.road_controls:
             x, y = point(*control["position"])
             pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 241, 211, 135, filled=True)
         if not selecting and (not world.facilities or generated):
-            ground = ((layer.rect, layer.color) for layer in world.map_layers
-                      if not layer.role.startswith("road") and layer.role != "pavement")
-            self._draw_map_batch("full terrain", world, layout, map_rectangles(ground, point, canvas_height))
+            if not background:
+                ground = ((layer.rect, layer.color) for layer in world.map_layers
+                          if not layer.role.startswith("road") and layer.role != "pavement")
+                self._draw_map_batch("full terrain", world, layout, map_rectangles(ground, point, canvas_height))
             self._draw_map_batch("full obstacles", world, (*layout, world.revision),
                                  map_colliders(world.geometry.objects.values(), point, canvas_height))
         blocked = frozenset(key for key in controlled_roads if state.roads[key].blocked)
-        self._draw_map_batch("full roads", world, (*layout, blocked), map_roads(world, point, scale, canvas_height, blocked))
+        if background:
+            for road in world.roads:
+                if road["id"] in blocked:
+                    pico.draw_line(*point(*road["start"]), *point(*road["end"]), 231, 111, 85)
+        else:
+            self._draw_map_batch("full roads", world, (*layout, blocked), map_roads(world, point, scale, canvas_height, blocked))
         for key, rect in world.territories.items():
             a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
             pico.draw_rectangle(a[0], b[1], b[0], a[1], 90, 122, 110)
@@ -717,6 +743,7 @@ class HUD:
     def close(self):
         self._map_batches.clear()
         self._map_world = None
+        self._map_image = None
         self.labels.clear()
         for font in chain(self.fonts.values(), self.scaled_fonts.values()):
             self.backend.TTF_CloseFont(font.font)

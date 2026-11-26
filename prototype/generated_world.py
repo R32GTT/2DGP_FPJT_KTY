@@ -114,6 +114,8 @@ def generate_world(seed=42, *, region_count=1, version=WORLD_VERSION, region_ver
             saved = scene["generation"]
             if (all(saved.get(key) == value for key, value in settings.items())
                     and (not basic or saved.get("basic") is True)):
+                from .map_background import create_background
+                create_background(scene, files.map_path)
                 return scene
     except (OSError, ValueError, TypeError, KeyError, AttributeError, EOFError, CompressionError):
         pass
@@ -124,6 +126,8 @@ def generate_world(seed=42, *, region_count=1, version=WORLD_VERSION, region_ver
         try:
             write_bytes(files.scene_path, data)
             write_bytes(recipe, json_bytes(files.world_id))
+            from .map_background import create_background
+            create_background(scene, files.map_path)
         except (OSError, ValueError):
             pass
     return json.loads(data)

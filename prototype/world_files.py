@@ -44,6 +44,10 @@ class WorldFiles:
     def scene_path(self):
         return self.directory / "scene.json.gz"
 
+    @property
+    def map_path(self):
+        return self.directory / "map-v1.png"
+
     def snapshot_path(self, revision):
         _check_digest(revision)
         return self.directory / "snapshots" / f"{revision}.json.gz"

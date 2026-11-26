@@ -102,11 +102,15 @@ class World:
         self._authored_layers = self.layers
         self.overview_landmarks = tuple(layer for layer in self.layers if layer.role in {"water", "roof"})
         self.chunks = None
+        self.map_background_path = None
         if self.data.get('stream_terrain'):
             from .chunks import WorldChunks
             from .world_files import WorldFiles
             scene = self.source if self.path is None else json.loads(self.path.read_text(encoding="utf-8"))
             files = WorldFiles.for_scene(world_root, scene) if world_root is not None else None
+            if files is not None:
+                from .map_background import create_background
+                self.map_background_path = create_background(scene, files.map_path)
             self.chunks = WorldChunks(self, files)
             self.update_chunks(self.data['player_spawn'] if initial_position is None else initial_position)
 
