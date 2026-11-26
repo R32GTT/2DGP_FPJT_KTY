@@ -6,12 +6,14 @@ from shapely import STRtree, box
 class BoundsIndex:
     def __init__(self):
         self.items = {}
+        self.rects = {}
         self.tree = None
 
     def add(self, key, rect, value):
         if key in self.items:
             raise ValueError(f"중복 공간 항목: {key}")
         self.items[key] = rect, value
+        self.rects[key] = rect
         self.tree = None
 
     @staticmethod
@@ -22,12 +24,12 @@ class BoundsIndex:
 
     def use_prepared(self, prepared):
         keys, tree, rects = prepared
-        if len(keys) == len(self.items) and all(rects.get(key) == rect for key, (rect, _) in self.items.items()):
+        if self.rects == rects:
             self.keys, self.tree = keys, tree
 
     def _ensure_tree(self):
         if self.tree is None:
-            self.keys, self.tree, _ = self.prepare({key: rect for key, (rect, _) in self.items.items()})
+            self.keys, self.tree, _ = self.prepare(self.rects)
 
     def _query(self, shape, predicate=None):
         self._ensure_tree()
@@ -35,6 +37,7 @@ class BoundsIndex:
 
     def remove(self, key):
         del self.items[key]
+        del self.rects[key]
         self.tree = None
 
     def query_shape(self, shape):
