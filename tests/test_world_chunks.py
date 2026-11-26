@@ -1,7 +1,9 @@
 import math
 from pathlib import Path
 import tempfile
+from threading import current_thread, main_thread
 import unittest
+from unittest.mock import patch
 
 from campaign.models import Position
 from campaign.resources import assert_invariants
@@ -32,6 +34,42 @@ class WorldChunkTests(unittest.TestCase):
             for second in forward[keys[1]][1]:
                 a, b = Rect(*first['rect']), Rect(*second['rect'])
                 self.assertFalse(a.expanded(.75).overlaps(b))
+
+    def test_prefetched_indexes_and_disk_chunks_are_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            play = PlaySimulation(self.scene, world_root=directory)
+            world, chunks = play.world, play.world.chunks
+            y = play.player.xy[1]
+            west, east = (63.9, y), (64.1, y)
+            world.update_chunks(west)
+            original_tree = world.geometry.index.tree
+            chunks.start_prefetch()
+            try:
+                world.update_chunks(west)
+                self.assertIsNotNone(chunks.pending)
+                chunks.pending[1].result(timeout=20)
+                prepare = chunks._prepare
+
+                def background_only(*args):
+                    self.assertIsNot(current_thread(), main_thread(), "prepared window expected")
+                    return prepare(*args)
+
+                with patch.object(chunks, "_prepare", side_effect=background_only):
+                    world.update_chunks(east)
+                    self.assertIsNotNone(world.geometry.index.tree)
+                    self.assertIs(world.geometry.index.tree, world.collider_index.tree)
+                    self.assertIsNot(world.geometry.index.tree, original_tree)
+                    world.update_chunks(west)
+                    self.assertIs(world.geometry.index.tree, original_tree)
+            finally:
+                chunks.close()
+
+            with patch.object(ChunkTerrain, "generate", side_effect=AssertionError("disk cache expected")):
+                restored = PlaySimulation(self.scene, world_root=directory)
+                restored.world.update_chunks(east)
+            world.update_chunks(east)
+            self.assertEqual(world.chunks.loaded, restored.world.chunks.loaded)
+            self.assertEqual(world.geometry.objects, restored.world.geometry.objects)
 
     def test_unloaded_changes_save_and_distant_campaign_continue(self):
         play = PlaySimulation(self.scene)

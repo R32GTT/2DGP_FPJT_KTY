@@ -40,7 +40,7 @@ class ImageLayer:
 
 
 class World:
-    def __init__(self, path=DEFAULT_SCENE):
+    def __init__(self, path=DEFAULT_SCENE, *, world_root=None, initial_position=None):
         # 생성기는 기존 장면 형식의 데이터를 직접 전달할 수 있다.
         self.path = None if isinstance(path, dict) else Path(path)
         self.source = deepcopy(path) if self.path is None else self.path
@@ -87,10 +87,13 @@ class World:
         self.chunks = None
         if self.data.get('stream_terrain'):
             from .chunks import WorldChunks
-            self.chunks = WorldChunks(self)
+            from .world_files import WorldFiles
+            scene = self.source if self.path is None else json.loads(self.path.read_text(encoding="utf-8"))
+            files = WorldFiles.for_scene(world_root, scene) if world_root is not None else None
+            self.chunks = WorldChunks(self, files)
             self.map_layers = [self.make_layer(row, -2 if row['style'] == 'grass' else -1)
                                for row in self.chunks.terrain.ground(self.bounds)] + self.map_layers
-            self.update_chunks(self.data['player_spawn'])
+            self.update_chunks(self.data['player_spawn'] if initial_position is None else initial_position)
 
     @staticmethod
     def make_layer(row, order):

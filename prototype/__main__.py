@@ -27,6 +27,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
     renderer = None
     try:
         renderer = Renderer(simulation.world)
+        if simulation.world.chunks:
+            simulation.world.chunks.start_prefetch()
         facility_test = simulation.world.data.get("training_facility", False)
         test_mode = (facility_test or bool(simulation.ai_scenario)) and not simulation.equipment_range
         controls = Controls()
@@ -56,7 +58,11 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             loaded = load_game()
                             replacement = Renderer(loaded.world)
                             renderer.close()
+                            if simulation.world.chunks:
+                                simulation.world.chunks.close()
                             renderer, simulation = replacement, loaded
+                            if simulation.world.chunks:
+                                simulation.world.chunks.start_prefetch()
                             controls.keys.clear()
                             controls.firing = controls.aiming = controls.trigger_pending = False
                             controls.inventory_open = False
@@ -226,6 +232,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             elif remaining < -FIXED_DT:
                 frame_deadline = now
     finally:
+        if simulation.world.chunks:
+            simulation.world.chunks.close()
         if renderer is not None:
             renderer.close()
         pico2d.close_canvas()
@@ -280,7 +288,8 @@ def main(argv=None):
         simulation = load_game(args.load) if args.load else PlaySimulation(
             scene, ai_scenario=args.ai_scenario, search_drill=args.search_drill,
             stack_drill=args.stack_variant is not None, stack_variant=args.stack_variant or 0,
-            equipment_range=args.equipment_range)
+            equipment_range=args.equipment_range,
+            world_root=DEFAULT_SAVE.parent / "worlds" if args.generate is not None and not args.headless else None)
     except CampaignSaveError as error:
         parser.error(str(error))
     if args.generate is not None:

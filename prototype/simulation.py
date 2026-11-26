@@ -45,8 +45,9 @@ class RegionAlarm:
 
 class PlaySimulation:
     def __init__(self, scene=DEFAULT_SCENE, *, ai_scenario=None, search_drill=False,
-                 stack_drill=False, stack_variant=0, campaign=None, materialized=True, equipment_range=False):
-        self.world = World(scene)
+                 stack_drill=False, stack_variant=0, campaign=None, materialized=True, equipment_range=False,
+                 world_root=None, initial_position=None):
+        self.world = World(scene, world_root=world_root, initial_position=initial_position)
         self.equipment_range, self.range_night = equipment_range, False
         range_setup = self.world.data.get("equipment_range")
         if equipment_range and (not range_setup or ai_scenario or search_drill or stack_drill):
@@ -64,6 +65,8 @@ class PlaySimulation:
         self.stack_variant = stack_variant
         self.stack_title = ""
         player_spawn = drill["observer_spawn"] if search_drill else self.world.data["player_spawn"]
+        if initial_position is not None:
+            player_spawn = initial_position
         parts = load_attachments()
         self.specs = load_weapons(attachments=parts)
         self.player = Actor("player", Position(*player_spawn), speed=3.0,

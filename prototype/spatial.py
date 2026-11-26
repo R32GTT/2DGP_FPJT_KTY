@@ -14,11 +14,20 @@ class BoundsIndex:
         self.items[key] = rect, value
         self.tree = None
 
+    @staticmethod
+    def prepare(rects):
+        keys = tuple(sorted(rects))
+        tree = STRtree([box(rect.x, rect.y, rect.right, rect.bottom) for rect in (rects[key] for key in keys)])
+        return keys, tree, rects
+
+    def use_prepared(self, prepared):
+        keys, tree, rects = prepared
+        if len(keys) == len(self.items) and all(rects.get(key) == rect for key, (rect, _) in self.items.items()):
+            self.keys, self.tree = keys, tree
+
     def _ensure_tree(self):
         if self.tree is None:
-            self.keys = tuple(sorted(self.items))
-            self.tree = STRtree([box(rect.x, rect.y, rect.right, rect.bottom)
-                                 for rect, _ in (self.items[key] for key in self.keys)])
+            self.keys, self.tree, _ = self.prepare({key: rect for key, (rect, _) in self.items.items()})
 
     def _query(self, shape, predicate=None):
         self._ensure_tree()
