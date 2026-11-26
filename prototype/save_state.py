@@ -28,7 +28,25 @@ def weapons(loadout):
 
 
 def restore_weapons(rows, specs):
-    return {key: WeaponState(specs[key], **row) for key, row in rows.items()}
+    loadout = {}
+    for key, row in rows.items():
+        weapon = WeaponState(specs[key], **row)
+        if (type(weapon.stage) is not int or not 0 <= weapon.stage < len(weapon.spec.reload_stages)
+                or type(weapon.reloading) is not bool
+                or type(weapon.stage_elapsed) not in (int, float)
+                or not math.isfinite(weapon.stage_elapsed)
+                or not 0 <= weapon.stage_elapsed < weapon.reload_duration(weapon.stage)
+                or not weapon.reloading and weapon.stage_elapsed != 0):
+            raise ValueError(f"잘못된 재장전 상태: {key}")
+        if (type(weapon.magazine) is not int or not 0 <= weapon.magazine <= weapon.capacity
+                or type(weapon.reserve) is not int or weapon.reserve < 0
+                or type(weapon.chambered) is not bool or type(weapon.magazine_attached) is not bool
+                or not weapon.magazine_attached and weapon.magazine != 0):
+            raise ValueError(f"잘못된 탄약 상태: {key}")
+        if weapon.magazine_attached != (weapon.stage != 1) or weapon.stage == 2 and weapon.chambered:
+            raise ValueError(f"잘못된 재장전 상태: {key}")
+        loadout[key] = weapon
+    return loadout
 
 
 def actor_state(actor):
@@ -78,6 +96,7 @@ def capture(play):
             "inventory": {"carried": play.inventory.carried, "stored": play.inventory.stored,
                           "ground": play.inventory.ground, "selected_throwable": play.inventory.selected_throwable},
             "throwables": play.throwables.snapshot(),
+            "pending_events": [asdict(event) for event in play.events.pending],
             "random": play.combat.random.getstate(), "reports": play.campaign._reports,
             "resumed_at": play.campaign._resumed_at,
             "received": sorted(play.presence.received)}
@@ -171,3 +190,10 @@ def restore(play, row):
     play.presence.received = set(map(tuple, row["received"]))
     roster.materialized = row["roster"]["materialized"]
     play._sync_guards()
+    for event in row.get("pending_events", ()):
+        kind, time, source, position, data = (event[key] for key in ("kind", "time", "source", "position", "data"))
+        if (not isinstance(kind, str) or not isinstance(source, str) or not isinstance(data, dict)
+                or type(time) not in (int, float) or not 0 <= time <= play.time
+                or len(position) != 2 or any(type(axis) not in (int, float) or not math.isfinite(axis) for axis in position)):
+            raise ValueError("잘못된 현장 대기 이벤트")
+        play.events.emit_at(kind, time, source, tuple(position), {key: tuples(value) for key, value in data.items()})

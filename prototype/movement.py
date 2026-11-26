@@ -21,7 +21,7 @@ def _body_blocker(actor, start, point, neighbors):
     return None
 
 
-def move_actor(actor, direction, world, dt, *, speed=None, neighbors=(), allow_slide=True):
+def move_actor(actor, direction, world, dt, *, speed=None, neighbors=(), allow_slide=True, vehicle_blocked=None):
     magnitude = math.hypot(*direction)
     if magnitude < 1e-8:
         return None
@@ -38,7 +38,8 @@ def move_actor(actor, direction, world, dt, *, speed=None, neighbors=(), allow_s
         start = actor.xy
         point = (max(bounds.x + radius, min(bounds.right - radius, start[0] + dx)),
                  max(bounds.y + radius, min(bounds.bottom - radius, start[1] + dy)))
-        if point == start or _position_blocked(actor, world, point):
+        if (point == start or _position_blocked(actor, world, point)
+                or vehicle_blocked is not None and vehicle_blocked(actor, start, point)):
             return False, None
         other = _body_blocker(actor, start, point, neighbors)
         if other is not None:

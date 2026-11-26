@@ -220,6 +220,53 @@ class PlaySaveTests(unittest.TestCase):
             with self.assertRaises(CampaignSaveError):
                 load_game(path)
 
+    def test_pending_facility_attack_survives_save_and_dispatches_once(self):
+        play = PlaySimulation(self.scene)
+        site = next(site for site in play.world.facilities if site["kind"] == "warehouse")
+        play.player.position = Position(*site["terminal"])
+        play.step()
+        play.use_facility_alternate()
+        self.assertEqual([event.kind for event in play.events.pending], ["noise", "facility_damaged"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "play.json.gz"
+            save_game(play, path)
+            restored = load_game(path)
+
+        self.assertEqual(play.events.pending, restored.events.pending)
+        for simulation in (play, restored):
+            simulation.step()
+            simulation.step()
+            state = simulation.campaign.simulation.state
+            reports = [entry for entry in state.history if entry["kind"] == "qrf_report"]
+            self.assertEqual(len(reports), 1)
+            self.assertTrue(any(op.kind == "motor_qrf" for op in state.operations.values()))
+            self.assertTrue(any(brain.memory.report_source == site["id"] for brain in simulation.ai.brains.values()))
+        self.assertEqual(asdict(play.campaign.simulation.state), asdict(restored.campaign.simulation.state))
+
+    def test_invalid_reload_states_are_rejected_at_load(self):
+        play = PlaySimulation(self.scene)
+        play.player.active_weapon = "ar_a"
+        weapon = play.player.loadout["ar_a"] = WeaponState.ready(play.specs["ar_a"])
+        self.assertTrue(weapon.fire(play.time))
+        play.reload()
+        play.step()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "play.json.gz"
+            save_game(play, path)
+            original = path.read_bytes()
+            restored = load_game(path)
+            self.assertTrue(restored.player.weapon.reloading)
+            self.assertEqual(restored.player.weapon.stage_elapsed, weapon.stage_elapsed)
+            for invalid in ({"stage": 99}, {"stage": 1}, {"stage_elapsed": -1}, {"stage_elapsed": 99}):
+                with self.subTest(invalid=invalid):
+                    payload = json.loads(gzip.decompress(original))
+                    payload["local"]["player"]["loadout"]["ar_a"].update(invalid)
+                    path.write_bytes(gzip.compress(json.dumps(payload).encode()))
+                    with self.assertRaisesRegex(CampaignSaveError, "잘못된 재장전 상태"):
+                        load_game(path)
+
     def test_stopped_vehicle_seats_casualty_and_dismount_positions_survive_load(self):
         play = PlaySimulation(self.scene)
         play.campaign.advance_to(40)
@@ -240,6 +287,28 @@ class PlaySaveTests(unittest.TestCase):
         for actor in play.transports.dismounted:
             self.assertEqual(actor.xy, restored.roster.by_id[actor.id].xy)
         restored.step()
+
+    def test_player_cannot_walk_through_stopped_convoy(self):
+        play = PlaySimulation(self.scene)
+        play.campaign.advance_to(40)
+        play.time = 40.
+        play._sync_guards()
+        truck = next(truck for truck in play.transports.trucks if truck.crew and not truck.stopped)
+        play.combat._damage(truck.crew[0], 1000, play.time, vehicle_id=truck.id, incoming=truck.heading)
+        play._dispatch()
+        truck = next(row for row in play.transports.trucks if row.id == truck.id)
+        self.assertTrue(truck.stopped)
+        start, end = truck.world_point(0, -2), truck.world_point(0, 2)
+        play.player.position = Position(*start)
+        play.player.hp = 1000
+        for _ in range(86):
+            play.step((end[0] - start[0], end[1] - start[1]))
+        self.assertAlmostEqual(truck.local_point(play.player.xy)[1], -1 - play.player.radius, delta=0.06)
+
+        play.player.position = Position(*truck.world_point(0, 0))
+        for _ in range(45):
+            play.step((end[0] - start[0], end[1] - start[1]))
+        self.assertGreater(truck.local_point(play.player.xy)[1], 1 + play.player.radius)
 
     def test_launcher_continue_uses_existing_entry_without_new_script(self):
         values = {'mode': '기본', 'frames': '2', 'headless': True}

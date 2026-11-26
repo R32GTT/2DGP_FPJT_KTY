@@ -48,6 +48,14 @@ class Truck:
         c, s = math.cos(self.heading), math.sin(self.heading)
         return dx * c + dy * s, -dx * s + dy * c
 
+    def hull_distance(self, point):
+        x, y = self.local_point(point)
+        dx = max(BODY.x - x, x - BODY.right)
+        dy = max(BODY.y - y, y - BODY.bottom)
+        if max(dx, dy) <= 0:
+            return max(dx, dy)
+        return math.hypot(max(0, dx), max(0, dy))
+
     def raycast(self, start, end):
         a, b = self.local_point(start), self.local_point(end)
         hull = BODY.segment_entry(a, b)
@@ -78,6 +86,7 @@ class TransportCrew:
         self.trips = {}
         self.trucks = []
         self.display_trucks = []
+        self.stationary_trucks = []
         self.dismounted = []
 
     @staticmethod
@@ -117,7 +126,7 @@ class TransportCrew:
                 self.ai.brains[actor.id] = Brain([point])
 
     def sync(self, seconds):
-        self.trucks, self.display_trucks, self.dismounted = [], [], []
+        self.trucks, self.display_trucks, self.stationary_trucks, self.dismounted = [], [], [], []
         if not self.world.campaign_map or not self.roster.materialized:
             return
         state = self.bridge.simulation.state
@@ -164,6 +173,8 @@ class TransportCrew:
                     for actor in truck.crew:
                         actor.last_node = ""
             self.trucks.extend(trucks)
+            if not moving or operation.waiting_reason:
+                self.stationary_trucks.extend(trucks)
             if stopped:
                 if any(actor.hp > 0 and actor.id not in trip.exits for truck in trucks for actor in truck.crew):
                     self._dismount(trip, trucks, seconds)
@@ -171,6 +182,18 @@ class TransportCrew:
                                        if actor.hp > 0 and actor.id in trip.exits)
         for key in self.trips.keys() - active:
             del self.trips[key]
+
+    def blocks_movement(self, actor, start, end):
+        if actor.position.floor != 0:
+            return False
+        for truck in self.stationary_trucks:
+            if math.dist((truck.x, truck.y), end) > TRUCK_SIZE[0] / 2 + actor.radius:
+                continue
+            distance = truck.hull_distance(end)
+            # 정차 시 이미 겹친 개체가 차체 밖으로 빠져나올 수 있다.
+            if distance < actor.radius - 1e-8 and distance < truck.hull_distance(start) - 1e-8:
+                return True
+        return False
 
     def driver_shot(self, actor, vehicle_id):
         return next((truck for truck in self.trucks if truck.id == vehicle_id and not truck.stopped

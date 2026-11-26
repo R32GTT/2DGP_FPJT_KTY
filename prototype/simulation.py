@@ -516,7 +516,8 @@ class PlaySimulation:
             speed *= self.inventory.movement_multiplier
             if self.player.weapon is not None and self.player.weapon.reloading:
                 speed *= self.player.weapon.spec.reload_move_multiplier
-            move_actor(self.player, direction, self.world, FIXED_DT, speed=speed)
+            move_actor(self.player, direction, self.world, FIXED_DT, speed=speed,
+                       vehicle_blocked=self.transports.blocks_movement)
             moved = math.dist(previous, self.player.xy)
             if moved > 0.001:
                 player_motion = 0.72 if walking else 1.25 if sprint else 1.0
@@ -549,7 +550,8 @@ class PlaySimulation:
                                        if actor.weapon and actor.weapon.reloading else 1)
                 guard_previous = actor.xy
                 blocker = move_actor(actor, intent.direction, self.world, intent.step_dt, speed=speed,
-                                     neighbors=self.ai.crowd.neighbors.get(actor.id, ()), allow_slide=not intent.move_straight)
+                                     neighbors=self.ai.crowd.neighbors.get(actor.id, ()), allow_slide=not intent.move_straight,
+                                     vehicle_blocked=self.transports.blocks_movement)
                 if actor.weapon is not None:
                     movement_speed = math.dist(guard_previous, actor.xy) / max(FIXED_DT, intent.step_dt)
                     actor.weapon.update_accuracy(FIXED_DT, movement_speed_mps=movement_speed)
