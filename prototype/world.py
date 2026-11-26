@@ -1,6 +1,7 @@
 """이미지 레이어·미터 판정·내비게이션을 별도로 읽는 목업 월드."""
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 from functools import cached_property
@@ -50,6 +51,18 @@ class World:
             self.data = build_region(self.data, ROOT)
         if self.data.get("format") != "revenant.image_scene.v1":
             raise ValueError("지원하지 않는 그림 맵 형식")
+        self.map_background_path = None
+        self.map_background_future = None
+        files = None
+        if self.data.get("stream_terrain") and world_root is not None:
+            from .map_background import create_background
+            from .world_files import WorldFiles
+            scene = self.source if self.path is None else json.loads(self.path.read_text(encoding="utf-8"))
+            files = WorldFiles.for_scene(world_root, scene)
+            self.map_background_path = files.map_path
+            worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="map-background")
+            self.map_background_future = worker.submit(create_background, scene, files.map_path)
+            worker.shutdown(wait=False)
         if self.data.get("prefab_instances"):
             self.data = expand_instances(self.data, ROOT)
         if self.data.get("generation"):
@@ -102,15 +115,8 @@ class World:
         self._authored_layers = self.layers
         self.overview_landmarks = tuple(layer for layer in self.layers if layer.role in {"water", "roof"})
         self.chunks = None
-        self.map_background_path = None
         if self.data.get('stream_terrain'):
             from .chunks import WorldChunks
-            from .world_files import WorldFiles
-            scene = self.source if self.path is None else json.loads(self.path.read_text(encoding="utf-8"))
-            files = WorldFiles.for_scene(world_root, scene) if world_root is not None else None
-            if files is not None:
-                from .map_background import create_background
-                self.map_background_path = create_background(scene, files.map_path)
             self.chunks = WorldChunks(self, files)
             self.update_chunks(self.data['player_spawn'] if initial_position is None else initial_position)
 

@@ -71,6 +71,7 @@ class HUD:
 
     def prepare_map(self, world):
         if world.map_background_path is not None and self._map_world is not world:
+            world.map_background_future.result()
             self._map_world = world
             self._map_batches.clear()
             self._map_image = pico.load_image(str(world.map_background_path))
