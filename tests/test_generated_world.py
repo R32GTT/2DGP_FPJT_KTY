@@ -10,6 +10,7 @@ from campaign.persistence import deserialize_campaign, serialize_campaign
 from campaign.resources import assert_invariants
 from campaign.routes import find_route
 from campaign.simulation import Simulation
+from prototype import generated_world
 from prototype.generated_world import generate_world, region_seed
 from prototype.movement import move_actor
 from prototype.simulation import PlaySimulation
@@ -44,6 +45,12 @@ class GeneratedWorldTests(unittest.TestCase):
             self.assertEqual(generate_world(42, region_count=2, world_root=root), scene)
             with patch("prototype.generated_world._assemble_world", side_effect=AssertionError("repaired scene expected")):
                 self.assertEqual(generate_world(42, region_count=2, world_root=root), scene)
+
+    def test_xlarge_roads_avoid_facilities_on_first_layout(self):
+        with patch("prototype.generated_world._assemble_world", wraps=generated_world._assemble_world) as assemble:
+            scene = generate_world(42, region_count=16, region_size="xlarge")
+        self.assertEqual(assemble.call_count, 1)
+        self.assertEqual(len(scene["generated_regions"]), 16)
 
     def test_respawn_selects_a_safehouse_on_the_second_page(self):
         play = PlaySimulation(generate_world(42, region_count=5, basic=True))

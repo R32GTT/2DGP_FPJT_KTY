@@ -23,7 +23,7 @@ from .world_roads import build_world_roads
 
 WORLD_VERSION = 6
 LAYOUT_VERSION = 3
-WORLD_CACHE_VERSION = 1
+WORLD_CACHE_VERSION = 2
 
 
 def region_seed(seed, region_id, version=GENERATION_VERSION):

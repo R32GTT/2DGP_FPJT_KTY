@@ -116,6 +116,15 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None, 
     used_width = np.zeros(cost.size)
     used_width[indices[order[0]]] = MAIN_ROAD["width"]
     row, col = np.indices(cost.shape)
+    site_shapes = [box(x, y, x + w, y + h) for x, y, w, h in (site["rect"] for site in sites)]
+    site_index = STRtree(site_shapes)
+
+    def clear_of_sites(path, width):
+        # 격자 셀이 비어 있어도 실제 시설 진입 좌표로 옮긴 선분은 시설을 가로지를 수 있다.
+        line = LineString([anchors.get(cell, (xs[cell % columns], ys[cell // columns])) for cell in path])
+        surface = line.buffer(width / 2, cap_style="flat")
+        return all(surface.intersection(site_shapes[index]).area <= 1e-6
+                   for index in site_index.query(surface, predicate="intersects"))
 
     def spaced_path(start, end, joins, width):
         distance, nearest = distance_transform_edt(~used.reshape(cost.shape), return_indices=True)
@@ -135,14 +144,21 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None, 
             continue
         distance = dijkstra(graph, directed=False, indices=start)
         existing = np.flatnonzero(used)
-        join = int(existing[np.argmin(distance[existing])])
         spec = MAIN_ROAD if trunks and keys[number] in trunks else specs[keys[number]]
-        path = spaced_path(start, join, (start, join), spec["width"])
+        path = None
+        for candidate in np.argsort(distance[existing], kind="stable"):
+            join = int(existing[candidate])
+            proposed = spaced_path(start, join, (start, join), spec["width"])
+            if proposed is None:
+                continue
+            # 먼저 만난 기존 도로에 합류해 불필요한 평행 구간을 남기지 않는다.
+            stop = next(i for i, cell in enumerate(proposed) if used[cell])
+            proposed = proposed[:stop + 1]
+            if clear_of_sites(proposed, spec["width"]):
+                path = proposed
+                break
         if path is None:
-            raise ValueError("기존 도로와 간격을 확보할 수 없는 진입로")
-        # 먼저 만난 기존 도로에 합류해 불필요한 평행 구간을 남기지 않는다.
-        stop = next(i for i, cell in enumerate(path) if used[cell])
-        path = path[:stop + 1]
+            raise ValueError("시설 점유 영역을 피하는 도로 진입로가 없음")
         paths.append((path, keys[number], spec))
         used[path] = True
         used_width[path] = np.maximum(used_width[path], spec["width"])
@@ -186,7 +202,7 @@ def build_roads(bounds, sites, points, gates, stubs, cost, rng, *, trunks=None, 
         return min((sources[index] for index in candidates),
                    key=lambda item: (round(item[0].distance(middle), 6), rank[item[1]["kind"]]))[1]
 
-    forbidden = prep(union_all([box(x, y, x + w, y + h) for x, y, w, h in (site['rect'] for site in sites)]).buffer(-1e-6))
+    forbidden = prep(union_all(site_shapes).buffer(-1e-6))
     envelope = box(bounds.x, bounds.y, bounds.right, bounds.bottom).buffer(1e-6)
     refined = []
     source_index = STRtree([line for line, _ in routes])
