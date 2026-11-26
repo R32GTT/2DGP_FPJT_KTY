@@ -44,9 +44,14 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
                   if v.node_id == origin.node_id and v.status == "available" and not v.troop_seats)
     if not pool:
         return None
-    route = find_route(state, origin.node_id, destination_node)
-    if not route:
-        return None
+    if kind == "supply":
+        if route_distance(state, origin.node_id, destination_node) is None:
+            return None
+        route = None
+    else:
+        route = find_route(state, origin.node_id, destination_node)
+        if not route:
+            return None
     provisions = transport_provisions(state, route) if kind == "equipment" else state.rules["provisions_per_vehicle"]
     vehicle_ids, capacity = [], 0
     while pool and capacity - len(vehicle_ids) * provisions < limit:
@@ -72,6 +77,8 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
         space -= amount
     if sum(cargo.values()) < minimum_batch:
         return None
+    if route is None:
+        route = find_route(state, origin.node_id, destination_node)
     units = sorted((u for u in state.units.values()
                     if u.node_id == origin.node_id and u.status == "available" and u.soldiers and u.can_escort),
                    key=lambda unit: (unit.soldiers, unit.id))
