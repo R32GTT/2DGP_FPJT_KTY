@@ -10,7 +10,7 @@ from zlib import error as CompressionError
 from .chunk_terrain import CHUNK_SIZE, ChunkTerrain
 from .geometry import Rect
 from .spatial import BoundsIndex
-from .world_files import MAX_CHUNK_BYTES, json_bytes, read_bytes, write_bytes
+from .world_files import MAX_CHUNK_BYTES, read_bytes
 
 
 PREFETCH_DISTANCE = CHUNK_SIZE / 4
@@ -76,13 +76,10 @@ class WorldChunks:
                     return layers, colliders
             except (OSError, ValueError, EOFError, TypeError, CompressionError):
                 pass
-        layers, colliders = self.terrain.generate(key)
-        if path is not None:
-            try:
-                write_bytes(path, json_bytes((layers, colliders)))
-            except (OSError, ValueError):
-                pass
-        return layers, colliders
+        chunk = self.terrain.generate(key)
+        if self.files is not None:
+            self.files.cache_chunk(key, chunk)
+        return chunk
 
     def _desired(self, center):
         cx, cy = center

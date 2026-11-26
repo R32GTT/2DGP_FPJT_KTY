@@ -29,13 +29,24 @@ def write_bytes(path, data):
     write_save(gzip.compress(data, mtime=0), path)
 
 
+def _check_digest(value):
+    if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+        raise ValueError("잘못된 월드 또는 저장 시점 ID")
+
+
 class WorldFiles:
     def __init__(self, root, world_id):
-        if (not isinstance(world_id, str) or len(world_id) != 64
-                or any(c not in "0123456789abcdef" for c in world_id)):
-            raise ValueError("잘못된 월드 ID")
+        _check_digest(world_id)
         self.directory = Path(root) / world_id
         self.world_id = world_id
+
+    @property
+    def scene_path(self):
+        return self.directory / "scene.json.gz"
+
+    def snapshot_path(self, revision):
+        _check_digest(revision)
+        return self.directory / "snapshots" / f"{revision}.json.gz"
 
     @classmethod
     def for_scene(cls, root, scene):
@@ -45,3 +56,12 @@ class WorldFiles:
     def chunk_path(self, key):
         x, y = key
         return self.directory / "chunks-v1" / f"{x}_{y}.json.gz"
+
+    def cache_chunk(self, key, chunk):
+        try:
+            data = json_bytes(chunk)
+            if len(data) <= MAX_CHUNK_BYTES:
+                write_bytes(self.chunk_path(key), data)
+        except (OSError, ValueError):
+            # 디스크 캐시는 생성 결과를 재사용하기 위한 보조 저장소다.
+            pass

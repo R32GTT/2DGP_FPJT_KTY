@@ -1,5 +1,6 @@
 from dataclasses import asdict
 import gzip
+from hashlib import sha256
 import json
 import math
 from pathlib import Path
@@ -16,6 +17,7 @@ from prototype.launcher import ROOT, build_command, discover_targets
 from prototype.savegame import CampaignSaveError, load_game, save_game
 from prototype.simulation import PlaySimulation
 from prototype.weapons import WeaponState
+from prototype.world_files import WorldFiles, json_bytes, write_bytes
 
 
 class PlaySaveTests(unittest.TestCase):
@@ -204,18 +206,23 @@ class PlaySaveTests(unittest.TestCase):
                 with self.assertRaises(CampaignSaveError):
                     save_game(play, path)
             self.assertEqual(path.read_bytes(), original)
-            self.assertEqual(list(Path(directory).iterdir()), [path])
-            for mutate in (lambda p: p.update(version=0), lambda p: p.update(content='old'),
-                           lambda p: p['generation'].update(version=0),
-                           lambda p: p['generation'].update(prefab_versions={}),
-                           lambda p: p['generation'].update(seed=43),
-                           lambda p: p['changes'].update(missing=False),
-                           lambda p: p['local']['runtime'].update(time=100)):
+            self.assertFalse(list(Path(directory).rglob("*.tmp")))
+            for corrupt in ({"version": 0}, {"content": "old"}, {"world": "../bad"},
+                            {"revision": "0" * 64}):
                 payload = json.loads(gzip.decompress(original))
-                mutate(payload)
-                path.write_bytes(gzip.compress(json.dumps(payload).encode()))
+                payload.update(corrupt)
+                write_bytes(path, json_bytes(payload))
                 with self.assertRaises(CampaignSaveError):
                     load_game(path)
+            path.write_bytes(original)
+            payload = json.loads(gzip.decompress(original))
+            files = WorldFiles(path.parent / "worlds", payload["world"])
+            snapshot = files.snapshot_path(payload["revision"])
+            state = json.loads(gzip.decompress(snapshot.read_bytes()))
+            state["local"]["runtime"]["time"] = 100
+            write_bytes(snapshot, json_bytes(state))
+            with self.assertRaisesRegex(CampaignSaveError, "월드 파일 내용"):
+                load_game(path)
             path.write_bytes(original[:30])
             with self.assertRaises(CampaignSaveError):
                 load_game(path)
@@ -259,13 +266,51 @@ class PlaySaveTests(unittest.TestCase):
             restored = load_game(path)
             self.assertTrue(restored.player.weapon.reloading)
             self.assertEqual(restored.player.weapon.stage_elapsed, weapon.stage_elapsed)
+            slot = json.loads(gzip.decompress(original))
+            files = WorldFiles(path.parent / "worlds", slot["world"])
+            snapshot = gzip.decompress(files.snapshot_path(slot["revision"]).read_bytes())
             for invalid in ({"stage": 99}, {"stage": 1}, {"stage_elapsed": -1}, {"stage_elapsed": 99}):
                 with self.subTest(invalid=invalid):
-                    payload = json.loads(gzip.decompress(original))
+                    payload = json.loads(snapshot)
                     payload["local"]["player"]["loadout"]["ar_a"].update(invalid)
-                    path.write_bytes(gzip.compress(json.dumps(payload).encode()))
+                    data = json_bytes(payload)
+                    revision = sha256(data).hexdigest()
+                    write_bytes(files.snapshot_path(revision), data)
+                    write_bytes(path, json_bytes({**slot, "revision": revision}))
                     with self.assertRaisesRegex(CampaignSaveError, "잘못된 재장전 상태"):
                         load_game(path)
+
+    def test_quick_and_full_slots_share_terrain_and_restore_distinct_state(self):
+        play = PlaySimulation(self.scene)
+        door = next(c for c in play.world.geometry.objects.values() if c.kind == "door")
+        active = door.active
+        with tempfile.TemporaryDirectory() as directory:
+            quick = Path(directory) / "quick.json.gz"
+            full = quick.with_name("prototype.json.gz")
+            save_game(play, quick)
+            door.active = not active
+            play.player.hp -= 7
+            save_game(play, full)
+
+            quick_slot, full_slot = (json.loads(gzip.decompress(path.read_bytes())) for path in (quick, full))
+            self.assertEqual(quick_slot["world"], full_slot["world"])
+            self.assertNotEqual(quick_slot["revision"], full_slot["revision"])
+            files = WorldFiles(quick.parent / "worlds", quick_slot["world"])
+            self.assertEqual(len(list(files.directory.glob("scene.json.gz"))), 1)
+            with patch("prototype.savegame.generate_world", side_effect=AssertionError("scene should be read")):
+                quick_play, full_play = load_game(quick), load_game(full)
+            self.assertEqual(quick_play.player.hp - full_play.player.hp, 7)
+            self.assertEqual(quick_play.world.geometry.objects[door.id].active, active)
+            self.assertEqual(full_play.world.geometry.objects[door.id].active, not active)
+            self.assertIsNotNone(quick_play.world.geometry.index.tree)
+
+            # 이전 형식은 내장된 생성 설정과 상태를 사용한다.
+            old = quick.with_name("legacy.json.gz")
+            snapshot = json.loads(gzip.decompress(files.snapshot_path(quick_slot["revision"]).read_bytes()))
+            write_bytes(old, json_bytes({"format": quick_slot["format"], "version": 6,
+                                         "content": quick_slot["content"], "generation": self.scene["generation"],
+                                         **snapshot}))
+            self.assertEqual(load_game(old).player.hp, quick_play.player.hp)
 
     def test_stopped_vehicle_seats_casualty_and_dismount_positions_survive_load(self):
         play = PlaySimulation(self.scene)

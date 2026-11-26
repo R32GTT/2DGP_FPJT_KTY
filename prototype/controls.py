@@ -47,8 +47,9 @@ class Controls:
                     actions.append("restart_ai" if key == sdl2.SDLK_F2 else "next_ai")
                 elif key == sdl2.SDLK_F4:
                     actions.append("restock_range")
-                elif key in (sdl2.SDLK_F5, sdl2.SDLK_F9):
-                    actions.append("save" if key == sdl2.SDLK_F5 else "load")
+                elif key in (sdl2.SDLK_F5, sdl2.SDLK_F6, sdl2.SDLK_F8, sdl2.SDLK_F9):
+                    actions.append({sdl2.SDLK_F5: "save", sdl2.SDLK_F6: "quick_save",
+                                    sdl2.SDLK_F8: "quick_load", sdl2.SDLK_F9: "load"}[key])
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
                     self.inventory_open = self.intel_open = False

@@ -8,7 +8,7 @@ from time import perf_counter, sleep
 from .ai_scenarios import SCENARIOS
 from .intelligence import collect as collect_intel
 from .simulation import FIXED_DT, PlaySimulation
-from .savegame import CampaignSaveError, DEFAULT_SAVE, load_game, save_game
+from .savegame import CampaignSaveError, DEFAULT_SAVE, QUICK_SAVE, load_game, save_game
 from .world import DEFAULT_SCENE
 
 
@@ -47,15 +47,18 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             started = perf_counter()
             elapsed, previous = min(MAX_SIMULATION_BACKLOG_S, started - previous), started
             for action in controls.poll(camera):
-                if action in {"save", "load"}:
+                if action in {"save", "load", "quick_save", "quick_load"}:
                     try:
                         if not simulation.presence:
                             raise CampaignSaveError("저장·불러오기는 절차 생성 월드에서 사용하세요")
-                        if action == "save":
-                            save_game(simulation)
-                            simulation.message = "월드 저장 완료 · F9 불러오기"
+                        quick = action.startswith("quick_")
+                        slot = QUICK_SAVE if quick else DEFAULT_SAVE
+                        if action in {"save", "quick_save"}:
+                            save_game(simulation, slot)
+                            simulation.message = ("빠른 저장 완료 · F8 불러오기" if quick
+                                                  else "월드 저장 완료 · F9 불러오기")
                         else:
-                            loaded = load_game()
+                            loaded = load_game(slot)
                             replacement = Renderer(loaded.world)
                             renderer.close()
                             if simulation.world.chunks:
@@ -68,7 +71,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             controls.inventory_open = False
                             controls.intel_open = False
                             intel_cursor = 0
-                            controls.paused = True
+                            if not quick:
+                                controls.paused = True
                     except CampaignSaveError as error:
                         simulation.message = str(error)
                     previous, elapsed, accumulator = perf_counter(), 0.0, 0.0
@@ -293,7 +297,7 @@ def main(argv=None):
     except CampaignSaveError as error:
         parser.error(str(error))
     if args.generate is not None:
-        simulation.message = f"생성 맵 · 시드 {args.generate} · M 지도 / I 정보 노트 / F5 저장 / F9 불러오기"
+        simulation.message = f"생성 맵 · 시드 {args.generate} · F5/F9 저장·불러오기 · F6/F8 빠른 저장·불러오기"
     if args.headless:
         for _ in range(args.frames or 120):
             simulation.step()
