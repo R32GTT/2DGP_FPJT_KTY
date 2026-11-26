@@ -104,20 +104,17 @@ def route_distance(state: CampaignState, start: str, end: str) -> float | None:
     """여러 목적지를 비교할 때 출발지별 최단 경로 트리를 재사용한다."""
     if start not in state.nodes or end not in state.nodes:
         raise ValueError("경로 노드 누락")
-    pairs, graph = _topology(state)
+    _, graph = _topology(state)
     trees = state.roads.trees
     if start not in trees:
-        _, parents = _shortest_paths(graph, start)
-        trees[start] = parents, {}
+        distances, parents = _shortest_paths(graph, start)
+        trees[start] = parents, distances
         limit = max(1, min(128, ROUTE_TREE_NODE_BUDGET // len(state.nodes)))
         if len(trees) > limit:
             trees.popitem(last=False)
     trees.move_to_end(start)
-    parents, lengths = trees[start]
-    if end not in lengths:
-        route = _path_from_tree(start, end, parents)
-        lengths[end] = sum(pairs[frozenset((a, b))].length_m for a, b in zip(route, route[1:])) if route else None
-    return lengths[end]
+    _, distances = trees[start]
+    return distances.get(end)
 
 
 def find_route(state: CampaignState, start: str, end: str,
