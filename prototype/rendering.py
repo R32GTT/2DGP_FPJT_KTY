@@ -243,6 +243,14 @@ class Renderer:
         self.backend.SDL_SetRenderDrawColor(self.backend.renderer, 18, 28, 29, 255)
         self.backend.SDL_RenderClear(self.backend.renderer)
         pico.draw_rectangle(0, 0, view.width - 1, view.height - 1, 18, 28, 29, filled=True)
+        if inventory_view is not None:
+            self.hud.render(simulation, camera, paused=paused, debug=False,
+                            update_ms=update_ms, draw_ms=self.last_draw_ms,
+                            inventory_view=inventory_view, minimap_open=False,
+                            weapon_images=self.guns)
+            self.last_draw_ms = (perf_counter() - started) * 1000
+            pico.update_canvas()
+            return
         if map_open:
             self.hud.render(simulation, camera, paused=paused, debug=False,
                             update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=True,
@@ -500,7 +508,7 @@ class Renderer:
                         minimap_open=minimap_open, world_view=view, aim_point=aim_point,
                         weapon_image=self.guns.get(player.weapon.spec.id) if player.weapon else None,
                         visible_enemies=visible_enemies, threat_candidates=threat_candidates,
-                        map_navigation=map_navigation)
+                        map_navigation=map_navigation, weapon_images=self.guns)
         self.last_draw_ms = (perf_counter() - started) * 1000
         pico.update_canvas()
 

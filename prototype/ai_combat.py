@@ -54,7 +54,9 @@ class CombatController:
     def choose(self, actor, brain, actors, threat, time):
         combat = brain.combat
         weapon = actor.weapon
-        empty = weapon is None or (not weapon.chambered and weapon.stage < 2 and weapon.reserve <= 0)
+        empty = weapon is None or (not weapon.chambered and weapon.stage < 2
+                                   and weapon.reserve <= 0
+                                   and actor.inventory.get(f"ammo:{weapon.spec.ammo_type}", 0) <= 0)
         urgent = empty or actor.hp < 20 or actor.hurt_until - time > 1.75 or combat.suppression >= 0.55
         route_failed = combat.action_goal is not None and combat.action_goal == brain.motion.goal and brain.motion.route_failed
         safe_action = combat.action in {"cover", "retreat", "pin"}

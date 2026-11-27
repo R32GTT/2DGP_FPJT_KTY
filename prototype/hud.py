@@ -352,12 +352,14 @@ class HUD:
             pico.draw_rectangle(x - width / 2, y - 5, x - width / 2 + width * min(1.0, player.hp / 100), y,
                                 244, 95, 89, filled=True)
 
-    def _draw_ammo(self, weapon, aim_point, view):
+    def _draw_ammo(self, simulation, aim_point, view):
+        weapon = simulation.player.weapon
         if weapon is None or aim_point is None:
             return
         x = max(56, min(view.width - 56, aim_point[0]))
         y = max(68, min(view.height - 9, aim_point[1]))
-        self.label("game_ammo", f"{weapon.magazine + int(weapon.chambered):02d}/{weapon.reserve:02d}",
+        available = weapon.reserve + simulation.inventory.carried.get(f"ammo:{weapon.spec.ammo_type}", 0)
+        self.label("game_ammo", f"{weapon.magazine + int(weapon.chambered):02d}/{available:02d}",
                    self.type["value"], TEXT)
         text_width = self.labels["game_ammo"].width
         self.text("game_ammo", x - text_width / 2, y - 30)
@@ -493,7 +495,7 @@ class HUD:
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
                cache_count=0, search_counts=None, seen_enemies=(), inventory_view=None, intel_index=None,
                minimap_open=True, world_view=None, aim_point=None, weapon_image=None,
-               visible_enemies=(), threat_candidates=(), map_navigation=None):
+               visible_enemies=(), threat_candidates=(), map_navigation=None, weapon_images=None):
         self._update_text_scale(camera)
         now = perf_counter()
         if map_open and now >= self.next_update:
@@ -515,7 +517,7 @@ class HUD:
                 self._draw_enemy_awareness(visible_enemies, world_view or camera)
                 if simulation.player.hp > 0:
                     self._draw_threats(simulation, world_view or camera, threat_candidates)
-                    self._draw_ammo(simulation.player.weapon, aim_point, world_view or camera)
+                    self._draw_ammo(simulation, aim_point, world_view or camera)
                 self._draw_weapon_card(simulation, now, weapon_image)
         if paused:
             pico.draw_rectangle(width - 43, height - 39, width - 38, height - 21,
@@ -530,22 +532,57 @@ class HUD:
         if not debug:
             self._draw_gameplay_alerts(simulation, camera, map_open=map_open, paused=paused)
         if inventory_view is not None:
-            self._draw_inventory(camera, simulation.inventory.bag_weight, *inventory_view)
+            self._draw_inventory(camera, *inventory_view, weapon_images or {})
 
-    def _draw_inventory(self, camera, weight, rows, selected):
-        left, width, top = camera.width / 2 - 226, 452, camera.height - 103
-        visible = 11
-        start = min(max(0, selected - visible + 1), max(0, len(rows) - visible))
-        self.panel(left, top - 372, width, 372)
-        self.label("inventory_title", f"장비  ·  가방 {weight:.1f}/{BAG_LIMIT:g} kg", 16)
-        self.text("inventory_title", left + 18, top - 22)
-        for line, (text, _) in enumerate(rows[start:start + visible]):
-            y = top - 54 - line * 26
-            if start + line == selected:
-                pico.draw_rectangle(left + 8, y - 11, left + width - 8, y + 11, 49, 76, 72, filled=True)
-            key = f"inventory_row_{line}"
-            self.label(key, text, 13)
-            self.text(key, left + 18, y)
+    def _draw_inventory(self, camera, layout, mouse, press, weapon_images):
+        red = (245, 92, 83)
+        height = camera.height
+
+        def box(rect, color, *, filled=False):
+            left, top, right, bottom = rect
+            pico.draw_rectangle(left, height - bottom, right, height - top, *color, filled=filled)
+
+        pico.draw_rectangle(0, 0, camera.width, height, 9, 15, 18, 244, filled=True)
+        box(layout.panel, (86, 99, 99))
+        box(layout.bag_box, (75, 91, 91))
+        box(layout.floor_box, (75, 91, 91))
+        self.label("inventory_bag_title", f"BACKPACK {layout.weight:.1f}KG / {BAG_LIMIT:g}KG", 16, red)
+        self.label("inventory_floor_title", "FLOOR", 16, red)
+        self.text("inventory_bag_title", layout.bag_box[0] + 5, height - layout.bag_box[1] + 18)
+        self.text("inventory_floor_title", layout.floor_box[0] + 5, height - layout.floor_box[1] + 18)
+        for entry in layout.slots:
+            if entry.zone == "attached":
+                key = f"inventory_attached_{entry.key[0]}_{entry.key[1]}"
+                self.label(key, entry.name, 13, red)
+                self.text(key, entry.rect[0], height - entry.rect[1] - 10)
+                continue
+            highlighted = entry.active or entry.contains(*mouse)
+            box(entry.rect, (145, 83, 78) if highlighted else (91, 105, 104))
+            image = weapon_images.get(entry.weapon_id)
+            if image is not None:
+                left, top, right, bottom = entry.rect
+                image.draw((left + right) / 2, height - (top + bottom) / 2,
+                           (right - left) * 0.83, (bottom - top) * 0.75)
+        for column, entries in (("bag", layout.bag), ("floor", layout.floor)):
+            for index, entry in enumerate(entries):
+                if entry.contains(*mouse) or press and press[0] == entry:
+                    box(entry.rect, (43, 57, 57), filled=True)
+                key = f"inventory_{column}_{index}"
+                self.label(key, entry.name, 16, red)
+                self.text(key, entry.rect[0] + 5, height - entry.rect[1] - 12)
+                for part_index, detail in enumerate(entry.details):
+                    detail_key = f"{key}_part_{part_index}"
+                    self.label(detail_key, detail, 13, red)
+                    self.text(detail_key, entry.rect[0] + 5, height - entry.rect[1] - 31 - part_index * 20)
+        if press is not None and math.dist(mouse, press[1]) >= 6:
+            source = press[0]
+            if source is not None:
+                image = weapon_images.get(source.weapon_id)
+                if image is not None:
+                    image.draw(mouse[0] + 34, height - mouse[1] - 14, 68, 28)
+                elif source.name:
+                    self.label("inventory_drag", source.name, 16, red)
+                    self.text("inventory_drag", mouse[0] + 12, height - mouse[1] - 12)
 
     def _minimap(self, simulation, camera, debug=False, seen_enemies=()):
         width, height = 202, 146

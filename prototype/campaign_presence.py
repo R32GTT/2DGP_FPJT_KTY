@@ -115,7 +115,9 @@ class CampaignPresence:
             return None
         spec = weapon.spec
         rounds_per_issue = min(spec.capacity, spec.reserve)
-        if not rounds_per_issue or spec.reserve - weapon.reserve < rounds_per_issue:
+        key = f"ammo:{spec.ammo_type}"
+        carried = actor.inventory.get(key, 0) + weapon.reserve
+        if not rounds_per_issue or spec.reserve - carried < rounds_per_issue:
             return None
         state = self.bridge.simulation.state
         unit = state.units.get(actor.source_unit)
@@ -145,9 +147,10 @@ class CampaignPresence:
             brain.resupply_at = seconds + 5
             return None
 
-        requested = (spec.reserve - weapon.reserve) // rounds_per_issue
+        requested = (spec.reserve - carried) // rounds_per_issue
         granted = issue_ammunition(state, facility.id, requested)
-        weapon.reserve += granted * rounds_per_issue
+        if granted:
+            actor.inventory[key] = actor.inventory.get(key, 0) + granted * rounds_per_issue
         brain.resupply_at = seconds + (2 if granted else 5)
         return None
 

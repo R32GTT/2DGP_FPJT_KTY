@@ -23,6 +23,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
     from .camera import CANVAS_SIZE, PlayCamera
     from .controls import Controls
     from .rendering import Renderer
+    from .inventory_ui import build_inventory_layout
 
     pico2d.open_canvas(*CANVAS_SIZE, sync=True)
     renderer = None
@@ -43,6 +44,10 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
         last_step_s = FIXED_DT
         stack_previewed = False
         inventory_cursor = 0
+        bag_scroll = floor_scroll = 0
+        inventory_press = None
+        inventory_layout = None
+        inventory_layout_until = 0.0
         intel_cursor = 0
         while controls.running and (not frames or count < frames):
             started = perf_counter()
@@ -133,8 +138,11 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             controls.map_open = controls.intel_open = False
                             controls.firing = controls.aiming = controls.trigger_pending = False
                             inventory_cursor = 0
+                            inventory_press = None
+                            inventory_layout = None
                         continue
                     if controls.inventory_open:
+                        inventory_layout = None
                         if action == "item_previous":
                             inventory_cursor = max(0, inventory_cursor - 1)
                         elif action == "item_next":
@@ -222,9 +230,32 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             update_ms = (perf_counter() - started) * 1000
             inventory_view = None
             if controls.inventory_open and simulation.player.hp > 0:
-                rows = simulation.inventory.rows()
-                inventory_cursor = min(inventory_cursor, len(rows) - 1)
-                inventory_view = rows, inventory_cursor
+                size = (camera.width, camera.height)
+                if inventory_layout is None or started >= inventory_layout_until or controls.inventory_events:
+                    inventory_layout = build_inventory_layout(simulation.inventory, size, bag_scroll, floor_scroll)
+                    inventory_layout_until = started + 0.15
+                layout = inventory_layout
+                for event_kind, position, modifier in controls.inventory_events:
+                    if event_kind == "wheel":
+                        if layout.floor_box[0] <= position[0] < layout.floor_box[2]:
+                            floor_scroll = max(0, floor_scroll - modifier)
+                        elif layout.bag_box[0] <= position[0] < layout.bag_box[2]:
+                            bag_scroll = max(0, bag_scroll - modifier)
+                    elif event_kind == "down":
+                        inventory_press = layout.hit(*position), position
+                    elif inventory_press is not None:
+                        source, start = inventory_press
+                        target = layout.drop_target(*position)
+                        dragged = math.dist(start, position) >= 6
+                        if source is not None and (not dragged or target is not None):
+                            simulation.inventory.interact(source, target if dragged else None, shift=modifier)
+                        inventory_press = None
+                    layout = build_inventory_layout(simulation.inventory, size, bag_scroll, floor_scroll)
+                bag_scroll, floor_scroll = layout.bag_scroll, layout.floor_scroll
+                inventory_layout = layout
+                inventory_view = layout, controls.mouse, inventory_press
+            else:
+                inventory_layout = None
             renderer.render(simulation, camera, debug=controls.debug, paused=controls.paused,
                             update_ms=update_ms, mouse=None if inventory_view else controls.mouse,
                             map_open=map_open, inventory_view=inventory_view,

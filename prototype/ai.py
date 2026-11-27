@@ -427,7 +427,8 @@ class EnemyAI:
             return self.motion.move(actor, brain, intent, MoveRequest(None), time, budget)
         moving_to_cover = actor.state == "retreat" and combat.action == "cover" and goal is not None and math.dist(actor.xy, goal) > 0.3
         intent.reload = bool(weapon and not weapon.chambered and not weapon.reloading
-                             and not moving_to_cover and (weapon.reserve > 0 or weapon.stage >= 2))
+                             and not moving_to_cover and (weapon.reserve > 0 or weapon.stage >= 2
+                                                          or actor.inventory.get(f"ammo:{weapon.spec.ammo_type}", 0) > 0))
         if brain.search.task.scanning and actor.state in {"search", "alert"}:
             return self.motion.move(actor, brain, intent, MoveRequest(None), time, budget)
         if actor.state == "retreat" and not brain.visible:

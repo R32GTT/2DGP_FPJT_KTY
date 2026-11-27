@@ -7,6 +7,7 @@ from campaign.models import Position
 from .actors import Actor
 from .ai_state import Brain, CombatState, Incident, RadioState, SearchCue
 from .lighting import OPTICS_MODES
+from .inventory import AMMUNITION
 from .intelligence import restore_notes
 from .perception import Knowledge
 from .simulation import RegionAlarm
@@ -65,6 +66,11 @@ def restore_actor(row, specs):
             or actor.lamp not in OPTICS_MODES or type(actor.night_vision) is not bool or type(actor.ir_laser) is not bool
             or actor.active_weapon and actor.active_weapon not in actor.loadout):
         raise ValueError("잘못된 현장 개체 상태")
+    if (not isinstance(actor.inventory, dict) or any(
+            key.removeprefix("ammo:") not in AMMUNITION or not key.startswith("ammo:")
+            or type(amount) is not int or amount <= 0
+            for key, amount in actor.inventory.items())):
+        raise ValueError("잘못된 병사 탄약 인벤토리")
     return actor
 
 
@@ -183,6 +189,15 @@ def restore(play, row):
         if len(point) != 2 or not all(math.isfinite(value) for value in point):
             raise ValueError("잘못된 현장 물자 위치")
         play.inventory.ground.append((tuple(point), play.inventory.validate_items(items)))
+    for weapon in play.player.loadout.values():
+        if weapon.stage == 0 and not weapon.reloading:
+            play.inventory.stow_reserve(weapon)
+    for actor in roster.actors:
+        for weapon in actor.loadout.values():
+            if weapon.reserve and weapon.stage == 0 and not weapon.reloading:
+                key = f"ammo:{weapon.spec.ammo_type}"
+                actor.inventory[key] = actor.inventory.get(key, 0) + weapon.reserve
+                weapon.reserve = 0
     play.inventory.validate_cargo()
     play.inventory.sync_night_gear()
     play.combat.random.setstate(tuples(row["random"]))

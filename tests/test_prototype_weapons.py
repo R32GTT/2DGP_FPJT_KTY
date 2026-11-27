@@ -269,15 +269,20 @@ class WeaponIntegrationTests(unittest.TestCase):
         simulation = PlaySimulation(FIELD_SCENE)
         weapon = simulation.player.weapon
         weapon.fire(0)
-        weapon.start_reload()
+        simulation.reload()
         weapon.tick(0.5)
         before = (weapon.magazine, weapon.reserve, weapon.chambered, weapon.bloom_deg, weapon.next_shot)
+        ammo_key = f"ammo:{weapon.spec.ammo_type}"
+        loose_before = simulation.inventory.carried[ammo_key] + weapon.reserve
         simulation.switch_weapon(1)
         self.assertFalse(weapon.reloading)
         self.assertEqual(weapon.stage, 1)
+        self.assertEqual(weapon.reserve, 0)
+        self.assertEqual(simulation.inventory.carried[ammo_key], loose_before)
         simulation.switch_weapon(0)
         self.assertIs(simulation.player.weapon, weapon)
-        self.assertEqual((weapon.magazine, weapon.reserve, weapon.chambered, weapon.bloom_deg, weapon.next_shot), before)
+        self.assertEqual((weapon.magazine, weapon.chambered, weapon.bloom_deg, weapon.next_shot),
+                         (before[0], before[2], before[3], before[4]))
 
     def test_hitscan_applies_distance_damage_to_each_penetrated_actor(self):
         shooter = Actor("player", Position(0, 0), team="player", active_weapon="ar_a")

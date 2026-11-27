@@ -20,10 +20,12 @@ class Controls:
         self.map_navigation = MapNavigation()
         self.minimap_open = True
         self.inventory_open = False
+        self.inventory_events = []
         self.intel_open = False
 
     def poll(self, camera):
         actions = []
+        self.inventory_events.clear()
         event = sdl2.SDL_Event()
         while sdl2.SDL_PollEvent(ctypes.byref(event)):
             if event.type == sdl2.SDL_QUIT:
@@ -115,6 +117,10 @@ class Controls:
                         self.aiming = False
                     continue
                 if self.inventory_open:
+                    if event.button.button == sdl2.SDL_BUTTON_LEFT:
+                        self.inventory_events.append(("down" if event.type == sdl2.SDL_MOUSEBUTTONDOWN else "up",
+                                                      (event.button.x, event.button.y),
+                                                      bool(sdl2.SDL_GetModState() & sdl2.KMOD_SHIFT)))
                     continue
                 if event.button.button == sdl2.SDL_BUTTON_LEFT:
                     self.firing = event.type == sdl2.SDL_MOUSEBUTTONDOWN
@@ -126,7 +132,7 @@ class Controls:
                     self.map_navigation.zoom_at(1.2 ** event.wheel.y, self.mouse,
                                                 (camera.width, camera.height))
                 elif self.inventory_open and event.wheel.y:
-                    actions.extend(["item_previous" if event.wheel.y > 0 else "item_next"] * min(12, abs(event.wheel.y)))
+                    self.inventory_events.append(("wheel", self.mouse, event.wheel.y))
                 else:
                     camera.set_zoom(camera.magnification * 1.2 ** event.wheel.y)
         return actions

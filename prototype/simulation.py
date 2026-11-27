@@ -96,6 +96,8 @@ class PlaySimulation:
             key = row.get("weapon", "ar_a")
             actor.loadout = {key: WeaponState.ready(self.specs[key])}
             actor.active_weapon = key
+            actor.inventory[f"ammo:{actor.weapon.spec.ammo_type}"] = actor.weapon.reserve
+            actor.weapon.reserve = 0
         new_campaign = campaign is None
         campaign = create_campaign(self.world) if new_campaign else campaign
         self.campaign = CampaignBridge(campaign, self.world.data["campaign_facility"])
@@ -192,6 +194,14 @@ class PlaySimulation:
         if actor.hp > 0 and actor.weapon is not None:
             if actor is self.player:
                 self.inventory.feed_reserve(actor.weapon)
+            else:
+                key = f"ammo:{actor.weapon.spec.ammo_type}"
+                amount = min(actor.inventory.get(key, 0), max(0, actor.weapon.capacity - actor.weapon.reserve))
+                if amount:
+                    actor.weapon.reserve += amount
+                    actor.inventory[key] -= amount
+                    if not actor.inventory[key]:
+                        del actor.inventory[key]
             self._signals(actor, actor.weapon.start_reload())
 
     def cancel_reload(self, actor=None):
@@ -204,6 +214,7 @@ class PlaySimulation:
         if self.player.hp <= 0 or not 0 <= slot < len(keys) or keys[slot] in (None, self.player.active_weapon):
             return
         self.cancel_reload()
+        self.inventory.stow_reserve(self.player.weapon)
         self.player.active_weapon = keys[slot]
         self.player.equip_until = self.time + 0.25
         self.message = f"{self.player.weapon.spec.name} 장착 / 이전 총기의 완료 단계 보존"
@@ -235,6 +246,14 @@ class PlaySimulation:
                     self.message = "운전자 전투 불능 · 수송 정차"
                 if self.presence:
                     self.presence.record_role_loss(actor)
+                for weapon in actor.loadout.values():
+                    if weapon.reserve:
+                        key = f"ammo:{weapon.spec.ammo_type}"
+                        actor.inventory[key] = actor.inventory.get(key, 0) + weapon.reserve
+                        weapon.reserve = 0
+                if actor.inventory and "vehicle_id" not in event.data:
+                    self.inventory.ground.append((actor.xy, actor.inventory))
+                actor.inventory = {}
                 if actor.loadout:
                     if "vehicle_id" not in event.data:
                         self.dropped.append((actor.xy, actor.loadout))
@@ -322,6 +341,8 @@ class PlaySimulation:
 
     def _drop_equipment(self):
         self.cancel_reload()
+        for weapon in self.player.loadout.values():
+            self.inventory.stow_reserve(weapon)
         if self.player.loadout:
             self.dropped.append((self.player.xy, self.player.loadout))
         self.player.loadout, self.player.active_weapon = {}, ""
@@ -515,6 +536,13 @@ class PlaySimulation:
         for actor in [self.player, *self.guards]:
             if actor.hp > 0 and actor.weapon is not None:
                 self._signals(actor, actor.weapon.tick(FIXED_DT))
+                if actor is self.player and not actor.weapon.reloading and actor.weapon.stage == 0:
+                    self.inventory.stow_reserve(actor.weapon)
+                elif (actor is not self.player and actor.weapon.reserve and
+                      not actor.weapon.reloading and actor.weapon.stage == 0):
+                    key = f"ammo:{actor.weapon.spec.ammo_type}"
+                    actor.inventory[key] = actor.inventory.get(key, 0) + actor.weapon.reserve
+                    actor.weapon.reserve = 0
         previous = self.player.xy
         player_motion = 1.0
         self._chunk_velocity = (0.0, 0.0)
@@ -645,7 +673,8 @@ class PlaySimulation:
         if control is not None:
             self.message = use_road_control(self.campaign, control)
             return
-        if self.inventory.take_gun():
+        if self.inventory.nearby(self.dropped) is not None:
+            self.message = "Tab 가방에서 바닥 무기를 선택하세요"
             return
         if self.equipment_range:
             self.message = "입구 보급함 가까이에서 Tab"
@@ -664,6 +693,7 @@ class PlaySimulation:
         if not self.player.loadout and self.kit_available and math.dist(self.player.xy, self.world.safehouse) < 2:
             self.player.loadout = {"ar_a": WeaponState.ready(self.specs["ar_a"])}
             self.player.active_weapon, self.kit_available = "ar_a", False
+            self.inventory.stow_reserve(self.player.weapon)
             self.message = "장면에 배치된 훈련용 예비 키트 확보"
         elif math.dist(self.player.xy, self.world.crate) <= PICKUP_REACH:
             self.message = f"실제 창고에서 보급품 {self.campaign.take_supplies()}개 확보"

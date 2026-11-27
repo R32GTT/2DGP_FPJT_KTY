@@ -8,7 +8,7 @@ from .throwables import load_throwables
 
 AMMUNITION = {
     "pistol": ("권총탄", 0.014, 24),
-    "rifle": ("소총탄", 0.018, 60),
+    "rifle": ("5.56 × 45mm", 0.018, 60),
     "shell": ("산탄", 0.04, 12),
     "precision": ("저격총탄", 0.027, 10),
     "machine_gun": ("기관총탄", 0.024, 80),
@@ -21,7 +21,7 @@ CARGO_ITEMS = {
 }
 NIGHT_KIT = "cargo:night_gear"
 AMMO_CRATE = "cargo:ammunition"
-BAG_LIMIT = 8.0
+BAG_LIMIT = 40.0
 PICKUP_REACH = 1.5
 
 
@@ -44,6 +44,22 @@ class FieldInventory:
                                       **{f"ammo:{key}": row[2] for key, row in AMMUNITION.items()}})
             for site in play.world.facilities if site["kind"] == "warehouse"
         ]
+        for weapon in play.player.loadout.values():
+            self.stow_reserve(weapon)
+
+    def stow_reserve(self, weapon):
+        if not weapon or not weapon.reserve or weapon.spec.ammo_type not in AMMUNITION:
+            return
+        key = f"ammo:{weapon.spec.ammo_type}"
+        weight = AMMUNITION[weapon.spec.ammo_type][1]
+        capacity = max(0, math.floor((BAG_LIMIT - self.bag_weight + 1e-8) / weight))
+        amount = min(weapon.reserve, capacity)
+        overflow = weapon.reserve - amount
+        weapon.reserve = 0
+        if amount:
+            self.carried[key] = self.carried.get(key, 0) + amount
+        if overflow:
+            self.ground.append((self.play.player.xy, {key: overflow}))
 
     def item(self, key):
         if key.startswith("ammo:"):
@@ -117,7 +133,7 @@ class FieldInventory:
         return min(self._reachable_piles(rows), key=lambda index: math.dist(rows[index][0], self.play.player.xy),
                    default=None)
 
-    def take_gun(self, index=None, key=None):
+    def take_gun(self, index=None, key=None, slot=None):
         play, player = self.play, self.play.player
         if index is None:
             index = self.nearby(play.dropped)
@@ -125,18 +141,26 @@ class FieldInventory:
             return False
         _, guns = play.dropped[index]
         key = key or next(iter(guns))
+        candidate = guns[key]
+        if (slot == 2 and candidate.spec.category != "pistol"
+                or slot in (0, 1) and candidate.spec.category == "pistol"):
+            return False
         incoming = guns.pop(key)
+        self.stow_reserve(incoming)
         first, second, sidearm = weapon_slots(player.loadout)
         replaced = None
         if key in player.loadout:
             replaced = key
         elif incoming.spec.category == "pistol":
             replaced = sidearm
+        elif slot in (0, 1) and (first, second)[slot] is not None:
+            replaced = (first, second)[slot]
         elif first and second:
             replaced = player.active_weapon if player.active_weapon in (first, second) else second
         play.cancel_reload()
         if replaced:
             outgoing = player.loadout[replaced]
+            self.stow_reserve(outgoing)
             guns[replaced] = outgoing
             player.loadout = {(key if old == replaced else old): (incoming if old == replaced else weapon)
                               for old, weapon in player.loadout.items()}
@@ -158,6 +182,20 @@ class FieldInventory:
             self._remove(self.carried, key, amount)
             weapon.reserve += amount
 
+    def drop_weapon(self, slot):
+        player = self.play.player
+        key = weapon_slots(player.loadout)[slot]
+        if key is None:
+            return
+        if key == player.active_weapon:
+            self.play.cancel_reload()
+        weapon = player.loadout.pop(key)
+        self.stow_reserve(weapon)
+        self.play.dropped.append((player.xy, {key: weapon}))
+        if key == player.active_weapon:
+            player.active_weapon = next(iter(player.loadout), "")
+            player.equip_until = self.play.time + 0.25
+
     def drop_carried(self):
         if self.carried:
             self.ground.append((self.play.player.xy, self.carried))
@@ -175,8 +213,8 @@ class FieldInventory:
         capacity = math.floor((BAG_LIMIT - self.bag_weight + 1e-8) / self.item(key)[1])
         return min(available, max(0, capacity))
 
-    def _take_items(self, source, key):
-        amount = self._pickup_amount(key, source[key])
+    def _take_items(self, source, key, limit=None):
+        amount = min(self._pickup_amount(key, source[key]), limit or source[key])
         if amount:
             self._remove(source, key, amount)
             self.carried[key] = self.carried.get(key, 0) + amount
@@ -228,6 +266,7 @@ class FieldInventory:
             self._remove(self.carried, key, 1)
         if previous_id:
             self.carried[previous_id] = self.carried.get(previous_id, 0) + 1
+        self.stow_reserve(weapon)
 
     def rows(self):
         play, player = self.play, self.play.player
@@ -239,7 +278,8 @@ class FieldInventory:
             else:
                 weapon = player.loadout[key]
                 active = "  ·  장착 중" if key == player.active_weapon else ""
-                rows.append((f"{title}  ·  {weapon.spec.name}  {weapon.ammo}/{weapon.reserve}{active}", ("equip", index)))
+                available = weapon.reserve + self.carried.get(f"ammo:{weapon.spec.ammo_type}", 0)
+                rows.append((f"{title}  ·  {weapon.spec.name}  {weapon.ammo}/{available}{active}", ("equip", index)))
         if player.weapon:
             for part in player.weapon.spec.compatible:
                 if player.weapon.attachments.get(part.slot) == part.id:
@@ -286,7 +326,12 @@ class FieldInventory:
         rows = self.rows()
         if not 0 <= index < len(rows) or not rows[index][1]:
             return
-        kind, *args = rows[index][1]
+        self.activate_action(rows[index][1])
+
+    def activate_action(self, action, *, single=False):
+        if self.play.player.hp <= 0 or not action:
+            return
+        kind, *args = action
         if kind == "equip":
             self.play.switch_weapon(*args)
         elif kind == "part":
@@ -297,15 +342,10 @@ class FieldInventory:
         elif kind == "gun":
             self.take_gun(*args)
         elif kind == "drop_gun":
-            player = self.play.player
-            self.play.cancel_reload()
-            key = player.active_weapon
-            self.play.dropped.append((player.xy, {key: player.loadout.pop(key)}))
-            player.active_weapon = next(iter(player.loadout), "")
-            player.equip_until = self.play.time + 0.25
+            self.drop_weapon(weapon_slots(self.play.player.loadout).index(self.play.player.active_weapon))
         elif kind == "ground":
             pile, key = args
-            self._take_items(self.ground[pile][1], key)
+            self._take_items(self.ground[pile][1], key, 1 if single else None)
             if not self.ground[pile][1]:
                 self.ground.pop(pile)
         elif kind == "cargo":
@@ -317,11 +357,12 @@ class FieldInventory:
             self.play.message = exchange_safehouse_weapon(self.play, args[0])
         elif kind == "take":
             site, key = args
-            self._take_items(self.stored[site], key)
+            self._take_items(self.stored[site], key, 1 if single else None)
         elif kind == "put":
             site, key = args
-            amount = self.carried.pop(key)
-            if self.selected_throwable == key:
+            amount = 1 if single else self.carried[key]
+            self._remove(self.carried, key, amount)
+            if self.selected_throwable == key and key not in self.carried:
                 self.selected_throwable = None
             if site:
                 stored = self.stored.setdefault(site, {})
@@ -335,3 +376,54 @@ class FieldInventory:
                     stored[key] = stored.get(key, 0) + amount
             if key == NIGHT_KIT:
                 self.sync_night_gear()
+
+    def interact(self, source, target=None, *, shift=False):
+        """클릭은 기본 동작, 드래그는 목적지로 이동, Shift는 한 개씩 이동."""
+        if source is None or self.play.player.hp <= 0:
+            return
+        if source.zone == "attached":
+            if target is None or target.zone == "bag":
+                self.play.switch_weapon(source.key[0])
+                self._change_part(source.key[1], False)
+            return
+        if source.zone == "slot":
+            slot = source.key[0]
+            if slot < 0 or not source.weapon_id:
+                return
+            if shift or target is not None and target.zone == "floor":
+                self.drop_weapon(slot)
+            elif target is not None and target.zone == "bag":
+                return
+            elif target is not None and target.zone == "slot" and target.key[0] in (0, 1) and slot in (0, 1):
+                keys = list(self.play.player.loadout)
+                first, second, _ = weapon_slots(self.play.player.loadout)
+                if first and second and first != second:
+                    a, b = keys.index(first), keys.index(second)
+                    keys[a], keys[b] = keys[b], keys[a]
+                    self.play.player.loadout = {key: self.play.player.loadout[key] for key in keys}
+            else:
+                self.activate_action(source.action)
+            return
+        if source.zone == "floor":
+            if target is not None and target.zone not in {"bag", "slot"}:
+                return
+            if source.action and source.action[0] == "gun":
+                slot = target.key[0] if target and target.zone == "slot" else None
+                if slot is not None and slot not in (0, 1, 2):
+                    return
+                self.take_gun(source.action[1], source.action[2], slot)
+            else:
+                self.activate_action(source.action, single=shift)
+            return
+        if source.zone == "bag":
+            key = source.key[1]
+            if key not in self.carried:
+                return
+            if shift or target is not None and target.zone == "floor":
+                self.activate_action(("put", None, key), single=shift)
+            elif target is not None and target.zone == "slot" and target.key[0] in (0, 1, 2):
+                if key in self.parts:
+                    self.play.switch_weapon(target.key[0])
+                    self._change_part(key, True)
+            else:
+                self.activate_action(source.action)

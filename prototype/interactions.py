@@ -56,10 +56,12 @@ def exchange_safehouse_weapon(simulation, facility):
 
     if equipped:
         simulation.cancel_reload()
+        simulation.inventory.stow_reserve(equipped)
         stash[key] = player.loadout.pop(player.active_weapon)
     else:
         stash.pop(key)
     if stored:
+        simulation.inventory.stow_reserve(stored)
         player.loadout[stored.spec.id] = stored
         player.active_weapon = stored.spec.id
     else:
@@ -81,6 +83,7 @@ def use_facility(simulation, facility, *, sabotage=False):
             from .weapons import WeaponState
             player.loadout = {"ar_a": WeaponState.ready(simulation.specs["ar_a"])}
             player.active_weapon, simulation.kit_available = "ar_a", False
+            simulation.inventory.stow_reserve(player.weapon)
             return "안전가옥 예비 무장 확보"
         return "안전가옥 · Shift+E: 무기 보관함"
     if key:

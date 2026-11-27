@@ -40,6 +40,8 @@ class InteractionTests(unittest.TestCase):
         guns = [(index, action) for index, (_, action) in enumerate(play.inventory.rows())
                 if action and action[0] == "gun"]
         self.assertEqual([action[2] for _, action in guns], ["ar_a", "ar_b"])
+        play.take_supplies()
+        self.assertFalse(play.player.loadout)
         play.inventory.activate(guns[1][0])
         self.assertIs(play.player.weapon, second)
         self.assertEqual(play.dropped, [(point, {"ar_a": first})])

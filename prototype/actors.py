@@ -21,6 +21,7 @@ class Actor:
     team: str = "enemy"
     armor: int = 0
     loadout: dict[str, "WeaponState"] = field(default_factory=dict)
+    inventory: dict[str, int] = field(default_factory=dict)
     active_weapon: str = ""
     equip_until: float = 0.0
     hurt_until: float = 0.0

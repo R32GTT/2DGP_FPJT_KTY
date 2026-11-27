@@ -87,6 +87,8 @@ class CampaignRoster:
                 spec = weapon(index) if callable(weapon) else weapon
                 actor.loadout = {spec.id: WeaponState.ready(spec)}
                 actor.active_weapon = spec.id
+                actor.inventory[f"ammo:{spec.ammo_type}"] = actor.weapon.reserve
+                actor.weapon.reserve = 0
                 self.actors.append(actor)
                 members.append(actor)
                 self.by_id[actor.id] = actor
