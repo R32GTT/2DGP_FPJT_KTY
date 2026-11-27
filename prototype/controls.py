@@ -15,6 +15,7 @@ class Controls:
         self.paused = False
         self.debug = False
         self.map_open = False
+        self.minimap_open = True
         self.inventory_open = False
         self.intel_open = False
 
@@ -53,6 +54,8 @@ class Controls:
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
                     self.inventory_open = self.intel_open = False
+                elif key == sdl2.SDLK_h:
+                    self.minimap_open = not self.minimap_open
                 elif key == sdl2.SDLK_i:
                     actions.append("collect_intel" if event.key.keysym.mod & sdl2.KMOD_SHIFT else "intel")
                 elif self.intel_open and key in (sdl2.SDLK_UP, sdl2.SDLK_DOWN):

@@ -234,7 +234,7 @@ class Renderer:
             draw_polygon(self.backend, points, (*color, round(208 * (1 - progress))))
 
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False,
-               inventory_view=None, intel_index=None):
+               inventory_view=None, intel_index=None, minimap_open=True):
         started = perf_counter()
         view = copy(camera)
         shake_x, shake_y = simulation.feedback.offset
@@ -373,7 +373,11 @@ class Renderer:
         floor = player.position.floor
         lights = tuple(simulation.light_sources(sky, floor, infrared=night_vision))
         candidates = []
+        threat_candidates = []
         for actor in (*simulation.guards, player):
+            brain = simulation.ai.brains.get(actor.id)
+            if brain is not None and not debug:
+                threat_candidates.append((actor, brain))
             if actor.position.floor != floor:
                 continue
             body_angle = actor.facing + BODY_FORWARD_OFFSET
@@ -382,12 +386,13 @@ class Renderer:
             center, _ = weapon_pose(actor)
             gun_bounds = self._rotated_bounds(center, weapon.spec.size_m, actor.facing) if weapon else body_bounds
             if view.visible(body_bounds) or view.visible(gun_bounds):
-                candidates.append((actor, body_angle, weapon, center, gun_bounds))
+                candidates.append((actor, body_angle, weapon, center, gun_bounds, brain))
         flash_left = player.blinded_until - simulation.time
         seen_enemies = {} if flash_left > 0 else self._enemy_visibility(
             world, player, [actor for actor, *_ in candidates if actor.team != player.team], sky, lights, night_vision)
         awareness = []
-        for actor, body_angle, weapon, center, gun_bounds in candidates:
+        visible_enemies = []
+        for actor, body_angle, weapon, center, gun_bounds, brain in candidates:
             alpha = 1.0 if actor.team == player.team else seen_enemies.get(actor.id, 0)
             if alpha == 0:
                 continue
@@ -414,7 +419,8 @@ class Renderer:
                                 weapon.spec.size_m[0] * view.scale, weapon.spec.size_m[1] * view.scale)
                 if alpha < 1:
                     gun.opacify(1.0)
-            brain = simulation.ai.brains.get(actor.id)
+            if brain and not debug and actor.hp > 0 and alpha >= 0.5:
+                visible_enemies.append((actor, brain))
             if (not map_open and brain and actor.hp > 0 and alpha >= 0.5
                     and (brain.radio.started_at is not None or brain.memory.recognition > 0)):
                 awareness.append((brain, x, y + max(12, 0.45 * view.scale)))
@@ -456,15 +462,18 @@ class Renderer:
             if alarm.until > simulation.time and view.visible(beacon):
                 pulse = 0.5 + 0.5 * math.sin(simulation.time * math.tau)
                 self._rect(view, beacon, (255, int(48 + 78 * pulse), 54))
-        for brain, x, y in awareness:
-            self._draw_awareness(brain, x, y, simulation.time)
+        if debug:
+            for brain, x, y in awareness:
+                self._draw_awareness(brain, x, y, simulation.time)
         for trace in simulation.combat.traces:
             color = (249, 225, 137) if trace.team == "player" else (230, 128, 92)
             pico.draw_line(*view.pico(*trace.start), *view.pico(*trace.end), *color)
-        if mouse is not None and player.hp > 0 and flash_left <= 0:
+        aim_point = None
+        if mouse is not None and not map_open and player.hp > 0 and flash_left <= 0:
             # 흔들리는 화면에서도 실제 조준한 월드 지점에 조준점을 함께 그린다.
             aim = camera.world(*mouse)
             x, y = view.pico(*aim)
+            aim_point = x, y
             weapon = simulation.player.weapon
             spread = weapon.spread_deg if weapon is not None else 0
             gap = max(4, math.dist(simulation.player.xy, aim) * view.scale * math.tan(math.radians(spread)))
@@ -480,7 +489,10 @@ class Renderer:
         self.hud.render(simulation, camera, paused=paused, debug=debug,
                         update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=map_open,
                         cache_count=len(self.map_images.cache), search_counts=search_counts,
-                        seen_enemies=seen_enemies, inventory_view=inventory_view, intel_index=intel_index)
+                        seen_enemies=seen_enemies, inventory_view=inventory_view, intel_index=intel_index,
+                        minimap_open=minimap_open, world_view=view, aim_point=aim_point,
+                        weapon_image=self.guns.get(player.weapon.spec.id) if player.weapon else None,
+                        visible_enemies=visible_enemies, threat_candidates=threat_candidates)
         self.last_draw_ms = (perf_counter() - started) * 1000
         pico.update_canvas()
 

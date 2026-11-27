@@ -3,20 +3,18 @@
 import ctypes
 from dataclasses import dataclass
 import math
-import os
 from itertools import chain
-from pathlib import Path
 from time import perf_counter
 
 import pico2d as pico
 
 from campaign.clock import world_clock
 from .geometry import Rect
-from .inventory import BAG_LIMIT, PICKUP_REACH
+from .inventory import BAG_LIMIT
 from .intelligence import OPERATION_NAMES
 from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
 from .weapons import STAGE_NAMES
-from .interactions import nearby_facility, nearby_road_control
+from .hud_theme import ACCENT, FONT_PATH, FONT_SIZES, PANEL, PANEL_EDGE, TEXT
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -46,20 +44,24 @@ class Label:
 class HUD:
     def __init__(self, backend):
         self.backend = backend
-        self.font_path = str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf")
-        self.fonts = {size: pico.load_font(self.font_path, size) for size in (13, 16, 24)}
+        self.font_path = str(FONT_PATH)
+        self.type = FONT_SIZES
+        self.fonts = {size: pico.load_font(self.font_path, size)
+                      for size in set(FONT_SIZES.values()) | {13, 16, 24}}
         self.scaled_fonts = {}
         self.text_scale = 1.0
         self.labels = {}
         self.next_update = 0.0
         self.next_debug_update = 0.0
-        self.message_simulation = None
-        self.last_message = ""
-        self.message_until = 0.0
         self.ai_rows = 0
         self._map_world = None
         self._map_batches = {}
         self._map_image = None
+        self._shown_weapon = None
+        self._weapon_card_until = 0.0
+        self._active_threats = set()
+        self._threat_exits = {}
+        self._threat_simulation = None
 
     def _draw_map_background(self, world, left, top, width, height):
         if world.map_background_path is None:
@@ -84,6 +86,8 @@ class HUD:
         cached = self.labels.get(key)
         if cached is not None and cached.style == style:
             return
+        if size not in self.fonts:
+            self.fonts[size] = pico.load_font(self.font_path, size)
         width, height = ctypes.c_int(), ctypes.c_int()
         if self.backend.TTF_SizeUTF8(self.fonts[size].font, text.encode("utf-8"),
                                      ctypes.byref(width), ctypes.byref(height)) < 0:
@@ -282,102 +286,142 @@ class HUD:
             self.text("search_counts", 24, legend_y - 20)
             self.text("search_legend", 24, legend_y - 38)
 
-    def _draw_gameplay(self, simulation):
+    def _draw_weapon_card(self, simulation, now, weapon_image):
         player, weapon = simulation.player, simulation.player.weapon
-        day, time = world_clock(simulation.lighting_time).split()
-        self.label("game_clock", time if simulation.equipment_range else f"{time}  ·  {int(day[1:])}일차", 16)
-        self.label("game_vitals", f"HP {player.hp:.0f}   ·   방어 {player.armor}", 16)
+        key = (id(simulation), player.active_weapon)
+        if key != self._shown_weapon:
+            self._shown_weapon = key
+            self._weapon_card_until = now + 2.6
+        if now >= self._weapon_card_until:
+            return
+        x, y, width, height = 16, 16, 256, 80
+        pico.draw_rectangle(x, y, x + width, y + height, *PANEL, 222, filled=True)
+        pico.draw_rectangle(x, y, x + width, y + height, *PANEL_EDGE)
+        pico.draw_rectangle(x, y + height - 3, x + 45, y + height, *ACCENT, filled=True)
+        pico.draw_rectangle(x + 12, y + 13, x + 98, y + 65, 29, 43, 47, 220, filled=True)
+        if weapon and weapon_image:
+            weapon_image.draw(x + 55, y + 39, 74, 26)
+        self.label("game_weapon", weapon.spec.name if weapon else "비무장", self.type["weapon"], TEXT)
+        self.text("game_weapon", x + 111, y + 52)
+        muzzle = weapon.part("muzzle") if weapon else None
+        suppressed = muzzle is not None and muzzle.id == "suppressor"
+        self.label("game_suppressed", "SUPPRESSED" if suppressed else "", self.type["detail"], ACCENT)
+        if suppressed:
+            self.text("game_suppressed", x + 111, y + 26)
 
-        left, base, width = 12, 12, 236
-        show_reload = weapon is not None and (weapon.reloading or weapon.stage > 0)
-        bottom = base + 32 if show_reload else base
-        x = left + 12
-        inventory = simulation.inventory
-        throwable = inventory.active_throwable
-        top = bottom + (156 if throwable else 134)
-        pico.draw_rectangle(left, base, left + width, top, 15, 24, 27, 218, filled=True)
-        if throwable:
-            self.label("game_throwable", f"G  {inventory.item(throwable)[0]} ×{inventory.carried[throwable]}", 13)
-            self.text("game_throwable", x, bottom + 138)
-        lamp = {"off": "꺼짐", "white": "백색", "infrared": "IR"}[player.lamp]
-        if player.lamp == "infrared" and not simulation.sky.infrared:
-            lamp = "IR 주간"
-        optics = f"N 야투 {'켜짐' if player.night_vision else '꺼짐'} · L {lamp} · K 레이저 {'켜짐' if player.ir_laser else '꺼짐'}"
-        self.label("optics", optics, 13)
-        self.text("optics", x, bottom + 117)
-        self.text("game_clock", x, bottom + 94)
-        self.text("game_vitals", x, bottom + 68)
-        pico.draw_rectangle(x, bottom + 52, x + width - 24, bottom + 55, 57, 68, 64, filled=True)
+    def _draw_player_health(self, player, view):
+        x, y = view.pico(*player.xy)
+        y += max(34, 0.58 * view.scale)
+        if not -100 < x < view.width + 100 or y > view.height + 20:
+            return
+        width = 94
+        self.label("game_health", f"{max(0, player.hp):.0f}/100", self.type["detail"], TEXT)
+        self.text("game_health", x - self.labels["game_health"].width / 2, y + 12)
+        pico.draw_rectangle(x - width / 2 - 2, y - 2, x + width / 2 + 2, y + 7,
+                            12, 21, 25, 220, filled=True)
+        pico.draw_rectangle(x - width / 2, y, x + width / 2, y + 5, 83, 42, 45, filled=True)
         if player.hp > 0:
-            health = min(1, player.hp / 100)
-            color = (227, 122, 106) if player.hp <= 25 else (118, 215, 191)
-            pico.draw_rectangle(x, bottom + 52, x + (width - 24) * health, bottom + 55, *color, filled=True)
+            pico.draw_rectangle(x - width / 2, y, x - width / 2 + width * min(1.0, player.hp / 100), y + 5,
+                                244, 95, 89, filled=True)
 
-        self.label("game_weapon", weapon.spec.name if weapon else "비무장", 16)
-        self.text("game_weapon", x, bottom + 33)
-        if weapon:
-            self.label("game_mode", "AUTO" if weapon.automatic else "SEMI", 13, (168, 187, 180))
-            self.label("game_ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}", 24)
-            self.text("game_mode", x, bottom + 15)
-            self.text("game_ammo", x + 72, bottom + 25)
-        if show_reload:
-            self._draw_gameplay_reload(weapon, x, base, width - 24)
+    def _draw_ammo(self, weapon, aim_point, view):
+        if weapon is None or aim_point is None:
+            return
+        x = max(56, min(view.width - 56, aim_point[0]))
+        y = max(68, min(view.height - 9, aim_point[1]))
+        self.label("game_ammo", f"{weapon.magazine + int(weapon.chambered):02d}/{weapon.reserve:02d}",
+                   self.type["value"], TEXT)
+        text_width = self.labels["game_ammo"].width
+        self.text("game_ammo", x - text_width / 2, y - 30)
+        self._draw_reload_ribbon(weapon, x - 42, y - 50, 84)
 
-    def _draw_gameplay_reload(self, weapon, x, y, width):
+    @staticmethod
+    def _draw_reload_ribbon(weapon, x, y, width):
         stages = weapon.spec.reload_stages
-        phase = STAGE_NAMES[stages[weapon.stage].id]
-        status = "재장전" if weapon.reloading else "R 재개"
-        active_color = (241, 196, 112)
-        self.label("game_reload", f"{phase}  ·  {status}", 13, active_color)
-        self.text("game_reload", x, y + 21)
-        gap = 4
+        gap = 3
         segment = (width - gap * (len(stages) - 1)) / len(stages)
-        for index, stage in enumerate(stages):
+        colors = ((238, 90, 80), (241, 173, 75), (111, 214, 145))
+        for index in range(len(stages)):
             left = x + index * (segment + gap)
-            track = (57, 68, 64)
-            if index == weapon.stage:
-                track = (108, 88, 63)
-            elif index < weapon.stage:
-                track = (118, 215, 191)
-            pico.draw_rectangle(left, y + 8, left + segment, y + 11, *track, filled=True)
-            if index == weapon.stage and weapon.stage_elapsed > 0:
-                progress = weapon.stage_elapsed / weapon.reload_duration(index)
-                pico.draw_rectangle(left, y + 8, left + segment * progress, y + 11, *active_color, filled=True)
+            pico.draw_rectangle(left, y, left + segment, y + 4, 62, 75, 76, filled=True)
+            if weapon.reloading or weapon.stage:
+                progress = (1.0 if index < weapon.stage else
+                            weapon.stage_elapsed / weapon.reload_duration(index)
+                            if weapon.reloading and index == weapon.stage else 0.0)
+                if progress:
+                    pico.draw_rectangle(left, y, left + segment * progress, y + 4, *colors[index], filled=True)
 
-    def _track_message(self, simulation, now):
-        if simulation is not self.message_simulation:
-            self.message_simulation = simulation
-            self.last_message = simulation.message
-            self.message_until = now + 3.0
-        elif simulation.message != self.last_message:
-            self.last_message = simulation.message
-            self.message_until = now + 3.0
+    def _draw_enemy_awareness(self, visible_enemies, view):
+        for actor, brain in visible_enemies:
+            x, y = view.pico(*actor.xy)
+            y += max(30, 0.52 * view.scale)
+            if y > view.height + 10:
+                continue
+            level = max(0.0, min(1.0, max(brain.memory.recognition, brain.memory.suspicion)))
+            pico.draw_rectangle(x - 34, y, x + 34, y + 5, 17, 25, 28, 210, filled=True)
+            if level:
+                color = (round(214 + 41 * level), round(173 - 113 * level), round(104 - 43 * level))
+                pico.draw_rectangle(x - 33, y + 1, x - 33 + 66 * level, y + 4, *color, filled=True)
 
-    def _draw_gameplay_notices(self, simulation, center, now, *, paused, map_open):
-        prompt = not paused and not map_open and simulation.player.hp > 0 and "prompt" in self.labels
-        if prompt:
-            self._draw_notice("prompt", center, 29)
+    def _draw_threats(self, simulation, view, threat_candidates):
+        if simulation is not self._threat_simulation:
+            self._threat_simulation = simulation
+            self._active_threats.clear()
+            self._threat_exits.clear()
+        player_x, player_y = view.pico(*simulation.player.xy)
+        shapes, active = [], set()
+        ring = 0
 
-        if simulation.respawn_target is not None:
-            message = "안전가옥으로 복귀 중"
-        elif simulation.respawn_selecting:
-            return
-        elif simulation.player.hp <= 0:
-            message = ("전투 불능  ·  Enter로 시험장 초기화" if simulation.equipment_range
-                       else "전투 불능  ·  Enter로 안전가옥 복귀")
-        elif now < self.message_until:
-            message = self.last_message
-        else:
-            return
-        self.label("game_notice", message, 16)
-        if message:
-            self._draw_notice("game_notice", center, 69 if prompt else 29)
+        def triangle(angle, radius, length, half_width, color):
+            ux, uy = math.cos(angle), math.sin(angle)
+            tx, ty = -uy, ux
+            points = ((player_x + ux * (radius + length), player_y + uy * (radius + length)),
+                      (player_x + ux * radius + tx * half_width, player_y + uy * radius + ty * half_width),
+                      (player_x + ux * radius - tx * half_width, player_y + uy * radius - ty * half_width))
+            shapes.append((tuple((px, view.height - py) for px, py in points), color))
 
-    def _draw_notice(self, key, center, y):
-        half_width = self.labels[key].width / 2
-        pico.draw_rectangle(center - half_width - 12, y - 15, center + half_width + 12, y + 15,
-                            15, 24, 27, 218, filled=True)
-        self.text(key, center - half_width, y)
+        for actor, brain in threat_candidates:
+            if actor.hp <= 0 or actor.position.floor != simulation.player.position.floor:
+                continue
+            memory = brain.memory
+            enemy_x, enemy_y = view.pico(*actor.xy)
+            angle = math.atan2(enemy_y - player_y, enemy_x - player_x)
+            detected = memory.recognition >= 1.0 or simulation.time < brain.combat.combat_alert_until
+            if detected:
+                if actor.id in self._active_threats and actor.id not in self._threat_exits:
+                    self._threat_exits[actor.id] = (simulation.time, angle, ring % 3)
+                continue
+            if not memory.exposed:
+                continue
+            active.add(actor.id)
+            level = max(0.0, min(1.0, memory.recognition))
+            radius = 47 + (ring % 3) * 11
+            ring += 1
+            color = (round(243 + 12 * level), round(205 - 135 * level), round(112 - 48 * level))
+            arc_alpha = round(220 * max(0.0, 1.0 - level / 0.55))
+            if arc_alpha:
+                for step in range(4):
+                    start = angle - 0.43 + step * 0.215
+                    end = start + 0.215
+                    points = tuple((player_x + math.cos(direction) * distance,
+                                    view.height - player_y - math.sin(direction) * distance)
+                                   for direction, distance in ((start, radius), (end, radius),
+                                                               (end, radius + 3), (start, radius + 3)))
+                    shapes.append(((points[0], points[1], points[2], points[0], points[2], points[3]),
+                                   (*color, arc_alpha)))
+            triangle(angle, radius - 2, 8 + 42 * level, 3 + 13 * level,
+                     (*color, round(230 * min(1.0, level / 0.4))))
+        self._active_threats = active
+        for actor_id, (started, angle, ring_index) in tuple(self._threat_exits.items()):
+            elapsed = simulation.time - started
+            if elapsed >= 1.0:
+                del self._threat_exits[actor_id]
+                continue
+            opacity = (0.4 + 0.6 * abs(math.cos(elapsed * math.tau * 2)) if elapsed < 0.5
+                       else 2 * (1 - elapsed))
+            triangle(angle, 47 + ring_index * 11, 50, 16, (255, 66, 60, round(235 * opacity)))
+        if shapes:
+            MapBatch(self.backend, shapes).draw(self.backend)
 
     def _draw_respawn_options(self, simulation, camera, point):
         from .simulation import RESPAWN_PAGE_SIZE
@@ -397,46 +441,16 @@ class HUD:
             self.text(key, camera.width - 350, camera.height - 168 - number * 32)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
-               cache_count=0, search_counts=None, seen_enemies=(), inventory_view=None, intel_index=None):
+               cache_count=0, search_counts=None, seen_enemies=(), inventory_view=None, intel_index=None,
+               minimap_open=True, world_view=None, aim_point=None, weapon_image=None,
+               visible_enemies=(), threat_candidates=()):
         self._update_text_scale(camera)
         now = perf_counter()
-        self._track_message(simulation, now)
-        if now >= self.next_update:
+        if map_open and now >= self.next_update:
             self.next_update = now + 0.2
-            facility_here = nearby_facility(simulation.world, simulation.player.xy)
-            prompt = f"[E] {facility_here['name']} 사용" if facility_here else ""
-            if simulation.equipment_range and math.dist(simulation.player.xy, simulation.world.crate) <= PICKUP_REACH:
-                prompt = "[Tab] 시험장 보급함"
-            if facility_here and facility_here["kind"] == "safehouse":
-                stored = simulation.safehouse_stash.get(facility_here["id"])
-                action = "무기 보관" if simulation.player.weapon else "보관함 비어 있음"
-                if stored:
-                    action = f"{stored.spec.name} {'교체' if simulation.player.weapon else '회수'}"
-                prompt = f"[Shift+E] {action} · [Tab] 보관함"
-                if simulation.kit_available and not simulation.player.loadout:
-                    prompt = f"[E] 예비 키트 · {prompt}"
-            elif facility_here and facility_here["kind"] == "warehouse":
-                damage = simulation.campaign.simulation.state.facilities[facility_here["campaign_id"]].damage
-                prompt = (f"[E] 물자 확보 · [Shift+E] 파괴 공작 ({damage}%)" if damage < 100
-                          else "물류창고 무력화")
-            if (simulation.presence and facility_here and facility_here["kind"] in {"warehouse", "hq"}
-                    and simulation.campaign.simulation.state.facilities[facility_here["campaign_id"]].damage < 100):
-                prompt += " · [Shift+I] 작전 기록"
-            control = nearby_road_control(simulation.world, simulation.player.xy)
-            if control:
-                road = simulation.campaign.simulation.state.roads[control["road"]]
-                prompt = f"[E] {'수송로 개방' if road.blocked else '수송로 차단'}"
-            if simulation.transports.nearby_cargo(simulation.player) is not None:
-                prompt = "[Tab] 수송대 화물"
-            self.label("prompt", prompt, 16, (241, 211, 135))
             map_title = ("장비 시험장" if simulation.equipment_range else
                          simulation.stack_title or simulation.world.data.get("name", "지역 지도"))
-            map_help = ("P 시작·재개 · F2 다시 보기 · F3 다음 배치 · M 닫기" if simulation.stack_drill
-                        else "M 닫기 · 지도에서도 세계 시간은 진행됨 · F1 개발 정보")
-            if simulation.presence:
-                map_help = "M 닫기 · I 정보 노트 · 지도에서도 세계 시간 진행"
             self.label("map_title", map_title, 24, (118, 215, 191))
-            self.label("map_help", map_help, 13)
             self.label("map_size", f"{simulation.world.bounds.w:.0f} × {simulation.world.bounds.h:.0f} m", 13)
             for facility in simulation.world.facilities:
                 self.label("site/" + facility["id"], facility["name"], 13)
@@ -446,36 +460,28 @@ class HUD:
                                  simulation.world.territories and facility["kind"] == "warehouse"):
                     status += f" · 보급 {campaign.inventory['supplies']}"
                 self.label("site_info/" + facility["id"], f"{facility['name']} · {status}", 13)
-        self.label("paused", "PAUSED — P 키로 재개" if paused else "", 24)
         width, height = camera.width, camera.height
         if debug:
             self._update_debug(simulation, camera, now, update_ms, draw_ms, cache_count)
             self._draw_debug(simulation, camera, search_counts)
         else:
-            self._draw_gameplay(simulation)
-            self._draw_gameplay_notices(simulation, width / 2, now, paused=paused, map_open=map_open)
-        if paused and (simulation.ai_scenario or simulation.world.data.get("training_facility")):
-            self.panel(width / 2 - 106, height - 63, 212, 45)
-            self.text("paused", width / 2 - 92, height - 40)
-        elif paused:
-            self.panel(width / 2 - 190, height / 2 - 27, 380, 54)
-            self.text("paused", width / 2 - 160, height / 2)
-        if debug and "prompt" in self.labels:
-            self.panel(width / 2 - 150, 168, 300, 36)
-            self.text("prompt", width / 2 - 132, 186)
-        if debug or not map_open:
+            if not map_open and inventory_view is None:
+                self._draw_player_health(simulation.player, world_view or camera)
+                self._draw_enemy_awareness(visible_enemies, world_view or camera)
+                if simulation.player.hp > 0:
+                    self._draw_threats(simulation, world_view or camera, threat_candidates)
+                    self._draw_ammo(simulation.player.weapon, aim_point, world_view or camera)
+                self._draw_weapon_card(simulation, now, weapon_image)
+        if paused:
+            pico.draw_rectangle(width - 43, height - 39, width - 38, height - 21,
+                                *ACCENT, filled=True)
+            pico.draw_rectangle(width - 33, height - 39, width - 28, height - 21,
+                                *ACCENT, filled=True)
+        if (debug or minimap_open) and not map_open:
             self._minimap(simulation, camera, debug, seen_enemies)
         if map_open:
             self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused,
                              intel_index=intel_index)
-        territory = simulation.world.territory_at(simulation.player.xy)
-        alarm = simulation.alarms.get(territory)
-        if territory not in simulation.campaign.simulation.state.regions:
-            alarm = max((entry for entry in simulation.alarms.values()
-                         if entry.near(simulation.player.xy)), key=lambda entry: entry.until, default=None)
-        if alarm is not None and alarm.until > simulation.time:
-            self.label("region_alarm", f"지역 경보  ·  {math.ceil(alarm.until - simulation.time)}초", 16, (255, 133, 107))
-            self._draw_notice("region_alarm", width / 2, height - (80 if paused else 28))
         if inventory_view is not None:
             self._draw_inventory(camera, simulation.inventory.bag_weight, *inventory_view)
 
@@ -493,45 +499,70 @@ class HUD:
             key = f"inventory_row_{line}"
             self.label(key, text, 13)
             self.text(key, left + 18, y)
-        self.label("inventory_keys", "↑↓ / 휠 선택    Enter 사용    Tab 닫기", 13)
-        self.text("inventory_keys", left + 18, top - 351)
 
     def _minimap(self, simulation, camera, debug=False, seen_enemies=()):
-        width, height = 180, 126
-        x0, y0 = (camera.width - 196, 12) if debug else (12, camera.height - height - 12)
-        self.panel(x0, y0, width, height)
-        bounds = simulation.world.bounds
-        scale = min((width - 16) / bounds.w, (height - 16) / bounds.h)
+        width, height = 202, 146
+        x0, y0 = ((camera.width - width - 16, 16) if debug else
+                  (16, camera.height - height - 16))
+        pico.draw_rectangle(x0, y0, x0 + width, y0 + height, *PANEL, 222, filled=True)
+        left, bottom, map_width, map_height = x0 + 4, y0 + 4, width - 8, height - 8
+        pico.draw_rectangle(left, bottom, left + map_width, bottom + map_height,
+                            29, 44, 47, filled=True)
+        player = simulation.player
+        world = simulation.world
+        scale = 3.0
+        center_x = round(player.position.x * 4) / 4
+        center_y = round(player.position.y * 4) / 4
+        bounds = Rect(center_x - map_width / (2 * scale), center_y - map_height / (2 * scale),
+                      map_width / scale, map_height / scale)
 
         def point(x, y):
-            return x0 + 8 + (x - bounds.x) * scale, y0 + height - 8 - (y - bounds.y) * scale
+            return (left + map_width / 2 + (x - center_x) * scale,
+                    bottom + map_height / 2 - (y - center_y) * scale)
 
-        world = simulation.world
-        canvas_height = pico.get_canvas_height()
-        layout = x0, y0, scale, canvas_height
-        background = self._draw_map_background(world, *point(bounds.x, bounds.y),
-                                               bounds.w * scale, bounds.h * scale)
-        if not background and world.facilities:
-            facilities = ((Rect(*facility["rect"]), (116, 133, 108)) for facility in world.facilities)
-            terrain = chain(self._field_terrain(world), facilities)
-            self._draw_map_batch("mini terrain", world, layout, map_rectangles(terrain, point, canvas_height))
-        else:
-            terrain = ((collider.rect, (93, 111, 94)) for collider in world.geometry.objects.values())
-            self._draw_map_batch("mini obstacles", world, (*layout, world.revision),
-                                 map_rectangles(terrain, point, canvas_height))
-        if not background:
-            self._draw_map_batch("mini roads", world, layout, map_roads(world, point, scale, canvas_height, ()))
-        for actor in [*simulation.guards, simulation.player]:
-            if actor.hp > 0 and (actor.team == "player" or debug or actor.id in seen_enemies):
-                x, y = point(*actor.xy)
-                color = (108, 213, 197) if actor.team == "player" else (218, 131, 100)
-                pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *color, filled=True)
-        if world.campaign_map and (debug or not simulation.presence):
-            for convoy in simulation.campaign.convoys(simulation.time):
-                if not bounds.x <= convoy.x <= bounds.right or not bounds.y <= convoy.y <= bounds.bottom:
-                    continue
-                x, y = point(convoy.x, convoy.y)
-                pico.draw_rectangle(x - 2, y - 1, x + 2, y + 1, 221, 186, 100, filled=True)
+        clip = self.backend.SDL_Rect(round(left), round(camera.height - bottom - map_height),
+                                     round(map_width), round(map_height))
+        self.backend.SDL_RenderSetClipRect(self.backend.renderer, ctypes.byref(clip))
+        try:
+            if world.map_background_path is not None:
+                self._draw_map_background(world, *point(world.bounds.x, world.bounds.y),
+                                          world.bounds.w * scale, world.bounds.h * scale)
+            else:
+                layout = center_x, center_y, world.revision, camera.height
+
+                def geometry():
+                    landmarks = ((layer.rect, layer.color) for layer in world.visible_layers(bounds)
+                                 if layer.role in {"water", "floor", "roof", "pavement"})
+                    yield from map_rectangles(landmarks, point, camera.height)
+                    for road in world.roads:
+                        ax, ay = road["start"]
+                        bx, by = road["end"]
+                        if max(ax, bx) < bounds.x or min(ax, bx) > bounds.right or max(ay, by) < bounds.y or min(ay, by) > bounds.bottom:
+                            continue
+                        start, end = point(ax, ay), point(bx, by)
+                        dx, dy = end[0] - start[0], end[1] - start[1]
+                        half = max(1.0, road.get("width", 4) * scale / 2)
+                        factor = half / max(1e-8, math.hypot(dx, dy))
+                        nx, ny = -dy * factor, dx * factor
+                        a, b = (start[0] + nx, camera.height - start[1] - ny), (end[0] + nx, camera.height - end[1] - ny)
+                        c, d = (end[0] - nx, camera.height - end[1] + ny), (start[0] - nx, camera.height - start[1] + ny)
+                        yield (a, b, c, a, c, d), (84, 108, 108)
+                    obstacles = ((collider.rect, (67, 81, 79) if collider.active else (98, 110, 105))
+                                 for collider in world.visible_colliders(bounds)
+                                 if collider.kind not in {"terrain", "tree"})
+                    yield from map_rectangles(obstacles, point, camera.height)
+
+                self._draw_map_batch("mini local", world, layout, geometry())
+            for actor in simulation.guards:
+                if actor.hp > 0 and (debug or actor.id in seen_enemies) and bounds.segment_entry(actor.xy, actor.xy) is not None:
+                    x, y = point(*actor.xy)
+                    pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, 237, 126, 104, filled=True)
+            x, y = point(*player.xy)
+            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, 107, 226, 202, filled=True)
+            pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, 21, 42, 43, filled=True)
+        finally:
+            self.backend.SDL_RenderSetClipRect(self.backend.renderer, None)
+        pico.draw_rectangle(left, bottom, left + map_width, bottom + map_height, 78, 108, 106)
 
     def _draw_map_batch(self, name, world, layout, triangles):
         if self._map_world is not world:
@@ -604,7 +635,8 @@ class HUD:
             self.label("respawn_help", f"← → 페이지 {simulation.respawn_page + 1}/{simulation.respawn_pages}"
                        " · 1~4 선택 · C 닫기", 13)
         self.text("respawn_title" if selecting else "map_title", 84, camera.height - 111)
-        self.text("respawn_help" if selecting else "map_help", 84, camera.height - 140)
+        if selecting:
+            self.text("respawn_help", 84, camera.height - 140)
         world = simulation.world
         generated = bool(world.data.get("generation"))
         notes_open = intel_index is not None and generated and not selecting
