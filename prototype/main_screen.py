@@ -21,6 +21,7 @@ ITEMS = (("new_game", "새 게임"), ("continue", "이어하기"),
 ITEM_CENTERS = (450, 600, 750, 900)
 MENU_IDLE_SECONDS = 8.0
 FRAME_SECONDS = 1 / 60
+TITLE_FADE_END_SECONDS = 2.65
 RED_PULSE_SECONDS = 5.2
 RED_MIN_OPACITY = 0.08
 RED_MAX_OPACITY = 0.55
@@ -92,9 +93,13 @@ class MainScreen:
     def handle(self, event, now):
         if event.type == sdl2.SDL_QUIT:
             return "quit"
+        if now - self.started < TITLE_FADE_END_SECONDS:
+            if event.type == sdl2.SDL_MOUSEMOTION:
+                self.mouse = event.motion.x, event.motion.y
+            return None
         if event.type == sdl2.SDL_MOUSEMOTION:
             point = event.motion.x, event.motion.y
-            if abs(point[0] - self.mouse[0]) + abs(point[1] - self.mouse[1]) >= 4:
+            if point != self.mouse:
                 self.mouse = point
                 self._wake(now, mouse=True)
             hit = self._hit(*point)
@@ -149,7 +154,7 @@ class MainScreen:
         steady = RED_MIN_OPACITY + (RED_MAX_OPACITY - RED_MIN_OPACITY) * slow_pulse
         self.red_light.opacify(min(1.0, steady * _smooth(0.25, 1.3, elapsed) + 0.92 * first_flash))
         self.red_light.draw(width / 2, height / 2, width, height)
-        self.title.opacify(_smooth(0.95, 2.65, elapsed))
+        self.title.opacify(_smooth(0.95, TITLE_FADE_END_SECONDS, elapsed))
         self.title.draw(width / 2, height / 2, width, height)
         if self.menu_opacity > 0.01:
             alpha = round(255 * self.menu_opacity)
@@ -242,6 +247,7 @@ def run_frontend(*, frames=0):
                 setup.close()
                 setup = None
                 screen.reset()
+                screen.started -= TITLE_FADE_END_SECONDS
                 screen.menu_requested = True
             elif action == "settings":
                 screen.show_notice("설정 화면은 다음 작업에서 제작합니다")
