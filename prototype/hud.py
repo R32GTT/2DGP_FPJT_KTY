@@ -43,6 +43,7 @@ class Label:
     height: int
     raster_size: int = 0
     image: pico.Image | None = None
+    opacity: int = 255
 
 
 class HUD:
@@ -140,7 +141,7 @@ class HUD:
             self.scaled_fonts.clear()
             self.text_scale = bucket
 
-    def text(self, key, x, y):
+    def text(self, key, x, y, *, opacity=255):
         backend = self.backend
         label = self.labels[key]
         text, size, color = label.style
@@ -159,7 +160,11 @@ class HUD:
             if not texture:
                 raise RuntimeError("HUD 텍스처 생성 실패")
             backend.SDL_SetTextureScaleMode(texture, backend.SDL_ScaleModeLinear)
-            label.image, label.raster_size = pico.Image(texture), raster_size
+            label.image, label.raster_size, label.opacity = pico.Image(texture), raster_size, 255
+
+        if opacity != label.opacity:
+            backend.SDL_SetTextureAlphaMod(label.image.texture, opacity)
+            label.opacity = opacity
         destination = backend.SDL_FRect(x, pico.get_canvas_height() - y - label.height / 2,
                                         label.width, label.height)
         backend.SDL_RenderCopyF(backend.renderer, label.image.texture, None, destination)

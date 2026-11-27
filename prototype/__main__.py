@@ -2,6 +2,7 @@
 
 import argparse
 import math
+import sys
 from pathlib import Path
 from time import perf_counter, sleep
 
@@ -18,7 +19,8 @@ MAX_SIMULATION_BACKLOG_S = 0.1
 EQUIPMENT_RANGE_SCENE = DEFAULT_SCENE.with_name("ai_facility.json")
 
 
-def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_open=False):
+def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_open=False,
+               manage_canvas=True):
     import pico2d
     from .camera import CANVAS_SIZE, PlayCamera
     from .controls import Controls
@@ -27,7 +29,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
     from .respawn_ui import hit_respawn_map
     from .map_navigation import RESPAWN_SIDEBAR
 
-    pico2d.open_canvas(*CANVAS_SIZE, sync=True)
+    if manage_canvas:
+        pico2d.open_canvas(*CANVAS_SIZE, sync=True)
     renderer = None
     try:
         renderer = Renderer(simulation.world)
@@ -300,10 +303,18 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             simulation.world.chunks.close()
         if renderer is not None:
             renderer.close()
-        pico2d.close_canvas()
+        if manage_canvas:
+            pico2d.close_canvas()
 
 
 def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        from .main_screen import run_frontend
+
+        run_frontend()
+        return
     parser = argparse.ArgumentParser(description="그림 맵·미터 좌표·기초 AI·발사·군수 연결 검증 목업")
     scene_options = parser.add_mutually_exclusive_group()
     scene_options.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
