@@ -171,10 +171,10 @@ class PlaySimulation:
         elif stack_drill:
             source = Actor("stack_drill_sound", Position(*stack_setup["sound"]), team="player")
             self.events.emit("noise", self.time, source, radius=30, strength=0.8, reason="gunshot")
-            self.message = f"{self.stack_title} · P 시작"
+            self.message = f"{self.stack_title} · Esc 메뉴에서 시작"
             self.ai_hint = "M 평면도 · F2 다시 보기 · F3 다음 배치 · 집결 시 자동 일시 정지"
         elif self.world.data.get("training_facility"):
-            self.message = "실내 AI 검증 · P 시작 · F2 재시작"
+            self.message = "실내 AI 검증 · Esc 메뉴에서 시작 · F2 재시작"
             action_hint = "F 문 사용"
             if drill:
                 action_hint = "F3 실내 수색 훈련"

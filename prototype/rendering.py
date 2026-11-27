@@ -237,7 +237,7 @@ class Renderer:
             draw_polygon(self.backend, points, (*color, round(208 * (1 - progress))))
 
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False,
-               inventory_view=None, intel_index=None, minimap_open=True, map_navigation=None):
+               inventory_view=None, intel_index=None, minimap_open=True, map_navigation=None, present=True):
         started = perf_counter()
         cursor_visible = inventory_view is not None or map_open
         if cursor_visible != self.cursor_visible:
@@ -502,7 +502,8 @@ class Renderer:
                         visible_enemies=visible_enemies, threat_candidates=threat_candidates,
                         map_navigation=map_navigation, weapon_images=self.guns)
         self.last_draw_ms = (perf_counter() - started) * 1000
-        pico.update_canvas()
+        if present:
+            pico.update_canvas()
 
     def close(self):
         self.hud.close()

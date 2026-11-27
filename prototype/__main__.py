@@ -20,7 +20,7 @@ EQUIPMENT_RANGE_SCENE = DEFAULT_SCENE.with_name("ai_facility.json")
 
 
 def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_open=False,
-               manage_canvas=True, settings=None):
+               manage_canvas=True, settings=None, current_slot=None):
     import pico2d
     from .camera import CANVAS_SIZE, PlayCamera
     from .controls import Controls
@@ -29,6 +29,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
     from .respawn_ui import hit_respawn_map
     from .map_navigation import RESPAWN_SIDEBAR
     from .settings import apply_display, binding_name, load_settings
+    from .pause_screen import run_pause
 
     if manage_canvas:
         pico2d.open_canvas(*CANVAS_SIZE, sync=True)
@@ -36,6 +37,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
     import importlib
     backend = importlib.import_module("pico2d.pico2d")
     renderer = None
+    exit_destination = None
     try:
         apply_display(backend, settings.window_mode, settings.window_size)
         renderer = Renderer(simulation.world, settings)
@@ -68,6 +70,38 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             started = perf_counter()
             elapsed, previous = min(MAX_SIMULATION_BACKLOG_S, started - previous), started
             actions = controls.poll(camera, respawn_selecting=simulation.respawn_selecting)
+            if controls.pause_requested:
+                renderer.render(simulation, camera, debug=controls.debug, paused=False,
+                                map_open=controls.map_open, minimap_open=controls.minimap_open,
+                                map_navigation=controls.map_navigation, present=False)
+                result, loaded, current_slot = run_pause(
+                    backend, settings, simulation, current_slot, initial_page=controls.pause_page)
+                controls.pause_requested = False
+                controls.pause_page = "menu"
+                if result in ("menu", "quit"):
+                    exit_destination = result
+                    controls.running = False
+                    break
+                if loaded is not None:
+                    replacement = Renderer(loaded.world, settings)
+                    renderer.close()
+                    if simulation.world.chunks:
+                        simulation.world.chunks.close()
+                    renderer, simulation = replacement, loaded
+                    if simulation.world.chunks:
+                        simulation.world.chunks.start_prefetch()
+                    camera.follow(simulation.player.xy)
+                    controls.map_open = controls.inventory_open = controls.intel_open = False
+                    controls.map_navigation.reset()
+                    inventory_layout = None
+                    intel_cursor = 0
+                controls.paused = False
+                controls.keys.clear()
+                controls.buttons.clear()
+                controls.firing = controls.aiming = controls.trigger_pending = False
+                previous = frame_deadline = perf_counter()
+                accumulator = 0.0
+                continue
             if simulation.respawn_selecting:
                 for mouse in controls.map_clicks:
                     hit = hit_respawn_map(simulation, controls.map_navigation,
@@ -80,16 +114,16 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         else:
                             simulation.change_respawn_page(value)
             for action in actions:
-                if action in {"save", "load", "quick_save", "quick_load"}:
+                if action in {"quick_save", "quick_load"}:
                     try:
                         if not simulation.presence:
                             raise CampaignSaveError("저장·불러오기는 절차 생성 월드에서 사용하세요")
-                        quick = action.startswith("quick_")
-                        slot = QUICK_SAVE if quick else DEFAULT_SAVE
-                        if action in {"save", "quick_save"}:
+                        slot = QUICK_SAVE
+                        if action == "quick_save":
                             save_game(simulation, slot)
-                            load_key = binding_name(settings.bindings["quick_load" if quick else "load"])
-                            simulation.message = f"{'빠른' if quick else '월드'} 저장 완료 · {load_key} 불러오기"
+                            current_slot = slot
+                            load_key = binding_name(settings.bindings["quick_load"])
+                            simulation.message = f"빠른 저장 완료 · {load_key} 불러오기"
                         else:
                             loaded = load_game(slot)
                             replacement = Renderer(loaded.world, settings)
@@ -97,6 +131,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             if simulation.world.chunks:
                                 simulation.world.chunks.close()
                             renderer, simulation = replacement, loaded
+                            current_slot = slot
                             if simulation.world.chunks:
                                 simulation.world.chunks.start_prefetch()
                             controls.keys.clear()
@@ -104,8 +139,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             controls.inventory_open = False
                             controls.intel_open = False
                             intel_cursor = 0
-                            if not quick:
-                                controls.paused = True
+                            camera.follow(simulation.player.xy)
                     except CampaignSaveError as error:
                         simulation.message = str(error)
                     previous, elapsed, accumulator = perf_counter(), 0.0, 0.0
@@ -310,6 +344,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
             renderer.close()
         if manage_canvas:
             pico2d.close_canvas()
+    return exit_destination or ("quit" if not controls.running else None)
 
 
 def main(argv=None):

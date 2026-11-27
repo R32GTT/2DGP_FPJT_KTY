@@ -21,8 +21,25 @@ LEGACY_SAVE_VERSION = 6
 SAVE_FORMAT = "revenant_lost.generated_play"
 DEFAULT_SAVE = ROOT / "saves" / "prototype.json.gz"
 QUICK_SAVE = DEFAULT_SAVE.with_name("quick.json.gz")
+AUTO_SAVE = DEFAULT_SAVE.with_name("autosave.json.gz")
+MANUAL_SAVES = tuple(DEFAULT_SAVE.with_name(f"slot_{index}.json.gz") for index in range(1, 7))
 MAX_BYTES = 16 * 1024 * 1024
 ARCHIVE_PAGE_ROWS = 256
+
+
+def save_slots():
+    slots = [("자동 저장", AUTO_SAVE)]
+    slots.extend((f"슬롯 {index}", path) for index, path in enumerate(MANUAL_SAVES, 1))
+    if DEFAULT_SAVE.is_file():
+        slots.append(("기존 저장", DEFAULT_SAVE))
+    if QUICK_SAVE.is_file():
+        slots.append(("빠른 저장", QUICK_SAVE))
+    return tuple(slots)
+
+
+def latest_save():
+    existing = (path for _, path in save_slots() if path.is_file())
+    return max(existing, key=lambda path: path.stat().st_mtime, default=None)
 
 
 def content_version():

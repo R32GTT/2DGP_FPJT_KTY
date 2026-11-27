@@ -22,6 +22,8 @@ class Controls:
         self.trigger_pending = False
         self.running = True
         self.paused = False
+        self.pause_requested = False
+        self.pause_page = "menu"
         self.debug = False
         self.map_open = False
         self.map_navigation = MapNavigation()
@@ -58,29 +60,20 @@ class Controls:
                     if alias is not None and self.settings.bindings[alias] == DEFAULT_BINDINGS[alias]:
                         command = alias
                 if key == sdl2.SDLK_ESCAPE:
-                    if respawn_selecting:
-                        actions.append("respawn_cancel")
-                        self.map_press = None
-                        self.map_navigation.dragging = False
-                    elif self.inventory_open:
-                        self.inventory_open = False
-                    elif self.intel_open:
-                        self.intel_open = self.map_open = False
-                    elif self.map_open:
-                        self.map_open = False
-                        self.map_press = None
-                        self.map_navigation.dragging = False
-                    else:
-                        self.running = False
-                elif command == "pause":
-                    self.paused = not self.paused
+                    self.pause_requested = True
+                    self.pause_page = "menu"
+                    self.firing = self.aiming = self.trigger_pending = False
                 elif key == sdl2.SDLK_F1:
                     self.debug = not self.debug
                 elif key in (sdl2.SDLK_F2, sdl2.SDLK_F3):
                     actions.append("restart_ai" if key == sdl2.SDLK_F2 else "next_ai")
                 elif key == sdl2.SDLK_F4:
                     actions.append("restock_range")
-                elif command in {"save", "quick_save", "quick_load", "load"}:
+                elif command in ("save", "load"):
+                    self.pause_requested = True
+                    self.pause_page = command
+                    self.firing = self.aiming = self.trigger_pending = False
+                elif command in ("quick_save", "quick_load"):
                     actions.append(command)
                 elif command == "map":
                     if not respawn_selecting:

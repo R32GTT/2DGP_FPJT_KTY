@@ -11,7 +11,7 @@ import sdl2
 from .camera import CANVAS_SIZE
 from .hud import HUD
 from .hud_theme import THEME
-from .savegame import DEFAULT_SAVE, QUICK_SAVE
+from .savegame import DEFAULT_SAVE, latest_save
 from .world import ROOT
 
 
@@ -51,7 +51,7 @@ class MainScreen:
         self.selection = 0
         self.mouse = self._mouse_position()
         self.cursor_visible = False
-        self.continue_available = DEFAULT_SAVE.is_file() or QUICK_SAVE.is_file()
+        self.continue_available = latest_save() is not None
         self.notice = ""
         self.notice_until = 0.0
         backend.SDL_ShowCursor(backend.SDL_DISABLE)
@@ -64,7 +64,7 @@ class MainScreen:
         self.menu_requested = False
         self.selection = 0
         self.mouse = self._mouse_position()
-        self.continue_available = DEFAULT_SAVE.is_file() or QUICK_SAVE.is_file()
+        self.continue_available = latest_save() is not None
         self.notice = ""
         self._cursor(False)
         self.backend.SDL_SetWindowTitle(self.backend.window, b"REVENANT : L.O.S.T")
@@ -236,6 +236,7 @@ def run_frontend(*, frames=0):
     setup = None
     options_screen = None
     pending = None
+    current_slot = None
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="world-load")
     count = 0
     try:
@@ -278,6 +279,7 @@ def run_frontend(*, frames=0):
             elif action in {"start", "continue"}:
                 try:
                     if action == "start":
+                        current_slot = None
                         options = setup.config.generation_options()
                         setup.loading = True
                         world_root = DEFAULT_SAVE.parent / "worlds"
@@ -288,7 +290,8 @@ def run_frontend(*, frames=0):
 
                         pending = executor.submit(create_game)
                     else:
-                        save = DEFAULT_SAVE if DEFAULT_SAVE.is_file() else QUICK_SAVE
+                        save = latest_save()
+                        current_slot = save
                         pending = executor.submit(load_game, save)
                         screen.show_notice("저장 불러오는 중")
                 except (ValueError, OSError, CampaignSaveError) as error:
@@ -313,8 +316,11 @@ def run_frontend(*, frames=0):
                         setup.close()
                         setup = None
                     screen.close()
-                    run_window(simulation, manage_canvas=False, settings=settings)
+                    destination = run_window(simulation, manage_canvas=False, settings=settings,
+                                             current_slot=current_slot)
                     screen = MainScreen(backend)
+                    if destination == "quit":
+                        break
             if options_screen is not None:
                 options_screen.draw(perf_counter())
             elif setup is not None:
