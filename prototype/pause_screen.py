@@ -47,12 +47,14 @@ class FrozenGame:
 
 
 class PauseScreen:
-    def __init__(self, backend, current_slot=None):
+    def __init__(self, backend, current_slot=None, *, background=None, load_only=False):
         self.backend = backend
-        self.background = FrozenGame(backend)
+        self.background = background if background is not None else FrozenGame(backend)
+        self.external_background = background is not None
+        self.load_only = load_only
         self.hud = HUD(backend)
         self.current_slot = current_slot
-        self.page = "menu"
+        self.page = "load" if load_only else "menu"
         self.selected = 0
         self.pending_choice = None
         self.return_page = "menu"
@@ -64,7 +66,8 @@ class PauseScreen:
 
     def close(self):
         self.hud.close()
-        self.background.image = None
+        if not self.external_background:
+            self.background.image = None
         self.backend.SDL_ShowCursor(self.cursor_before)
 
     def refresh_slots(self):
@@ -123,6 +126,8 @@ class PauseScreen:
                     self.page = self.return_page
                 return None
             if key == sdl2.SDLK_ESCAPE:
+                if self.load_only:
+                    return "back", None
                 if self.page == "menu":
                     return "resume", None
                 self.page = "menu"
@@ -150,6 +155,8 @@ class PauseScreen:
                     self.page = self.return_page
                 return None
             if self.page != "menu" and 875 <= x <= 1015 and 70 <= y <= 122:
+                if self.load_only:
+                    return "back", None
                 self.page = "menu"
                 self.selected = 0
                 return None
@@ -169,7 +176,7 @@ class PauseScreen:
                      if abs(y - (ROW_TOP - index * ROW_STEP)) <= 21), None)
 
     def draw(self):
-        self.background.draw_scene(0)
+        self.background.draw_scene(perf_counter(), show_title=self.external_background)
         pico.draw_rectangle(0, 0, *CANVAS_SIZE, 0, 0, 0, 156, filled=True)
         pico.draw_rectangle(840, 0, 1280, 720, 0, 0, 0, 196, filled=True)
         pico.draw_rectangle(840, 0, 842, 720, *THEME.white, 205, filled=True)

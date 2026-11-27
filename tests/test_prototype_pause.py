@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import os
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +26,8 @@ class PauseSlotTests(unittest.TestCase):
             newer = Path(directory) / "newer.json.gz"
             older.write_bytes(b"old")
             newer.write_bytes(b"new")
+            os.utime(older, (100, 100))
+            os.utime(newer, (200, 200))
             with patch("prototype.savegame.save_slots", return_value=(("예전", older), ("최근", newer))):
                 self.assertEqual(latest_save(), newer)
 
@@ -53,6 +56,21 @@ class PauseSlotTests(unittest.TestCase):
         settings = AppSettings()
         self.assertIsNone(settings.action_for_key(sdl2.SDLK_p))
         self.assertNotIn("pause", settings.bindings)
+
+    def test_main_menu_load_screen_returns_selected_slot(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "slot_2.json.gz"
+            path.write_bytes(b"existing")
+            screen = object.__new__(PauseScreen)
+            screen.page = "load"
+            screen.load_only = True
+            screen.selected = 0
+            screen.slots = (("슬롯 2", path, "저장됨"),)
+            self.assertEqual(screen._activate(), ("load", path))
+            event = sdl2.SDL_Event()
+            event.type = sdl2.SDL_KEYDOWN
+            event.key.keysym.sym = sdl2.SDLK_ESCAPE
+            self.assertEqual(screen.handle(event), ("back", None))
 
 
 if __name__ == "__main__":

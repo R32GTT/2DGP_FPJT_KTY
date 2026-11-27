@@ -219,6 +219,7 @@ def run_frontend(*, frames=0):
     from .__main__ import run_window
     from .generated_world import generate_world
     from .new_game_screen import NewGameScreen
+    from .pause_screen import PauseScreen
     from .savegame import CampaignSaveError, load_game
     from .settings import apply_display, load_settings
     from .settings_screen import SettingsScreen
@@ -235,6 +236,7 @@ def run_frontend(*, frames=0):
         screen.show_notice(str(error))
     setup = None
     options_screen = None
+    slot_screen = None
     pending = None
     current_slot = None
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="world-load")
@@ -244,10 +246,17 @@ def run_frontend(*, frames=0):
             frame_start = perf_counter()
             event = sdl2.SDL_Event()
             action = None
+            selected_slot = None
             while sdl2.SDL_PollEvent(ctypes.byref(event)):
                 if pending is not None:
                     if event.type == sdl2.SDL_QUIT:
                         action = "quit"
+                        break
+                    continue
+                if slot_screen is not None:
+                    result = slot_screen.handle(event)
+                    if result is not None:
+                        action, selected_slot = result
                         break
                     continue
                 if setup is not None:
@@ -263,20 +272,30 @@ def run_frontend(*, frames=0):
                 break
             if action == "new_game":
                 setup = NewGameScreen(backend, screen.base)
-            elif action == "back" and (setup is not None or options_screen is not None):
-                if setup is not None:
-                    setup.close()
-                    setup = None
+            elif action == "continue":
+                slot_screen = PauseScreen(backend, background=screen, load_only=True)
+            elif action == "back" and (slot_screen is not None or setup is not None or options_screen is not None):
+                if slot_screen is not None:
+                    slot_screen.close()
+                    slot_screen = None
+                    screen.last_activity = perf_counter()
+                    screen.menu_requested = True
+                    screen.menu_opacity = 1.0
+                    screen._cursor(True)
                 else:
-                    options_screen.close()
-                    options_screen = None
-                screen.reset()
-                screen.started -= TITLE_FADE_END_SECONDS
-                screen.menu_requested = True
-                screen._cursor(True)
+                    if setup is not None:
+                        setup.close()
+                        setup = None
+                    else:
+                        options_screen.close()
+                        options_screen = None
+                    screen.reset()
+                    screen.started -= TITLE_FADE_END_SECONDS
+                    screen.menu_requested = True
+                    screen._cursor(True)
             elif action == "settings":
                 options_screen = SettingsScreen(backend, screen, settings)
-            elif action in {"start", "continue"}:
+            elif action in {"start", "load"}:
                 try:
                     if action == "start":
                         current_slot = None
@@ -290,16 +309,15 @@ def run_frontend(*, frames=0):
 
                         pending = executor.submit(create_game)
                     else:
-                        save = latest_save()
-                        current_slot = save
-                        pending = executor.submit(load_game, save)
-                        screen.show_notice("저장 불러오는 중")
+                        current_slot = selected_slot
+                        pending = executor.submit(load_game, selected_slot)
+                        slot_screen.status = "불러오는 중"
                 except (ValueError, OSError, CampaignSaveError) as error:
                     if setup is not None:
                         setup.error = str(error)
                         setup.loading = False
                     else:
-                        screen.show_notice(str(error))
+                        slot_screen.status = str(error)
             if pending is not None and pending.done():
                 try:
                     simulation = pending.result()
@@ -308,20 +326,25 @@ def run_frontend(*, frames=0):
                         setup.error = str(error)
                         setup.loading = False
                     else:
-                        screen.show_notice(str(error))
+                        slot_screen.status = str(error)
                     pending = None
                 else:
                     pending = None
                     if setup is not None:
                         setup.close()
                         setup = None
+                    if slot_screen is not None:
+                        slot_screen.close()
+                        slot_screen = None
                     screen.close()
                     destination = run_window(simulation, manage_canvas=False, settings=settings,
                                              current_slot=current_slot)
                     screen = MainScreen(backend)
                     if destination == "quit":
                         break
-            if options_screen is not None:
+            if slot_screen is not None:
+                slot_screen.draw()
+            elif options_screen is not None:
                 options_screen.draw(perf_counter())
             elif setup is not None:
                 setup.draw()
@@ -337,5 +360,7 @@ def run_frontend(*, frames=0):
             setup.close()
         if options_screen is not None:
             options_screen.close()
+        if slot_screen is not None:
+            slot_screen.close()
         screen.close()
         pico.close_canvas()
