@@ -158,7 +158,7 @@ def load_game(path=DEFAULT_SAVE):
             raise ValueError("생성 월드·캠페인 지도 불일치")
         play.world.restore_changes(state["changes"])
         restore(play, state["local"])
-        play.message = "월드 복원 완료 · F5/F9 저장·불러오기 · F6/F8 빠른 저장·불러오기"
+        play.message = "월드 복원 완료 · 저장과 불러오기 사용 가능"
         return play
     except (OSError, EOFError, ValueError, TypeError, KeyError, AttributeError, IndexError, OverflowError, CompressionError) as error:
         raise CampaignSaveError(f"플레이 불러오기 실패: {error}") from error

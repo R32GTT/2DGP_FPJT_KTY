@@ -85,7 +85,7 @@ def use_facility(simulation, facility, *, sabotage=False):
             player.active_weapon, simulation.kit_available = "ar_a", False
             simulation.inventory.stow_reserve(player.weapon)
             return "안전가옥 예비 무장 확보"
-        return "안전가옥 · Shift+E: 무기 보관함"
+        return "안전가옥 · 보조 동작으로 무기 보관함 열기"
     if key:
         current = bridge.simulation.state.facilities[key].damage
         if current >= 100:

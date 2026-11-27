@@ -270,7 +270,7 @@ class PlaySimulation:
         self.feedback.receive(events)
         if any(event.kind == "killed" and event.source == "player" for event in events):
             self._drop_equipment()
-            self.message = "전투 불능 — Enter: 6시간 진행 후 무장 없이 복귀"
+            self.message = "전투 불능 — 안전가옥을 선택해 무장 없이 복귀"
 
     def _sync_guards(self, *, restore=False):
         previous = self.guards
@@ -438,7 +438,7 @@ class PlaySimulation:
             return False
         key = self.inventory.active_throwable
         if key is None:
-            self.message = "휴대한 투척물이 없습니다 · Tab 인벤토리"
+            self.message = "휴대한 투척물이 없습니다 · 가방을 확인하세요"
             return False
         self.throwables.launch(key.removeprefix("throwable:"), source=player.id, floor=player.position.floor,
                                origin=player.xy, target=target, time=self.time, team=player.team)
@@ -675,10 +675,10 @@ class PlaySimulation:
             self.message = use_road_control(self.campaign, control)
             return
         if self.inventory.nearby(self.dropped) is not None:
-            self.message = "Tab 가방에서 바닥 무기를 선택하세요"
+            self.message = "가방에서 바닥 무기를 선택하세요"
             return
         if self.equipment_range:
-            self.message = "입구 보급함 가까이에서 Tab"
+            self.message = "입구 보급함 가까이에서 가방을 여세요"
             return
         facility = nearby_facility(self.world, self.player.xy)
         if facility is not None:
@@ -711,7 +711,7 @@ class PlaySimulation:
         elif kind in {"warehouse", "hq"}:
             self.message = use_facility(self, facility, sabotage=True)
         else:
-            self.message = "안전가옥·물류창고·HQ 단말 가까이에서 Shift+E"
+            self.message = "안전가옥·물류창고·HQ 단말 가까이에서 보조 동작"
 
     @property
     def respawn_pages(self):

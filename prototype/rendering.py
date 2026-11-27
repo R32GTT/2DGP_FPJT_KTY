@@ -31,7 +31,7 @@ BODY_FORWARD_OFFSET = math.pi / 2
 
 
 class Renderer:
-    def __init__(self, world):
+    def __init__(self, world, settings=None):
         self.backend = importlib.import_module("pico2d.pico2d")
         self.backend.SDL_SetWindowTitle(self.backend.window, b"REVENANT : L.O.S.T / Field Prototype")
         self.backend.SDL_SetRenderDrawBlendMode(self.backend.renderer, self.backend.SDL_BLENDMODE_BLEND)
@@ -58,7 +58,7 @@ class Renderer:
         self.door = self._image("assets/prototype/door.png", "assets/generated/entities/door_door_wood_horizontal_64x32.png")
         self.vignette = self._image("assets/prototype/alert_vignette.png") or vignette_image(self.backend)
         self.smoke = smoke_image(self.backend)
-        self.hud = HUD(self.backend)
+        self.hud = HUD(self.backend, settings)
         self.hud.prepare_map(world)
         self.last_draw_ms = 0.0
         for name in self.missing:

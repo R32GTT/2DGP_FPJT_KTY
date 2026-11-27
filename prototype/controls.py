@@ -5,11 +5,17 @@ import math
 import sdl2
 
 from .map_navigation import MapNavigation, RESPAWN_SIDEBAR
+from .settings import DEFAULT_BINDINGS, input_mods, load_settings
+
+
+KEYPAD_ZOOM = {sdl2.SDLK_KP_PLUS: "zoom_in", sdl2.SDLK_KP_MINUS: "zoom_out"}
 
 
 class Controls:
-    def __init__(self):
+    def __init__(self, settings=None):
+        self.settings = settings or load_settings()
         self.keys = set()
+        self.buttons = set()
         self.mouse = (640, 360)
         self.firing = False
         self.aiming = False
@@ -37,6 +43,7 @@ class Controls:
                 self.running = False
             elif event.type == sdl2.SDL_WINDOWEVENT and event.window.event == sdl2.SDL_WINDOWEVENT_FOCUS_LOST:
                 self.keys.clear()
+                self.buttons.clear()
                 self.firing = False
                 self.aiming = self.trigger_pending = False
                 self.paused = True
@@ -45,6 +52,11 @@ class Controls:
             elif event.type == sdl2.SDL_KEYDOWN and not event.key.repeat:
                 key = event.key.keysym.sym
                 self.keys.add(key)
+                command = self.settings.action_for_key(key, input_mods(event.key.keysym.mod))
+                if command is None:
+                    alias = KEYPAD_ZOOM.get(key)
+                    if alias is not None and self.settings.bindings[alias] == DEFAULT_BINDINGS[alias]:
+                        command = alias
                 if key == sdl2.SDLK_ESCAPE:
                     if respawn_selecting:
                         actions.append("respawn_cancel")
@@ -60,7 +72,7 @@ class Controls:
                         self.map_navigation.dragging = False
                     else:
                         self.running = False
-                elif key == sdl2.SDLK_p:
+                elif command == "pause":
                     self.paused = not self.paused
                 elif key == sdl2.SDLK_F1:
                     self.debug = not self.debug
@@ -68,10 +80,9 @@ class Controls:
                     actions.append("restart_ai" if key == sdl2.SDLK_F2 else "next_ai")
                 elif key == sdl2.SDLK_F4:
                     actions.append("restock_range")
-                elif key in (sdl2.SDLK_F5, sdl2.SDLK_F6, sdl2.SDLK_F8, sdl2.SDLK_F9):
-                    actions.append({sdl2.SDLK_F5: "save", sdl2.SDLK_F6: "quick_save",
-                                    sdl2.SDLK_F8: "quick_load", sdl2.SDLK_F9: "load"}[key])
-                elif key == sdl2.SDLK_m:
+                elif command in {"save", "quick_save", "quick_load", "load"}:
+                    actions.append(command)
+                elif command == "map":
                     if not respawn_selecting:
                         self.map_open = not self.map_open
                         self.map_press = None
@@ -80,38 +91,35 @@ class Controls:
                         self.inventory_open = self.intel_open = False
                 elif key == sdl2.SDLK_HOME and map_active:
                     self.map_navigation.reset()
-                elif key == sdl2.SDLK_h:
+                elif command == "minimap":
                     self.minimap_open = not self.minimap_open
-                elif key == sdl2.SDLK_i:
-                    actions.append("collect_intel" if event.key.keysym.mod & sdl2.KMOD_SHIFT else "intel")
+                elif command in ("intel", "collect_intel"):
+                    actions.append(command)
                 elif self.intel_open and key in (sdl2.SDLK_UP, sdl2.SDLK_DOWN):
                     actions.append("intel_previous" if key == sdl2.SDLK_UP else "intel_next")
-                elif key == sdl2.SDLK_TAB:
+                elif command == "inventory":
                     actions.append("inventory")
-                elif key == sdl2.SDLK_g:
-                    actions.append("throw")
                 elif self.inventory_open and key in (sdl2.SDLK_UP, sdl2.SDLK_DOWN, sdl2.SDLK_RETURN):
                     actions.append({sdl2.SDLK_UP: "item_previous", sdl2.SDLK_DOWN: "item_next",
                                     sdl2.SDLK_RETURN: "item_use"}[key])
-                elif key in (sdl2.SDLK_l, sdl2.SDLK_n, sdl2.SDLK_k):
-                    actions.append({sdl2.SDLK_l: "lamp", sdl2.SDLK_n: "night_vision", sdl2.SDLK_k: "ir_laser"}[key])
-                elif key == sdl2.SDLK_e and event.key.keysym.mod & sdl2.KMOD_SHIFT:
-                    actions.append("facility_alternate")
+                elif command in ("lamp", "night_vision", "ir_laser", "facility_alternate"):
+                    actions.append(command)
                 elif key in (sdl2.SDLK_LEFT, sdl2.SDLK_RIGHT):
                     actions.append("respawn_previous" if key == sdl2.SDLK_LEFT else "respawn_next")
-                elif sdl2.SDLK_1 <= key <= sdl2.SDLK_4:
-                    actions.append(f"slot_{key - sdl2.SDLK_1}")
-                elif key in (sdl2.SDLK_f, sdl2.SDLK_e, sdl2.SDLK_r, sdl2.SDLK_c,
-                             sdl2.SDLK_v, sdl2.SDLK_RETURN):
-                    actions.append({sdl2.SDLK_f: "door", sdl2.SDLK_e: "supplies", sdl2.SDLK_r: "reload",
-                                    sdl2.SDLK_c: "cancel", sdl2.SDLK_v: "fire_mode", sdl2.SDLK_RETURN: "respawn"}[key])
-                elif key in (sdl2.SDLK_EQUALS, sdl2.SDLK_PLUS, sdl2.SDLK_KP_PLUS):
+                elif command and command.startswith("weapon_"):
+                    actions.append(f"slot_{int(command[-1]) - 1}")
+                elif command in ("door", "supplies", "reload", "cancel", "fire_mode",
+                                 "respawn", "throw"):
+                    actions.append(command)
+                elif command == "fire" and not (map_active or self.inventory_open or self.intel_open):
+                    self.trigger_pending = True
+                elif command == "zoom_in":
                     if map_active:
                         self.map_navigation.zoom_at(1.2, self.mouse, (camera.width, camera.height),
                                                     sidebar=RESPAWN_SIDEBAR if respawn_selecting else 0)
                     else:
                         camera.set_zoom(camera.magnification * 1.2)
-                elif key in (sdl2.SDLK_MINUS, sdl2.SDLK_KP_MINUS):
+                elif command == "zoom_out":
                     if map_active:
                         self.map_navigation.zoom_at(1 / 1.2, self.mouse, (camera.width, camera.height),
                                                     sidebar=RESPAWN_SIDEBAR if respawn_selecting else 0)
@@ -127,6 +135,10 @@ class Controls:
                     if self.map_navigation.dragging:
                         self.map_navigation.move(event.motion.xrel, event.motion.yrel)
             elif event.type in (sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP):
+                if event.type == sdl2.SDL_MOUSEBUTTONDOWN:
+                    self.buttons.add(event.button.button)
+                else:
+                    self.buttons.discard(event.button.button)
                 if map_active:
                     if event.button.button == sdl2.SDL_BUTTON_LEFT:
                         if event.type == sdl2.SDL_MOUSEBUTTONDOWN:
@@ -147,11 +159,9 @@ class Controls:
                                                       (event.button.x, event.button.y),
                                                       bool(sdl2.SDL_GetModState() & sdl2.KMOD_SHIFT)))
                     continue
-                if event.button.button == sdl2.SDL_BUTTON_LEFT:
-                    self.firing = event.type == sdl2.SDL_MOUSEBUTTONDOWN
-                    self.trigger_pending |= self.firing
-                elif event.button.button == sdl2.SDL_BUTTON_RIGHT:
-                    self.aiming = event.type == sdl2.SDL_MOUSEBUTTONDOWN
+                if (self.settings.action_for_mouse(event.button.button) == "fire"
+                        and event.type == sdl2.SDL_MOUSEBUTTONDOWN and not self.intel_open):
+                    self.trigger_pending = True
             elif event.type == sdl2.SDL_MOUSEWHEEL:
                 if map_active and event.wheel.y:
                     self.map_navigation.zoom_at(1.2 ** event.wheel.y, self.mouse,
@@ -161,20 +171,25 @@ class Controls:
                     self.inventory_events.append(("wheel", self.mouse, event.wheel.y))
                 else:
                     camera.set_zoom(camera.magnification * 1.2 ** event.wheel.y)
+        interface_open = self.map_open or self.inventory_open or self.intel_open or respawn_selecting
+        self.firing = not interface_open and self.settings.held("fire", self.keys, self.buttons)
+        self.aiming = not interface_open and self.settings.held("aim", self.keys, self.buttons)
         return actions
 
     @property
     def direction(self):
-        return (int(sdl2.SDLK_d in self.keys) - int(sdl2.SDLK_a in self.keys),
-                int(sdl2.SDLK_s in self.keys) - int(sdl2.SDLK_w in self.keys))
+        return (int(self.settings.held("move_right", self.keys, self.buttons))
+                - int(self.settings.held("move_left", self.keys, self.buttons)),
+                int(self.settings.held("move_down", self.keys, self.buttons))
+                - int(self.settings.held("move_up", self.keys, self.buttons)))
 
     @property
     def sprint(self):
-        return bool(self.keys & {sdl2.SDLK_LSHIFT, sdl2.SDLK_RSHIFT})
+        return self.settings.held("sprint", self.keys, self.buttons)
 
     @property
     def walking(self):
-        return bool(self.keys & {sdl2.SDLK_LCTRL, sdl2.SDLK_RCTRL})
+        return self.settings.held("walk", self.keys, self.buttons)
 
     def consume_trigger(self):
         pressed, self.trigger_pending = self.trigger_pending, False

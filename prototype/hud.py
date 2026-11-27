@@ -19,6 +19,7 @@ from .respawn_ui import page_rects, panel_rect, row_rect, visible_sites
 from .weapons import STAGE_NAMES
 from .hud_theme import (ACCENT, FONT_PATH, FONT_SIZES, FONT_WIDTH_SCALE, PANEL, PANEL_EDGE,
                         TEXT, THEME, vehicle_marker_color)
+from .settings import DEFAULT_BINDINGS, binding_name
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -47,8 +48,9 @@ class Label:
 
 
 class HUD:
-    def __init__(self, backend):
+    def __init__(self, backend, settings=None):
         self.backend = backend
+        self.bindings = settings.bindings if settings is not None else DEFAULT_BINDINGS
         self.font_path = str(FONT_PATH)
         self.type = FONT_SIZES
         self.fonts = {size: pico.load_font(self.font_path, size)
@@ -421,7 +423,9 @@ class HUD:
         if simulation.respawn_target is not None:
             message = "안전가옥 복귀 중"
         else:
-            message = "ENTER  ·  재시작" if simulation.equipment_range else "ENTER  ·  안전가옥 선택"
+            respawn_key = binding_name(self.bindings["respawn"])
+            message = (f"{respawn_key}  ·  재시작" if simulation.equipment_range
+                       else f"{respawn_key}  ·  안전가옥 선택")
         self.label("respawn_notice", message, 20, TEXT)
         self.text("respawn_notice", (camera.width - self.labels["respawn_notice"].width) / 2,
                   camera.height / 2 - 75)
@@ -546,7 +550,8 @@ class HUD:
             self.label("respawn_page", f"{simulation.respawn_page + 1}/{simulation.respawn_pages}", 16)
             self.text("respawn_page", (previous[2] + following[0] - self.labels["respawn_page"].width) / 2,
                       camera.height - 337)
-        self.label("respawn_confirm", "선택 후 ENTER 확정 · ESC 취소", 13,
+        respawn_key = binding_name(self.bindings["respawn"])
+        self.label("respawn_confirm", f"선택 후 {respawn_key} 확정 · ESC 취소", 13,
                    ACCENT if selected else THEME.muted)
         self.text("respawn_confirm", panel[0] + 16, camera.height - 374)
 
@@ -859,12 +864,13 @@ class HUD:
 
     def _draw_operation_notes(self, simulation, camera, index, point):
         x, top = camera.width - 440, camera.height - 180
-        self.label("intel_title", "정보 노트  ·  ↑↓ 선택  /  I 닫기", 16, ACCENT)
+        self.label("intel_title", "정보 노트  ·  ↑↓ 선택  /  ESC 닫기", 16, ACCENT)
         self.text("intel_title", x, top)
         notes = sorted(simulation.operation_notes.values(),
                        key=lambda note: (-max(note.recorded_at or 0, note.observed_at or 0), note.operation_id))
         if not notes:
-            self.label("intel_empty", "창고·HQ 단말 또는 보이는 수송대에서 Shift+I", 13)
+            intel_key = binding_name(self.bindings["collect_intel"])
+            self.label("intel_empty", f"창고·HQ 단말 또는 보이는 수송대에서 {intel_key}", 13)
             self.text("intel_empty", x, top - 38)
             return
         state = simulation.campaign.simulation.state

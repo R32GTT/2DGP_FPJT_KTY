@@ -133,8 +133,6 @@ class MainScreen:
         return None
 
     def draw(self, now):
-        width, height = CANVAS_SIZE
-        elapsed = now - self.started
         delta = min(0.1, now - self.previous)
         self.previous = now
         if self.menu_requested and now - self.last_activity >= MENU_IDLE_SECONDS:
@@ -143,19 +141,8 @@ class MainScreen:
         target = 1.0 if self.menu_requested else 0.0
         self.menu_opacity += max(-delta / 0.38, min(delta / 0.38, target - self.menu_opacity))
 
-        self.backend.SDL_SetRenderDrawColor(self.backend.renderer, 0, 0, 0, 255)
-        self.backend.SDL_RenderClear(self.backend.renderer)
-        self.base.draw(width / 2, height / 2, width, height)
-        darkness = round(255 - 103 * _smooth(0.0, 1.3, elapsed))
-        pico.draw_rectangle(0, 0, width, height, *THEME.black, darkness, filled=True)
-        first_flash = max(0.0, 1.0 - abs(elapsed - 0.62) / 0.27) ** 2
-        phase = max(0.0, elapsed - 1.3) / RED_PULSE_SECONDS
-        slow_pulse = (1.0 - cos(2 * pi * phase)) / 2
-        steady = RED_MIN_OPACITY + (RED_MAX_OPACITY - RED_MIN_OPACITY) * slow_pulse
-        self.red_light.opacify(min(1.0, steady * _smooth(0.25, 1.3, elapsed) + 0.92 * first_flash))
-        self.red_light.draw(width / 2, height / 2, width, height)
-        self.title.opacify(_smooth(0.95, TITLE_FADE_END_SECONDS, elapsed))
-        self.title.draw(width / 2, height / 2, width, height)
+        self.draw_scene(now)
+        width, _ = CANVAS_SIZE
         if self.menu_opacity > 0.01:
             alpha = round(255 * self.menu_opacity)
             for index, (action, _) in enumerate(ITEMS):
@@ -171,6 +158,25 @@ class MainScreen:
             self.hud.label("notice", self.notice, 16, THEME.white)
             self.hud.text("notice", width / 2 - self.hud.labels["notice"].width / 2, 145)
         pico.update_canvas()
+
+    def draw_scene(self, now, *, show_title=True):
+        width, height = CANVAS_SIZE
+        elapsed = now - self.started
+
+        self.backend.SDL_SetRenderDrawColor(self.backend.renderer, 0, 0, 0, 255)
+        self.backend.SDL_RenderClear(self.backend.renderer)
+        self.base.draw(width / 2, height / 2, width, height)
+        darkness = round(255 - 103 * _smooth(0.0, 1.3, elapsed))
+        pico.draw_rectangle(0, 0, width, height, *THEME.black, darkness, filled=True)
+        first_flash = max(0.0, 1.0 - abs(elapsed - 0.62) / 0.27) ** 2
+        phase = max(0.0, elapsed - 1.3) / RED_PULSE_SECONDS
+        slow_pulse = (1.0 - cos(2 * pi * phase)) / 2
+        steady = RED_MIN_OPACITY + (RED_MAX_OPACITY - RED_MIN_OPACITY) * slow_pulse
+        self.red_light.opacify(min(1.0, steady * _smooth(0.25, 1.3, elapsed) + 0.92 * first_flash))
+        self.red_light.draw(width / 2, height / 2, width, height)
+        if show_title:
+            self.title.opacify(_smooth(0.95, TITLE_FADE_END_SECONDS, elapsed))
+            self.title.draw(width / 2, height / 2, width, height)
 
     def show_notice(self, message):
         self.notice = message
@@ -214,13 +220,21 @@ def run_frontend(*, frames=0):
     from .generated_world import generate_world
     from .new_game_screen import NewGameScreen
     from .savegame import CampaignSaveError, load_game
+    from .settings import apply_display, load_settings
+    from .settings_screen import SettingsScreen
     from .simulation import PlaySimulation
 
+    settings = load_settings()
     pico.open_canvas(*CANVAS_SIZE, sync=True)
     import importlib
     backend = importlib.import_module("pico2d.pico2d")
     screen = MainScreen(backend)
+    try:
+        apply_display(backend, settings.window_mode, settings.window_size)
+    except RuntimeError as error:
+        screen.show_notice(str(error))
     setup = None
+    options_screen = None
     pending = None
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="world-load")
     count = 0
@@ -235,7 +249,12 @@ def run_frontend(*, frames=0):
                         action = "quit"
                         break
                     continue
-                result = setup.handle(event) if setup is not None else screen.handle(event, frame_start)
+                if setup is not None:
+                    result = setup.handle(event)
+                elif options_screen is not None:
+                    result = options_screen.handle(event)
+                else:
+                    result = screen.handle(event, frame_start)
                 if result is not None:
                     action = result
                     break
@@ -243,14 +262,19 @@ def run_frontend(*, frames=0):
                 break
             if action == "new_game":
                 setup = NewGameScreen(backend, screen.base)
-            elif action == "back" and setup is not None:
-                setup.close()
-                setup = None
+            elif action == "back" and (setup is not None or options_screen is not None):
+                if setup is not None:
+                    setup.close()
+                    setup = None
+                else:
+                    options_screen.close()
+                    options_screen = None
                 screen.reset()
                 screen.started -= TITLE_FADE_END_SECONDS
                 screen.menu_requested = True
+                screen._cursor(True)
             elif action == "settings":
-                screen.show_notice("설정 화면은 다음 작업에서 제작합니다")
+                options_screen = SettingsScreen(backend, screen, settings)
             elif action in {"start", "continue"}:
                 try:
                     if action == "start":
@@ -289,9 +313,11 @@ def run_frontend(*, frames=0):
                         setup.close()
                         setup = None
                     screen.close()
-                    run_window(simulation, manage_canvas=False)
+                    run_window(simulation, manage_canvas=False, settings=settings)
                     screen = MainScreen(backend)
-            if setup is not None:
+            if options_screen is not None:
+                options_screen.draw(perf_counter())
+            elif setup is not None:
                 setup.draw()
             else:
                 screen.draw(perf_counter())
@@ -303,5 +329,7 @@ def run_frontend(*, frames=0):
         executor.shutdown(wait=False, cancel_futures=True)
         if setup is not None:
             setup.close()
+        if options_screen is not None:
+            options_screen.close()
         screen.close()
         pico.close_canvas()

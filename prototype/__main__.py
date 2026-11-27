@@ -20,7 +20,7 @@ EQUIPMENT_RANGE_SCENE = DEFAULT_SCENE.with_name("ai_facility.json")
 
 
 def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_open=False,
-               manage_canvas=True):
+               manage_canvas=True, settings=None):
     import pico2d
     from .camera import CANVAS_SIZE, PlayCamera
     from .controls import Controls
@@ -28,17 +28,22 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
     from .inventory_ui import build_inventory_layout
     from .respawn_ui import hit_respawn_map
     from .map_navigation import RESPAWN_SIDEBAR
+    from .settings import apply_display, binding_name, load_settings
 
     if manage_canvas:
         pico2d.open_canvas(*CANVAS_SIZE, sync=True)
+    settings = settings or load_settings()
+    import importlib
+    backend = importlib.import_module("pico2d.pico2d")
     renderer = None
     try:
-        renderer = Renderer(simulation.world)
+        apply_display(backend, settings.window_mode, settings.window_size)
+        renderer = Renderer(simulation.world, settings)
         if simulation.world.chunks:
             simulation.world.chunks.start_prefetch()
         facility_test = simulation.world.data.get("training_facility", False)
         test_mode = (facility_test or bool(simulation.ai_scenario)) and not simulation.equipment_range
-        controls = Controls()
+        controls = Controls(settings)
         camera = PlayCamera(zoom=zoom if zoom is not None else 0.55 if facility_test or test_mode else 1.0)
         controls.debug = test_mode if debug is None else debug
         controls.paused = test_mode if paused is None else paused
@@ -83,11 +88,11 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         slot = QUICK_SAVE if quick else DEFAULT_SAVE
                         if action in {"save", "quick_save"}:
                             save_game(simulation, slot)
-                            simulation.message = ("빠른 저장 완료 · F8 불러오기" if quick
-                                                  else "월드 저장 완료 · F9 불러오기")
+                            load_key = binding_name(settings.bindings["quick_load" if quick else "load"])
+                            simulation.message = f"{'빠른' if quick else '월드'} 저장 완료 · {load_key} 불러오기"
                         else:
                             loaded = load_game(slot)
-                            replacement = Renderer(loaded.world)
+                            replacement = Renderer(loaded.world, settings)
                             renderer.close()
                             if simulation.world.chunks:
                                 simulation.world.chunks.close()
@@ -369,7 +374,7 @@ def main(argv=None):
     except CampaignSaveError as error:
         parser.error(str(error))
     if args.generate is not None:
-        simulation.message = f"생성 맵 · 시드 {args.generate} · F5/F9 저장·불러오기 · F6/F8 빠른 저장·불러오기"
+        simulation.message = f"생성 맵 · 시드 {args.generate} · 저장과 불러오기 사용 가능"
     if args.headless:
         for _ in range(args.frames or 120):
             simulation.step()
