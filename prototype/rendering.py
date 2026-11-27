@@ -234,7 +234,7 @@ class Renderer:
             draw_polygon(self.backend, points, (*color, round(208 * (1 - progress))))
 
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False,
-               inventory_view=None, intel_index=None, minimap_open=True):
+               inventory_view=None, intel_index=None, minimap_open=True, map_navigation=None):
         started = perf_counter()
         view = copy(camera)
         shake_x, shake_y = simulation.feedback.offset
@@ -243,6 +243,13 @@ class Renderer:
         self.backend.SDL_SetRenderDrawColor(self.backend.renderer, 18, 28, 29, 255)
         self.backend.SDL_RenderClear(self.backend.renderer)
         pico.draw_rectangle(0, 0, view.width - 1, view.height - 1, 18, 28, 29, filled=True)
+        if map_open:
+            self.hud.render(simulation, camera, paused=paused, debug=False,
+                            update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=True,
+                            intel_index=intel_index, map_navigation=map_navigation)
+            self.last_draw_ms = (perf_counter() - started) * 1000
+            pico.update_canvas()
+            return
         world = simulation.world
         visible_layers = world.visible_layers(view.viewport(1))
         self.layers = self.map_images.prepare(visible_layers)
@@ -492,7 +499,8 @@ class Renderer:
                         seen_enemies=seen_enemies, inventory_view=inventory_view, intel_index=intel_index,
                         minimap_open=minimap_open, world_view=view, aim_point=aim_point,
                         weapon_image=self.guns.get(player.weapon.spec.id) if player.weapon else None,
-                        visible_enemies=visible_enemies, threat_candidates=threat_candidates)
+                        visible_enemies=visible_enemies, threat_candidates=threat_candidates,
+                        map_navigation=map_navigation)
         self.last_draw_ms = (perf_counter() - started) * 1000
         pico.update_canvas()
 

@@ -229,7 +229,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             update_ms=update_ms, mouse=None if inventory_view else controls.mouse,
                             map_open=map_open, inventory_view=inventory_view,
                             intel_index=intel_cursor if controls.intel_open else None,
-                            minimap_open=controls.minimap_open)
+                            minimap_open=controls.minimap_open, map_navigation=controls.map_navigation)
             count += 1
             # 대기가 길어진 오차를 다음 프레임에 누적하지 않는다.
             frame_deadline += FIXED_DT

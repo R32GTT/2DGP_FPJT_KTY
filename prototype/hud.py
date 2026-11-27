@@ -13,6 +13,7 @@ from .geometry import Rect
 from .inventory import BAG_LIMIT
 from .intelligence import OPERATION_NAMES
 from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
+from .map_navigation import MapNavigation
 from .minimap_image import MINIMAP_SCALE, build_minimap_image
 from .weapons import STAGE_NAMES
 from .hud_theme import ACCENT, FONT_PATH, FONT_SIZES, PANEL, PANEL_EDGE, TEXT
@@ -492,23 +493,17 @@ class HUD:
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
                cache_count=0, search_counts=None, seen_enemies=(), inventory_view=None, intel_index=None,
                minimap_open=True, world_view=None, aim_point=None, weapon_image=None,
-               visible_enemies=(), threat_candidates=()):
+               visible_enemies=(), threat_candidates=(), map_navigation=None):
         self._update_text_scale(camera)
         now = perf_counter()
         if map_open and now >= self.next_update:
             self.next_update = now + 0.2
-            map_title = ("장비 시험장" if simulation.equipment_range else
-                         simulation.stack_title or simulation.world.data.get("name", "지역 지도"))
-            self.label("map_title", map_title, 24, (118, 215, 191))
-            self.label("map_size", f"{simulation.world.bounds.w:.0f} × {simulation.world.bounds.h:.0f} m", 13)
             for facility in simulation.world.facilities:
-                self.label("site/" + facility["id"], facility["name"], 13)
+                self.label("poi_name/" + facility["id"], facility["name"], 16, (222, 234, 225))
                 campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
-                status = f"피해 {campaign.damage}%" if campaign else "복귀 거점"
-                if campaign and (simulation.world.data.get("generation") or
-                                 simulation.world.territories and facility["kind"] == "warehouse"):
-                    status += f" · 보급 {campaign.inventory['supplies']}"
-                self.label("site_info/" + facility["id"], f"{facility['name']} · {status}", 13)
+                status = (f"피해 {campaign.damage}%  보급 {campaign.inventory['supplies']}"
+                          if campaign else "복귀 거점")
+                self.label("poi_status/" + facility["id"], status, 13, (165, 195, 185))
         width, height = camera.width, camera.height
         if debug:
             self._update_debug(simulation, camera, now, update_ms, draw_ms, cache_count)
@@ -531,7 +526,7 @@ class HUD:
             self._minimap(simulation, camera, debug, seen_enemies)
         if map_open:
             self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused,
-                             intel_index=intel_index)
+                             intel_index=intel_index, navigation=map_navigation or MapNavigation())
         if not debug:
             self._draw_gameplay_alerts(simulation, camera, map_open=map_open, paused=paused)
         if inventory_view is not None:
@@ -658,98 +653,97 @@ class HUD:
                     pico.draw_rectangle(*box, *color)
         return (checked_count, total, blocked_count) if total else None
 
-    def _region_map(self, simulation, camera, debug, *, selecting=False, intel_index=None):
-        self.panel(60, 166, camera.width - 120, camera.height - 246)
+    def _region_map(self, simulation, camera, debug, *, selecting=False, intel_index=None, navigation):
+        width, height = camera.width, camera.height
+        world = simulation.world
+        bounds = world.bounds
+        viewport = (24, 24, width - 48, height - 48)
+        fit = min((viewport[2] - 24) / bounds.w, (viewport[3] - 24) / bounds.h)
+        scale = fit * navigation.zoom
+        navigation.clamp((bounds.w * scale, bounds.h * scale), viewport[2:])
+        center_x, center_y = bounds.x + bounds.w / 2, bounds.y + bounds.h / 2
+
+        def point(x, y):
+            return (width / 2 + (x - center_x) * scale + navigation.pan_x,
+                    height / 2 - (y - center_y) * scale - navigation.pan_y)
+
+        pico.draw_rectangle(0, 0, width, height, 10, 18, 21, 244, filled=True)
+        left, bottom, area_width, area_height = viewport
+        pico.draw_rectangle(left, bottom, left + area_width, bottom + area_height,
+                            26, 40, 42, filled=True)
+        clip = self.backend.SDL_Rect(left, height - bottom - area_height, area_width, area_height)
+        self.backend.SDL_RenderSetClipRect(self.backend.renderer, ctypes.byref(clip))
+        try:
+            map_left, map_top = point(bounds.x, bounds.y)
+            map_width, map_height = bounds.w * scale, bounds.h * scale
+            if world.map_background_path is not None:
+                self._draw_map_background(world, map_left, map_top, map_width, map_height)
+            else:
+                self._prepare_minimap_image(world)
+                self._mini_image.draw(map_left + map_width / 2, map_top - map_height / 2,
+                                      map_width, map_height)
+            for key, rect in world.territories.items():
+                a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
+                pico.draw_rectangle(a[0], b[1], b[0], a[1], 72, 103, 101)
+            state = simulation.campaign.simulation.state
+            for control in world.road_controls:
+                road = state.roads[control["road"]]
+                x, y = point(*control["position"])
+                color = (231, 111, 85) if road.blocked else (241, 211, 135)
+                pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *color, filled=True)
+            if not selecting:
+                placed_labels = []
+                for facility in world.facilities:
+                    x, y, w, h = facility["rect"]
+                    px, py = point(x + w / 2, y + h / 2)
+                    if not left - 160 <= px <= left + area_width + 160 or not bottom - 30 <= py <= bottom + area_height + 30:
+                        continue
+                    color = (107, 214, 189) if facility["kind"] == "safehouse" else (225, 190, 114)
+                    pico.draw_rectangle(px - 4, py - 4, px + 4, py + 4, *color, filled=True)
+                    name = "poi_name/" + facility["id"]
+                    status = "poi_status/" + facility["id"]
+                    label_width = max(self.labels[name].width, self.labels[status].width) + 18
+                    candidates = ((px + 10, py - 18), (px - label_width - 10, py - 18),
+                                  (px - label_width / 2, py + 12),
+                                  (px - label_width / 2, py - 54))
+                    choices = []
+                    for preference, (candidate_x, candidate_y) in enumerate(candidates):
+                        label_x = max(left + 4, min(left + area_width - label_width - 4, candidate_x))
+                        label_y = max(bottom + 4, min(bottom + area_height - 46, candidate_y))
+                        overlap = sum(max(0, min(label_x + label_width, right) - max(label_x, other_x)) *
+                                      max(0, min(label_y + 42, top) - max(label_y, other_y))
+                                      for other_x, other_y, right, top in placed_labels)
+                        choices.append((overlap, preference, label_x, label_y))
+                    _, _, label_x, label_y = min(choices)
+                    placed_labels.append((label_x, label_y, label_x + label_width, label_y + 42))
+                    pico.draw_rectangle(label_x, label_y, label_x + label_width, label_y + 42,
+                                        12, 21, 25, 215, filled=True)
+                    self.text(name, label_x + 9, label_y + 28)
+                    self.text(status, label_x + 9, label_y + 10)
+            actors = (simulation.player, *simulation.guards) if debug else (simulation.player,)
+            for actor in actors:
+                if actor.hp <= 0:
+                    continue
+                x, y = point(*actor.xy)
+                color = (112, 230, 205) if actor.team == "player" else (226, 131, 92)
+                pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *color, filled=True)
+            if debug or not world.data.get("generation"):
+                for convoy in simulation.campaign.convoys(simulation.time):
+                    if bounds.segment_entry((convoy.x, convoy.y), (convoy.x, convoy.y)) is None:
+                        continue
+                    x, y = point(convoy.x, convoy.y)
+                    pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, 221, 186, 100, filled=True)
+        finally:
+            self.backend.SDL_RenderSetClipRect(self.backend.renderer, None)
         if selecting:
             self.label("respawn_title", "복귀할 안전가옥 선택", 24, (118, 215, 191))
             self.label("respawn_help", f"← → 페이지 {simulation.respawn_page + 1}/{simulation.respawn_pages}"
                        " · 1~4 선택 · C 닫기", 13)
-        self.text("respawn_title" if selecting else "map_title", 84, camera.height - 111)
-        if selecting:
-            self.text("respawn_help", 84, camera.height - 140)
-        world = simulation.world
-        generated = bool(world.data.get("generation"))
-        notes_open = intel_index is not None and generated and not selecting
-        columns = 2 if not selecting and len(world.facilities) > 10 else 1
-        plan_width = camera.width - (560 if notes_open else 168 if not world.facilities else 750 if columns == 2 else 480)
-        scale = min(plan_width / world.bounds.w, (camera.height - 370) / world.bounds.h)
-        left = 84 + (plan_width - world.bounds.w * scale) / 2
-        top = camera.height - 176
-
-        def point(x, y):
-            return left + (x - world.bounds.x) * scale, top - (y - world.bounds.y) * scale
-
-        right, bottom = point(world.bounds.right, world.bounds.bottom)
-        pico.draw_rectangle(left, bottom, right, top, 34, 49, 43, filled=True)
-        canvas_height = pico.get_canvas_height()
-        layout = left, top, scale, canvas_height
-        background = self._draw_map_background(world, left, top, world.bounds.w * scale, world.bounds.h * scale)
-        if not background:
-            self._draw_map_batch("full field", world, layout, map_rectangles(self._field_terrain(world), point, canvas_height))
-        state = simulation.campaign.simulation.state
-        controlled_roads = {control["road"] for control in world.road_controls}
-        for control in world.road_controls:
-            x, y = point(*control["position"])
-            pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 241, 211, 135, filled=True)
-        if not selecting and (not world.facilities or generated):
-            if not background:
-                ground = ((layer.rect, layer.color) for layer in world.map_layers
-                          if not layer.role.startswith("road") and layer.role != "pavement")
-                self._draw_map_batch("full terrain", world, layout, map_rectangles(ground, point, canvas_height))
-            self._draw_map_batch("full obstacles", world, (*layout, world.revision),
-                                 map_colliders(world.geometry.objects.values(), point, canvas_height))
-        blocked = frozenset(key for key in controlled_roads if state.roads[key].blocked)
-        if background:
-            for road in world.roads:
-                if road["id"] in blocked:
-                    pico.draw_line(*point(*road["start"]), *point(*road["end"]), 231, 111, 85)
-        else:
-            self._draw_map_batch("full roads", world, (*layout, blocked), map_roads(world, point, scale, canvas_height, blocked))
-        for key, rect in world.territories.items():
-            a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
-            pico.draw_rectangle(a[0], b[1], b[0], a[1], 90, 122, 110)
-            if len(world.territories) > 2:
-                self.label('territory/' + key, world.data['territories'][key]['name'], 13, (118, 215, 191))
-                self.text('territory/' + key, a[0] + 3, a[1] + 9)
-        for site in world.data.get("planned_facilities", ()):
-            x, y, w, h = site["rect"]
-            if not selecting and len(world.territories) <= 2:
-                self.label("planned/" + site["id"], site["name"] + (" · 예약" if site["placeholder"] else ""), 13, (226, 221, 176))
-                self.text("planned/" + site["id"], *point(x, y + h))
-            gate, approach = site["connector"]["position"], site["connector"]["approach"]
-            pico.draw_line(*point(*gate), *point(*approach), 112, 230, 205)
-        rows = math.ceil(len(world.facilities) / columns)
-        row_step = min(34, (camera.height - 476) / max(1, rows - 1))
-        for index, facility in enumerate(world.facilities):
-            x, y, w, h = facility["rect"]
-            a, b = point(x, y), point(x + w, y + h)
-            color = (94, 175, 150) if facility["kind"] == "safehouse" else (162, 166, 128)
-            if not generated:
-                pico.draw_rectangle(a[0], b[1], b[0], a[1], *color, filled=True)
-                self.text("site/" + facility["id"], a[0], b[1] - 13)
-            if not selecting and not notes_open:
-                self.text("site_info/" + facility["id"], camera.width - (650 if columns == 2 else 350) + index // rows * 315,
-                          camera.height - 200 - index % rows * row_step)
-        for actor in [*simulation.guards, simulation.player]:
-            if actor.hp <= 0 or (actor.team != "player" and not debug):
-                continue
-            x, y = point(*actor.xy)
-            color = (112, 230, 205) if actor.team == "player" else (226, 131, 92)
-            pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *color, filled=True)
-            if debug and actor.team != "player":
-                pico.draw_line(x, y, x + 10 * math.cos(actor.facing), y - 10 * math.sin(actor.facing), 246, 246, 236)
-        if debug or not generated:
-            for convoy in simulation.campaign.convoys(simulation.time):
-                if not world.bounds.x <= convoy.x <= world.bounds.right or not world.bounds.y <= convoy.y <= world.bounds.bottom:
-                    continue
-                x, y = point(convoy.x, convoy.y)
-                pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, 221, 186, 100, filled=True)
-        if notes_open:
-            self._draw_operation_notes(simulation, camera, intel_index, point)
-        else:
-            self.text("map_size", camera.width - (230 if not world.facilities else 350), 245)
-        if selecting:
+            self.text("respawn_title", 48, height - 62)
+            self.text("respawn_help", 48, height - 90)
             self._draw_respawn_options(simulation, camera, point)
+        elif intel_index is not None and world.data.get("generation"):
+            self._draw_operation_notes(simulation, camera, intel_index, point)
 
     def _draw_operation_notes(self, simulation, camera, index, point):
         x, top = camera.width - 440, camera.height - 180

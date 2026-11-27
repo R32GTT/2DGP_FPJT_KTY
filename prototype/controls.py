@@ -3,6 +3,8 @@
 import ctypes
 import sdl2
 
+from .map_navigation import MapNavigation
+
 
 class Controls:
     def __init__(self):
@@ -15,6 +17,7 @@ class Controls:
         self.paused = False
         self.debug = False
         self.map_open = False
+        self.map_navigation = MapNavigation()
         self.minimap_open = True
         self.inventory_open = False
         self.intel_open = False
@@ -30,6 +33,7 @@ class Controls:
                 self.firing = False
                 self.aiming = self.trigger_pending = False
                 self.paused = True
+                self.map_navigation.dragging = False
             elif event.type == sdl2.SDL_KEYDOWN and not event.key.repeat:
                 key = event.key.keysym.sym
                 self.keys.add(key)
@@ -38,6 +42,9 @@ class Controls:
                         self.inventory_open = False
                     elif self.intel_open:
                         self.intel_open = self.map_open = False
+                    elif self.map_open:
+                        self.map_open = False
+                        self.map_navigation.dragging = False
                     else:
                         self.running = False
                 elif key == sdl2.SDLK_p:
@@ -53,7 +60,11 @@ class Controls:
                                     sdl2.SDLK_F8: "quick_load", sdl2.SDLK_F9: "load"}[key])
                 elif key == sdl2.SDLK_m:
                     self.map_open = not self.map_open
+                    self.map_navigation.dragging = False
+                    self.firing = self.aiming = self.trigger_pending = False
                     self.inventory_open = self.intel_open = False
+                elif key == sdl2.SDLK_HOME and self.map_open:
+                    self.map_navigation.reset()
                 elif key == sdl2.SDLK_h:
                     self.minimap_open = not self.minimap_open
                 elif key == sdl2.SDLK_i:
@@ -80,14 +91,29 @@ class Controls:
                     actions.append({sdl2.SDLK_f: "door", sdl2.SDLK_e: "supplies", sdl2.SDLK_r: "reload",
                                     sdl2.SDLK_c: "cancel", sdl2.SDLK_v: "fire_mode", sdl2.SDLK_RETURN: "respawn"}[key])
                 elif key in (sdl2.SDLK_EQUALS, sdl2.SDLK_PLUS, sdl2.SDLK_KP_PLUS):
-                    camera.set_zoom(camera.magnification * 1.2)
+                    if self.map_open:
+                        self.map_navigation.zoom_at(1.2, self.mouse, (camera.width, camera.height))
+                    else:
+                        camera.set_zoom(camera.magnification * 1.2)
                 elif key in (sdl2.SDLK_MINUS, sdl2.SDLK_KP_MINUS):
-                    camera.set_zoom(camera.magnification / 1.2)
+                    if self.map_open:
+                        self.map_navigation.zoom_at(1 / 1.2, self.mouse, (camera.width, camera.height))
+                    else:
+                        camera.set_zoom(camera.magnification / 1.2)
             elif event.type == sdl2.SDL_KEYUP:
                 self.keys.discard(event.key.keysym.sym)
             elif event.type == sdl2.SDL_MOUSEMOTION:
                 self.mouse = (event.motion.x, event.motion.y)
+                if self.map_open and self.map_navigation.dragging:
+                    self.map_navigation.move(event.motion.xrel, event.motion.yrel)
             elif event.type in (sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP):
+                if self.map_open:
+                    if event.button.button == sdl2.SDL_BUTTON_LEFT:
+                        self.map_navigation.dragging = event.type == sdl2.SDL_MOUSEBUTTONDOWN
+                        self.firing = False
+                    elif event.button.button == sdl2.SDL_BUTTON_RIGHT:
+                        self.aiming = False
+                    continue
                 if self.inventory_open:
                     continue
                 if event.button.button == sdl2.SDL_BUTTON_LEFT:
@@ -96,7 +122,10 @@ class Controls:
                 elif event.button.button == sdl2.SDL_BUTTON_RIGHT:
                     self.aiming = event.type == sdl2.SDL_MOUSEBUTTONDOWN
             elif event.type == sdl2.SDL_MOUSEWHEEL:
-                if self.inventory_open and event.wheel.y:
+                if self.map_open and event.wheel.y:
+                    self.map_navigation.zoom_at(1.2 ** event.wheel.y, self.mouse,
+                                                (camera.width, camera.height))
+                elif self.inventory_open and event.wheel.y:
                     actions.extend(["item_previous" if event.wheel.y > 0 else "item_next"] * min(12, abs(event.wheel.y)))
                 else:
                     camera.set_zoom(camera.magnification * 1.2 ** event.wheel.y)
