@@ -10,6 +10,9 @@ _font_override = os.environ.get("REVENANT_HUD_FONT")
 FONT_PATH = Path(_font_override) if _font_override else (
     Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "malgun.ttf")
 FONT_SIZES = {"detail": 13, "value": 16, "weapon": 20, "heading": 24}
+FONT_WIDTH_SCALE = float(os.environ.get("REVENANT_HUD_FONT_WIDTH", "1.0"))
+if not 0.75 <= FONT_WIDTH_SCALE <= 1.5:
+    raise ValueError("HUD 글자 가로 비율은 0.75~1.5 사이여야 합니다")
 
 @dataclass(frozen=True)
 class HUDTheme:

@@ -16,7 +16,7 @@ from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
 from .map_navigation import MapNavigation
 from .minimap_image import MINIMAP_SCALE, build_minimap_image
 from .weapons import STAGE_NAMES
-from .hud_theme import ACCENT, FONT_PATH, FONT_SIZES, PANEL, PANEL_EDGE, TEXT, THEME
+from .hud_theme import ACCENT, FONT_PATH, FONT_SIZES, FONT_WIDTH_SCALE, PANEL, PANEL_EDGE, TEXT, THEME
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -120,7 +120,7 @@ class HUD:
         if self.backend.TTF_SizeUTF8(self.fonts[size].font, text.encode("utf-8"),
                                      ctypes.byref(width), ctypes.byref(height)) < 0:
             raise RuntimeError("HUD 글자 크기 측정 실패")
-        self.labels[key] = Label(style, width.value, height.value)
+        self.labels[key] = Label(style, round(width.value * FONT_WIDTH_SCALE), height.value)
 
     def _update_text_scale(self, camera):
         width, height = ctypes.c_int(), ctypes.c_int()
