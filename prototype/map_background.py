@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 
 from .chunk_terrain import ChunkTerrain
 from .geometry import Rect
-from .road_visuals import ROAD_STYLES
+from .hud_theme import THEME, map_tone
 
 
 MAX_MAP_PIXELS = 8192
@@ -28,7 +28,7 @@ def create_background(scene, path):
     left, top, width, height = scene["bounds"]
     scale = min(1.0, MAX_MAP_PIXELS / max(width, height))
     image = Image.new("RGB", (max(1, math.ceil(width * scale)), max(1, math.ceil(height * scale))),
-                      (34, 49, 43))
+                      THEME.map_ground)
     draw = ImageDraw.Draw(image)
 
     def point(x, y):
@@ -36,7 +36,7 @@ def create_background(scene, path):
 
     def rectangle(bounds, color):
         x, y, w, h = bounds
-        draw.rectangle((*point(x, y), *point(x + w, y + h)), fill=tuple(color[:3]))
+        draw.rectangle((*point(x, y), *point(x + w, y + h)), fill=map_tone(color))
 
     if scene.get("stream_terrain"):
         for row in ChunkTerrain(scene).ground(Rect(*scene["bounds"])):
@@ -50,20 +50,20 @@ def create_background(scene, path):
 
     network = scene.get("road_network", {})
     for road in scene.get("roads", ()):
-        material = road.get("material", "")
-        color = ((114, 103, 77) if road.get("kind") == "footpath" else
-                 ROAD_STYLES[material]["map_color"] if material else (153, 155, 123))
+        color = (THEME.map_facility if road.get("kind") == "footpath" else THEME.map_road)
         draw.line((point(*road["start"]), point(*road["end"])), fill=color,
                   width=max(1, round(road.get("width", 4) * scale)))
     for junction in network.get("junctions", ()):
         for surface in junction["surfaces"]:
             vertices = surface["triangles"]
-            color = ROAD_STYLES[surface["material"]]["map_color"]
+            color = THEME.map_road
             for index in range(0, len(vertices), 3):
                 draw.polygon([point(*vertex) for vertex in vertices[index:index + 3]], fill=color)
 
     for site in scene.get("planned_facilities", ()):
-        rectangle(site["rect"], (94, 175, 150) if site["kind"] == "safehouse" else (162, 166, 128))
+        x, y, w, h = site["rect"]
+        draw.rectangle((*point(x, y), *point(x + w, y + h)),
+                       fill=THEME.map_safehouse if site["kind"] == "safehouse" else THEME.map_facility)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(prefix="map-", suffix=".png", dir=path.parent,

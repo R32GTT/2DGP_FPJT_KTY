@@ -16,7 +16,7 @@ from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
 from .map_navigation import MapNavigation
 from .minimap_image import MINIMAP_SCALE, build_minimap_image
 from .weapons import STAGE_NAMES
-from .hud_theme import ACCENT, FONT_PATH, FONT_SIZES, PANEL, PANEL_EDGE, TEXT
+from .hud_theme import ACCENT, FONT_PATH, FONT_SIZES, PANEL, PANEL_EDGE, TEXT, THEME
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -28,10 +28,10 @@ AI_ACTIONS = {"cover": "엄폐", "retreat": "후퇴", "pin": "제압됨", "reloa
 SOUND_RESPONSES = {"new": "총성 감지", "renewed": "총성 재조사", "same_area": "총성 감지 · 경로 유지",
                    "out_of_range": "총성 감지 범위 밖", "no_estimate": "총성 감지 · 위치 추정 실패",
                    "checked": "총성 조사 종료", "unreachable": "소리 위치에 접근할 수 없음"}
-SEARCH_CONFIRMED = (96, 236, 186)
-SEARCH_VISIBLE = (255, 108, 98)
-SEARCH_OCCLUDED = (255, 215, 83)
-SEARCH_OUTSIDE = (203, 210, 206)
+SEARCH_CONFIRMED = THEME.white
+SEARCH_VISIBLE = THEME.red
+SEARCH_OCCLUDED = THEME.red_dim
+SEARCH_OUTSIDE = THEME.muted
 
 
 @dataclass
@@ -106,7 +106,7 @@ class HUD:
         self._mini_world = world
         self._mini_revision = world.revision
 
-    def label(self, key, text, size=16, color=(223, 230, 218)):
+    def label(self, key, text, size=16, color=TEXT):
         if not text:
             self.labels.pop(key, None)
             return
@@ -164,8 +164,8 @@ class HUD:
 
     @staticmethod
     def panel(x, y, w, h):
-        pico.draw_rectangle(x, y, x + w, y + h, 17, 28, 31, 238, filled=True)
-        pico.draw_rectangle(x, y, x + w, y + h, 67, 86, 82, 255)
+        pico.draw_rectangle(x, y, x + w, y + h, *PANEL, THEME.panel_alpha, filled=True)
+        pico.draw_rectangle(x, y, x + w, y + h, *PANEL_EDGE, THEME.edge_alpha)
 
     def _update_ai(self, simulation):
         nearby = sorted((actor for actor in simulation.guards if actor.hp > 0),
@@ -214,7 +214,7 @@ class HUD:
                 route = f"{brain.motion.goal[0]:.1f}, {brain.motion.goal[1]:.1f} · {status}"
                 if brain.motion.goal == brain.search.cover:
                     route += " · 엄폐 이동"
-            self.label(f"ai_id/{index}", f"{actor.id}   {state}", 13, (118, 215, 191))
+            self.label(f"ai_id/{index}", f"{actor.id}   {state}", 13, ACCENT)
             self.label(f"ai_cue/{index}", f"{cue}   의심 {memory.suspicion:.2f} · 제압 {brain.combat.suppression:.2f}", 13)
             self.label(f"ai_route/{index}", route, 13)
             sound = SOUND_RESPONSES.get(brain.search.sound_response, "") if time - brain.search.sound_response_at < 5 else ""
@@ -225,7 +225,7 @@ class HUD:
                 focus = brain.look.point
                 location = f"{focus[0]:.1f}, {focus[1]:.1f} · " if focus is not None else ""
                 sound = f"시선 {location}{brain.look.reason}"
-            self.label(f"ai_sound/{index}", sound or "최근 총성 반응 없음", 13, (240, 187, 104))
+            self.label(f"ai_sound/{index}", sound or "최근 총성 반응 없음", 13, THEME.muted)
         self.label("ai_hint", simulation.ai_hint, 13)
 
     def _update_debug(self, simulation, camera, now, update_ms, draw_ms, cache_count):
@@ -233,12 +233,12 @@ class HUD:
             return
         self.next_debug_update = now + 0.2
         player, weapon = simulation.player, simulation.player.weapon
-        self.label("brand", "REVENANT / FIELD PROTOTYPE", 16, (118, 215, 191))
+        self.label("brand", "REVENANT / FIELD PROTOTYPE", 16, ACCENT)
         self.label("clock", f"{world_clock(simulation.lighting_time)}  |  {camera.magnification:.0%}", 13)
         if simulation.world.territories:
             territory = simulation.world.territory_at(player.xy)
             name = simulation.world.data["territories"].get(territory, {}).get("name", "지역 사이 연결로")
-            self.label("campaign_location", name, 16, (118, 215, 191))
+            self.label("campaign_location", name, 16, ACCENT)
         self.label("vitals", f"HP {player.hp:03.0f}   ARMOR {player.armor:02d}", 16)
         self.label("weapon", weapon.spec.name if weapon else "UNARMED", 24)
         self.label("ammo", f"{weapon.magazine:02d}+{int(weapon.chambered)} / {weapon.reserve:03d}" if weapon else "-- / ---", 24)
@@ -254,9 +254,9 @@ class HUD:
         if weapon and (weapon.reloading or weapon.stage > 0):
             phase = STAGE_NAMES[weapon.spec.reload_stages[weapon.stage].id]
             status = "진행" if weapon.reloading else "중단 / R 재개"
-            self.label("reload", f"{phase} — {status} · 남은 {weapon.remaining_reload:.2f}s", 13, (241, 196, 112))
+            self.label("reload", f"{phase} — {status} · 남은 {weapon.remaining_reload:.2f}s", 13, ACCENT)
         else:
-            self.label("reload", "완료 단계 보존 · 취소한 단계는 처음부터 재개", 13, (136, 159, 152))
+            self.label("reload", "완료 단계 보존 · 취소한 단계는 처음부터 재개", 13, THEME.muted)
 
     def _draw_debug(self, simulation, camera, search_counts):
         player, weapon = simulation.player, simulation.player.weapon
@@ -267,9 +267,10 @@ class HUD:
         if simulation.world.territories:
             self.text("campaign_location", 304, height - 41)
         self.text("vitals", width - 245, height - 29)
-        pico.draw_rectangle(width - 245, height - 53, width - 30, height - 47, 45, 57, 55, filled=True)
+        pico.draw_rectangle(width - 245, height - 53, width - 30, height - 47,
+                            *PANEL, THEME.track_alpha, filled=True)
         pico.draw_rectangle(width - 245, height - 53, width - 245 + 215 * player.hp / 100,
-                             height - 47, 99, 186, 154, filled=True)
+                             height - 47, *ACCENT, filled=True)
         self.panel(12, 12, 410, 142)
         self.text("weapon", 26, 129)
         self.text("ammo", 240, 129)
@@ -277,13 +278,12 @@ class HUD:
         for index, key in enumerate(STAGE_NAMES):
             x = 26 + index * 128
             self.text(key, x, 77)
-            color, progress = (67, 84, 79), 0
+            color, progress = ACCENT, 0
             if weapon and index < weapon.stage:
-                color, progress = (96, 182, 151), 1
+                color, progress = THEME.white, 1
             elif weapon and index == weapon.stage and (weapon.reloading or weapon.stage):
-                color = (227, 184, 104)
                 progress = weapon.stage_elapsed / weapon.reload_duration(index)
-            pico.draw_rectangle(x, 57, x + 116, 62, 43, 56, 52, filled=True)
+            pico.draw_rectangle(x, 57, x + 116, 62, *PANEL, THEME.track_alpha, filled=True)
             if progress:
                 pico.draw_rectangle(x, 57, x + 116 * progress, 62, *color, filled=True)
         self.text("reload", 26, 35)
@@ -302,13 +302,13 @@ class HUD:
                     self.text(f"{key}/{index}", left + 12, y - row * 18)
         if "ai_hint" in self.labels:
             self.text("ai_hint", 24, height - 136)
-        self.label("ai_legend", "파랑  맵 노드 · 청록  현재 경로 · 주황 +  소리 추정", 13)
+        self.label("ai_legend", "흰색  맵 노드 · 빨강  현재 경로 · 빨강 +  소리 추정", 13)
         legend_y = height - (156 if "ai_hint" in self.labels else 136)
         self.text("ai_legend", 24, legend_y)
         if search_counts is not None:
             checked, total, blocked = search_counts
             counts = f"화면 안 수색 지점 · 확인 {checked}/{total} · 미확인 {total - checked} · 가림 {blocked}"
-            legend = "청록 확인 완료 · 빨강 테두리 보임 · 노랑 X 가림 · 회색 테두리 시야 밖"
+            legend = "흰색 확인 완료 · 빨강 테두리 보임 · 어두운 빨강 X 가림 · 흐린 흰색 시야 밖"
             self.label("search_counts", counts, 13)
             self.label("search_legend", legend, 13)
             self.text("search_counts", 24, legend_y - 20)
@@ -323,10 +323,11 @@ class HUD:
         if now >= self._weapon_card_until:
             return
         x, y, width, height = 16, 16, 256, 80
-        pico.draw_rectangle(x, y, x + width, y + height, *PANEL, 222, filled=True)
-        pico.draw_rectangle(x, y, x + width, y + height, *PANEL_EDGE)
+        pico.draw_rectangle(x, y, x + width, y + height, *PANEL, THEME.card_alpha, filled=True)
+        pico.draw_rectangle(x, y, x + width, y + height, *PANEL_EDGE, THEME.edge_alpha)
         pico.draw_rectangle(x, y + height - 3, x + 45, y + height, *ACCENT, filled=True)
-        pico.draw_rectangle(x + 12, y + 13, x + 98, y + 65, 29, 43, 47, 220, filled=True)
+        pico.draw_rectangle(x + 12, y + 13, x + 98, y + 65,
+                            *PANEL, THEME.track_alpha, filled=True)
         if weapon and weapon_image:
             weapon_image.draw(x + 55, y + 39, 74, 26)
         self.label("game_weapon", weapon.spec.name if weapon else "비무장", self.type["weapon"], TEXT)
@@ -346,11 +347,12 @@ class HUD:
         self.label("game_health", f"{max(0, player.hp):.0f}/100", self.type["detail"], TEXT)
         self.text("game_health", x - self.labels["game_health"].width / 2, y + 20)
         pico.draw_rectangle(x - width / 2 - 2, y - 7, x + width / 2 + 2, y + 2,
-                            12, 21, 25, 220, filled=True)
-        pico.draw_rectangle(x - width / 2, y - 5, x + width / 2, y, 83, 42, 45, filled=True)
+                            *PANEL, THEME.card_alpha, filled=True)
+        pico.draw_rectangle(x - width / 2, y - 5, x + width / 2, y,
+                            *PANEL_EDGE, THEME.edge_alpha)
         if player.hp > 0:
             pico.draw_rectangle(x - width / 2, y - 5, x - width / 2 + width * min(1.0, player.hp / 100), y,
-                                244, 95, 89, filled=True)
+                                *ACCENT, filled=True)
 
     def _draw_ammo(self, simulation, aim_point, view):
         weapon = simulation.player.weapon
@@ -370,10 +372,11 @@ class HUD:
         stages = weapon.spec.reload_stages
         gap = 3
         segment = (width - gap * (len(stages) - 1)) / len(stages)
-        colors = ((238, 90, 80), (241, 173, 75), (111, 214, 145))
+        colors = (THEME.white, THEME.red_dim, THEME.red)
         for index in range(len(stages)):
             left = x + index * (segment + gap)
-            pico.draw_rectangle(left, y, left + segment, y + 4, 62, 75, 76, filled=True)
+            pico.draw_rectangle(left, y, left + segment, y + 4,
+                                *PANEL, THEME.track_alpha, filled=True)
             if weapon.reloading or weapon.stage:
                 progress = (1.0 if index < weapon.stage else
                             weapon.stage_elapsed / weapon.reload_duration(index)
@@ -388,10 +391,11 @@ class HUD:
             if y > view.height + 10:
                 continue
             level = max(0.0, min(1.0, max(brain.memory.recognition, brain.memory.suspicion)))
-            pico.draw_rectangle(x - 34, y, x + 34, y + 5, 17, 25, 28, 210, filled=True)
+            pico.draw_rectangle(x - 34, y, x + 34, y + 5,
+                                *PANEL, THEME.track_alpha, filled=True)
             if level:
-                color = (round(214 + 41 * level), round(173 - 113 * level), round(104 - 43 * level))
-                pico.draw_rectangle(x - 33, y + 1, x - 33 + 66 * level, y + 4, *color, filled=True)
+                pico.draw_rectangle(x - 33, y + 1, x - 33 + 66 * level, y + 4,
+                                    *ACCENT, round(120 + 135 * level), filled=True)
 
     def _draw_gameplay_alerts(self, simulation, camera, *, map_open, paused):
         if simulation.alarms:
@@ -402,7 +406,7 @@ class HUD:
                              if entry.near(simulation.player.xy)), key=lambda entry: entry.until, default=None)
             if alarm is not None and alarm.until > simulation.time:
                 self.label("region_alarm", f"지역 경보  ·  {math.ceil(alarm.until - simulation.time)}초", 16,
-                           (255, 133, 107))
+                           ACCENT)
                 x = (camera.width - self.labels["region_alarm"].width) / 2
                 self.text("region_alarm", x, camera.height - (52 if paused else 27))
         if map_open or simulation.player.hp > 0 or simulation.respawn_selecting:
@@ -449,7 +453,7 @@ class HUD:
             level = max(0.0, min(1.0, memory.recognition))
             radius = 47 + (ring % 3) * 11
             ring += 1
-            color = (round(243 + 12 * level), round(205 - 135 * level), round(112 - 48 * level))
+            color = ACCENT
             arc_alpha = round(220 * max(0.0, 1.0 - level / 0.55))
             if arc_alpha:
                 for step in range(4):
@@ -471,7 +475,7 @@ class HUD:
                 continue
             opacity = (0.4 + 0.6 * abs(math.cos(elapsed * math.tau * 2)) if elapsed < 0.5
                        else 2 * (1 - elapsed))
-            triangle(angle, 47 + ring_index * 11, 50, 16, (255, 66, 60, round(235 * opacity)))
+            triangle(angle, 47 + ring_index * 11, 50, 16, (*ACCENT, round(235 * opacity)))
         if shapes:
             MapBatch(self.backend, shapes).draw(self.backend)
 
@@ -482,9 +486,9 @@ class HUD:
         for number, site in enumerate(sites, 1):
             x, y = point(*site["position"])
             marker = f"respawn_marker/{number}"
-            self.label(marker, str(number), 16, (17, 28, 31))
+            self.label(marker, str(number), 16, TEXT)
             half_width = self.labels[marker].width / 2
-            pico.draw_rectangle(x - 10, y - 10, x + 10, y + 10, 118, 215, 191, filled=True)
+            pico.draw_rectangle(x - 10, y - 10, x + 10, y + 10, *ACCENT, filled=True)
             self.text(marker, x - half_width, y)
             stored = simulation.safehouse_stash.get(site["id"])
             loadout = f"  ·  보관 {stored.spec.name}" if stored else ""
@@ -501,11 +505,11 @@ class HUD:
         if map_open and now >= self.next_update:
             self.next_update = now + 0.2
             for facility in simulation.world.facilities:
-                self.label("poi_name/" + facility["id"], facility["name"], 16, (222, 234, 225))
+                self.label("poi_name/" + facility["id"], facility["name"], 16, TEXT)
                 campaign = simulation.campaign.simulation.state.facilities.get(facility["campaign_id"])
                 status = (f"피해 {campaign.damage}%  보급 {campaign.inventory['supplies']}"
                           if campaign else "복귀 거점")
-                self.label("poi_status/" + facility["id"], status, 13, (165, 195, 185))
+                self.label("poi_status/" + facility["id"], status, 13, THEME.muted)
         width, height = camera.width, camera.height
         if debug:
             self._update_debug(simulation, camera, now, update_ms, draw_ms, cache_count)
@@ -524,7 +528,7 @@ class HUD:
                                 *ACCENT, filled=True)
             pico.draw_rectangle(width - 33, height - 39, width - 28, height - 21,
                                 *ACCENT, filled=True)
-        if (debug or minimap_open) and not map_open:
+        if (debug or minimap_open) and not map_open and inventory_view is None:
             self._minimap(simulation, camera, debug, seen_enemies)
         if map_open:
             self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused,
@@ -535,17 +539,20 @@ class HUD:
             self._draw_inventory(camera, *inventory_view, weapon_images or {})
 
     def _draw_inventory(self, camera, layout, mouse, press, weapon_images):
-        red = (245, 92, 83)
+        red = ACCENT
         height = camera.height
 
         def box(rect, color, *, filled=False):
             left, top, right, bottom = rect
             pico.draw_rectangle(left, height - bottom, right, height - top, *color, filled=filled)
 
-        pico.draw_rectangle(0, 0, camera.width, height, 9, 15, 18, 244, filled=True)
-        box(layout.panel, (86, 99, 99))
-        box(layout.bag_box, (75, 91, 91))
-        box(layout.floor_box, (75, 91, 91))
+        pico.draw_rectangle(0, 0, camera.width, height,
+                            *PANEL, THEME.modal_alpha, filled=True)
+        box(layout.panel, (*PANEL, THEME.panel_alpha), filled=True)
+        box(layout.panel, (*PANEL_EDGE, THEME.edge_alpha))
+        for section in (layout.bag_box, layout.floor_box):
+            box(section, (*PANEL, THEME.panel_alpha), filled=True)
+            box(section, (*PANEL_EDGE, THEME.edge_alpha))
         self.label("inventory_bag_title", f"BACKPACK {layout.weight:.1f}KG / {BAG_LIMIT:g}KG", 16, red)
         self.label("inventory_floor_title", "FLOOR", 16, red)
         self.text("inventory_bag_title", layout.bag_box[0] + 5, height - layout.bag_box[1] + 18)
@@ -557,7 +564,8 @@ class HUD:
                 self.text(key, entry.rect[0], height - entry.rect[1] - 10)
                 continue
             highlighted = entry.active or entry.contains(*mouse)
-            box(entry.rect, (145, 83, 78) if highlighted else (91, 105, 104))
+            box(entry.rect, (*ACCENT, THEME.edge_alpha) if highlighted
+                else (*PANEL_EDGE, THEME.edge_alpha))
             image = weapon_images.get(entry.weapon_id)
             if image is not None:
                 left, top, right, bottom = entry.rect
@@ -566,7 +574,7 @@ class HUD:
         for column, entries in (("bag", layout.bag), ("floor", layout.floor)):
             for index, entry in enumerate(entries):
                 if entry.contains(*mouse) or press and press[0] == entry:
-                    box(entry.rect, (43, 57, 57), filled=True)
+                    box(entry.rect, (*ACCENT, THEME.hover_alpha), filled=True)
                 key = f"inventory_{column}_{index}"
                 self.label(key, entry.name, 16, red)
                 self.text(key, entry.rect[0] + 5, height - entry.rect[1] - 12)
@@ -588,10 +596,11 @@ class HUD:
         width, height = 202, 146
         x0, y0 = ((camera.width - width - 16, 16) if debug else
                   (16, camera.height - height - 16))
-        pico.draw_rectangle(x0, y0, x0 + width, y0 + height, *PANEL, 222, filled=True)
+        pico.draw_rectangle(x0, y0, x0 + width, y0 + height,
+                            *PANEL, THEME.panel_alpha, filled=True)
         left, bottom, map_width, map_height = x0 + 4, y0 + 4, width - 8, height - 8
         pico.draw_rectangle(left, bottom, left + map_width, bottom + map_height,
-                            29, 44, 47, filled=True)
+                            *PANEL, THEME.panel_alpha, filled=True)
         player = simulation.player
         world = simulation.world
         scale = MINIMAP_SCALE
@@ -618,13 +627,14 @@ class HUD:
             for actor in simulation.guards:
                 if actor.hp > 0 and (debug or actor.id in seen_enemies) and bounds.segment_entry(actor.xy, actor.xy) is not None:
                     x, y = point(*actor.xy)
-                    pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, 237, 126, 104, filled=True)
+                    pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *ACCENT, filled=True)
             x, y = point(*player.xy)
-            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, 107, 226, 202, filled=True)
-            pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, 21, 42, 43, filled=True)
+            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *TEXT, filled=True)
+            pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *ACCENT, filled=True)
         finally:
             self.backend.SDL_RenderSetClipRect(self.backend.renderer, None)
-        pico.draw_rectangle(left, bottom, left + map_width, bottom + map_height, 78, 108, 106)
+        pico.draw_rectangle(left, bottom, left + map_width, bottom + map_height,
+                            *PANEL_EDGE, THEME.edge_alpha)
 
     def _draw_map_batch(self, name, world, layout, triangles):
         if self._map_world is not world:
@@ -679,7 +689,7 @@ class HUD:
                 x, y = view.pico(*sample)
                 box = (x - radius, y - radius, x + radius, y + radius)
                 pico.draw_rectangle(x - radius - 2, y - radius - 2, x + radius + 2, y + radius + 2,
-                                    14, 22, 24, 190, filled=True)
+                                    *PANEL, THEME.label_alpha, filled=True)
                 if sample in checked:
                     pico.draw_rectangle(*box, *SEARCH_CONFIRMED, filled=True)
                 elif sample in blocked:
@@ -704,10 +714,13 @@ class HUD:
             return (width / 2 + (x - center_x) * scale + navigation.pan_x,
                     height / 2 - (y - center_y) * scale - navigation.pan_y)
 
-        pico.draw_rectangle(0, 0, width, height, 10, 18, 21, 244, filled=True)
+        pico.draw_rectangle(0, 0, width, height,
+                            *PANEL, THEME.modal_alpha, filled=True)
         left, bottom, area_width, area_height = viewport
         pico.draw_rectangle(left, bottom, left + area_width, bottom + area_height,
-                            26, 40, 42, filled=True)
+                            *PANEL, THEME.panel_alpha, filled=True)
+        pico.draw_rectangle(left, bottom, left + area_width, bottom + area_height,
+                            *PANEL_EDGE, THEME.edge_alpha)
         clip = self.backend.SDL_Rect(left, height - bottom - area_height, area_width, area_height)
         self.backend.SDL_RenderSetClipRect(self.backend.renderer, ctypes.byref(clip))
         try:
@@ -721,12 +734,12 @@ class HUD:
                                       map_width, map_height)
             for key, rect in world.territories.items():
                 a, b = point(rect.x, rect.y), point(rect.right, rect.bottom)
-                pico.draw_rectangle(a[0], b[1], b[0], a[1], 72, 103, 101)
+                pico.draw_rectangle(a[0], b[1], b[0], a[1], *PANEL_EDGE, THEME.edge_alpha)
             state = simulation.campaign.simulation.state
             for control in world.road_controls:
                 road = state.roads[control["road"]]
                 x, y = point(*control["position"])
-                color = (231, 111, 85) if road.blocked else (241, 211, 135)
+                color = ACCENT if road.blocked else TEXT
                 pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *color, filled=True)
             if not selecting:
                 placed_labels = []
@@ -735,7 +748,7 @@ class HUD:
                     px, py = point(x + w / 2, y + h / 2)
                     if not left - 160 <= px <= left + area_width + 160 or not bottom - 30 <= py <= bottom + area_height + 30:
                         continue
-                    color = (107, 214, 189) if facility["kind"] == "safehouse" else (225, 190, 114)
+                    color = TEXT if facility["kind"] == "safehouse" else ACCENT
                     pico.draw_rectangle(px - 4, py - 4, px + 4, py + 4, *color, filled=True)
                     name = "poi_name/" + facility["id"]
                     status = "poi_status/" + facility["id"]
@@ -754,7 +767,7 @@ class HUD:
                     _, _, label_x, label_y = min(choices)
                     placed_labels.append((label_x, label_y, label_x + label_width, label_y + 42))
                     pico.draw_rectangle(label_x, label_y, label_x + label_width, label_y + 42,
-                                        12, 21, 25, 215, filled=True)
+                                        *PANEL, THEME.label_alpha, filled=True)
                     self.text(name, label_x + 9, label_y + 28)
                     self.text(status, label_x + 9, label_y + 10)
             actors = (simulation.player, *simulation.guards) if debug else (simulation.player,)
@@ -762,18 +775,18 @@ class HUD:
                 if actor.hp <= 0:
                     continue
                 x, y = point(*actor.xy)
-                color = (112, 230, 205) if actor.team == "player" else (226, 131, 92)
+                color = TEXT if actor.team == "player" else ACCENT
                 pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *color, filled=True)
             if debug or not world.data.get("generation"):
                 for convoy in simulation.campaign.convoys(simulation.time):
                     if bounds.segment_entry((convoy.x, convoy.y), (convoy.x, convoy.y)) is None:
                         continue
                     x, y = point(convoy.x, convoy.y)
-                    pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, 221, 186, 100, filled=True)
+                    pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, *ACCENT, filled=True)
         finally:
             self.backend.SDL_RenderSetClipRect(self.backend.renderer, None)
         if selecting:
-            self.label("respawn_title", "복귀할 안전가옥 선택", 24, (118, 215, 191))
+            self.label("respawn_title", "복귀할 안전가옥 선택", 24, ACCENT)
             self.label("respawn_help", f"← → 페이지 {simulation.respawn_page + 1}/{simulation.respawn_pages}"
                        " · 1~4 선택 · C 닫기", 13)
             self.text("respawn_title", 48, height - 62)
@@ -784,7 +797,7 @@ class HUD:
 
     def _draw_operation_notes(self, simulation, camera, index, point):
         x, top = camera.width - 440, camera.height - 180
-        self.label("intel_title", "정보 노트  ·  ↑↓ 선택  /  I 닫기", 16, (118, 215, 191))
+        self.label("intel_title", "정보 노트  ·  ↑↓ 선택  /  I 닫기", 16, ACCENT)
         self.text("intel_title", x, top)
         notes = sorted(simulation.operation_notes.values(),
                        key=lambda note: (-max(note.recorded_at or 0, note.observed_at or 0), note.operation_id))
@@ -801,7 +814,8 @@ class HUD:
             y = top - 34 - (offset - first) * 26
             key = f"intel_row/{offset - first}"
             if offset == index:
-                pico.draw_rectangle(x - 8, y - 12, x + 344, y + 10, 55, 81, 73, filled=True)
+                pico.draw_rectangle(x - 8, y - 12, x + 344, y + 10,
+                                    *ACCENT, THEME.hover_alpha, filled=True)
             self.label(key, f"{offset + 1}. {kind}", 16)
             self.text(key, x, y)
 
@@ -829,10 +843,10 @@ class HUD:
         route = [(state.nodes[key].position.x, state.nodes[key].position.y) for key in note.route]
         for start, end in zip(route, route[1:]):
             if all(bounds.segment_entry(node, node) is not None for node in (start, end)):
-                pico.draw_line(*point(*start), *point(*end), 250, 201, 105)
+                pico.draw_line(*point(*start), *point(*end), *ACCENT)
         if note.observed_position is not None and bounds.segment_entry(note.observed_position, note.observed_position) is not None:
             x, y = point(*note.observed_position)
-            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, 118, 215, 191)
+            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *ACCENT)
 
     def close(self):
         self._map_batches.clear()

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from campaign.persistence import write_save
+from .hud_theme import MAP_CACHE_KEY
 
 
 MAX_WORLD_BYTES = 64 * 1024 * 1024
@@ -46,7 +47,7 @@ class WorldFiles:
 
     @property
     def map_path(self):
-        return self.directory / "map-v1.png"
+        return self.directory / f"map-{MAP_CACHE_KEY}.png"
 
     def snapshot_path(self, revision):
         _check_digest(revision)

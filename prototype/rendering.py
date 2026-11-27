@@ -11,6 +11,7 @@ from .ai_config import RADIO_GRACE_SECONDS, RADIO_TRANSMIT_SECONDS
 from .geometry import Rect
 from .camera import CANVAS_SIZE
 from .hud import HUD
+from .hud_theme import THEME
 from .lighting import Lighting, incident_light, smooth
 from .map_images import MapImages
 from .perception import INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS
@@ -39,6 +40,7 @@ class Renderer:
         # SDL이 출력과 마우스 이벤트를 같은 논리 좌표로 변환한다.
         self.backend.SDL_RenderSetLogicalSize(self.backend.renderer, *CANVAS_SIZE)
         self.backend.SDL_ShowCursor(self.backend.SDL_DISABLE)
+        self.cursor_visible = False
         self.images, self.missing = {}, []
         self.map_images = MapImages(self.backend)
         self.lighting = Lighting(self.backend)
@@ -128,7 +130,7 @@ class Renderer:
                     previous_trunk_alpha = fade
                 self.tree_trunk.draw(px, py, rect.w * view.scale, rect.h * view.scale)
             if debug:
-                self._rect(view, rect, (148, 190, 124), filled=False)
+                self._rect(view, rect, THEME.white, filled=False)
         if previous_trunk_alpha != 1:
             self.tree_trunk.opacify(1.0)
 
@@ -143,10 +145,10 @@ class Renderer:
                 edge = tuple(sorted((key, neighbor)))
                 if edge not in drawn:
                     drawn.add(edge)
-                    pico.draw_line(x, y, *view.pico(*navigation.nodes[neighbor]), 100, 139, 177)
+                    pico.draw_line(x, y, *view.pico(*navigation.nodes[neighbor]), *THEME.muted)
         for key in keys:
             x, y = view.pico(*navigation.nodes[key])
-            pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, 152, 198, 240, filled=True)
+            pico.draw_rectangle(x - 3, y - 3, x + 3, y + 3, *THEME.white, filled=True)
 
     @staticmethod
     def _draw_awareness(brain, x, y, time):
@@ -154,22 +156,23 @@ class Renderer:
         level = brain.memory.recognition
         grace = RADIO_GRACE_SECONDS - (time - brain.contact_at) if brain.contact_at is not None else 0
         if radio_start is not None:
-            color = (255, 112, 96)
+            color = THEME.red
             progress = min(1.0, (time - radio_start) / RADIO_TRANSMIT_SECONDS)
             pico.draw_rectangle(x - 3, y + 5, x + 3, y + 12, *color, filled=True)
             pico.draw_line(x + 2, y + 12, x + 2, y + 16, *color)
         elif brain.memory.visible or grace > 0:
-            color = (255, 91, 80)
+            color = THEME.red
             progress = grace / RADIO_GRACE_SECONDS if grace > 0 else 1.0
             pico.draw_line(x, y + 6, x, y + 14, *color)
             pico.draw_rectangle(x - 1, y + 3, x + 1, y + 4, *color, filled=True)
         elif 0 < level < 1.0:
             progress = level
-            color = ((248, 157, 76) if level >= INSPECT_THRESHOLD else
-                     (253, 213, 109) if level >= NOTICE_THRESHOLD else (229, 235, 225))
+            color = (THEME.red if level >= INSPECT_THRESHOLD else
+                     THEME.red_dim if level >= NOTICE_THRESHOLD else THEME.white)
         else:
             return
-        pico.draw_rectangle(x - 16, y - 2, x + 16, y + 2, 29, 30, 29, filled=True)
+        pico.draw_rectangle(x - 16, y - 2, x + 16, y + 2,
+                            *THEME.black, THEME.track_alpha, filled=True)
         if progress > 0:
             pico.draw_rectangle(x - 15, y - 1, x - 15 + 30 * progress, y + 1, *color, filled=True)
 
@@ -236,28 +239,17 @@ class Renderer:
     def render(self, simulation, camera, *, debug=False, paused=False, update_ms=0.0, mouse=None, map_open=False,
                inventory_view=None, intel_index=None, minimap_open=True, map_navigation=None):
         started = perf_counter()
+        cursor_visible = inventory_view is not None or map_open
+        if cursor_visible != self.cursor_visible:
+            self.backend.SDL_ShowCursor(self.backend.SDL_ENABLE if cursor_visible else self.backend.SDL_DISABLE)
+            self.cursor_visible = cursor_visible
         view = copy(camera)
         shake_x, shake_y = simulation.feedback.offset
         view.offset_x += shake_x
         view.offset_y += shake_y
-        self.backend.SDL_SetRenderDrawColor(self.backend.renderer, 18, 28, 29, 255)
+        self.backend.SDL_SetRenderDrawColor(self.backend.renderer, *THEME.black, 255)
         self.backend.SDL_RenderClear(self.backend.renderer)
-        pico.draw_rectangle(0, 0, view.width - 1, view.height - 1, 18, 28, 29, filled=True)
-        if inventory_view is not None:
-            self.hud.render(simulation, camera, paused=paused, debug=False,
-                            update_ms=update_ms, draw_ms=self.last_draw_ms,
-                            inventory_view=inventory_view, minimap_open=False,
-                            weapon_images=self.guns)
-            self.last_draw_ms = (perf_counter() - started) * 1000
-            pico.update_canvas()
-            return
-        if map_open:
-            self.hud.render(simulation, camera, paused=paused, debug=False,
-                            update_ms=update_ms, draw_ms=self.last_draw_ms, map_open=True,
-                            intel_index=intel_index, map_navigation=map_navigation)
-            self.last_draw_ms = (perf_counter() - started) * 1000
-            pico.update_canvas()
-            return
+        pico.draw_rectangle(0, 0, view.width - 1, view.height - 1, *THEME.black, filled=True)
         world = simulation.world
         visible_layers = world.visible_layers(view.viewport(1))
         self.layers = self.map_images.prepare(visible_layers)
@@ -441,27 +433,27 @@ class Renderer:
                 awareness.append((brain, x, y + max(12, 0.45 * view.scale)))
             if debug:
                 self._rect(view, Rect(actor.position.x - actor.radius, actor.position.y - actor.radius,
-                                      actor.radius * 2, actor.radius * 2), (244, 211, 119), filled=False)
-                self._rect(view, gun_bounds, (107, 187, 212), filled=False)
+                                      actor.radius * 2, actor.radius * 2), THEME.white, filled=False)
+                self._rect(view, gun_bounds, THEME.red, filled=False)
                 if brain and actor.hp:
                     previous = (x, y)
                     for point in brain.motion.path:
                         current = view.pico(*point)
-                        pico.draw_line(*previous, *current, 102, 215, 194)
+                        pico.draw_line(*previous, *current, *THEME.red)
                         px, py = current
-                        pico.draw_rectangle(px - 2, py - 2, px + 2, py + 2, 102, 215, 194, filled=True)
+                        pico.draw_rectangle(px - 2, py - 2, px + 2, py + 2, *THEME.red, filled=True)
                         previous = current
                     if brain.motion.goal is not None:
                         gx, gy = view.pico(*brain.motion.goal)
-                        color = (231, 107, 82) if brain.motion.route_failed else (102, 215, 194)
+                        color = THEME.red_dim if brain.motion.route_failed else THEME.red
                         pico.draw_rectangle(gx - 4, gy - 4, gx + 4, gy + 4, *color, filled=False)
                     if brain.memory.visible:
-                        pico.draw_line(x, y, *view.pico(*brain.memory.last_seen), 212, 103, 75)
+                        pico.draw_line(x, y, *view.pico(*brain.memory.last_seen), *THEME.red_dim)
                     if (brain.memory.last_sound is not None
                             and simulation.time - brain.memory.sound_heard_at < SOUND_MEMORY_SECONDS):
                         sx, sy = view.pico(*brain.memory.last_sound)
-                        pico.draw_line(sx - 5, sy, sx + 5, sy, 244, 184, 88)
-                        pico.draw_line(sx, sy - 5, sx, sy + 5, 244, 184, 88)
+                        pico.draw_line(sx - 5, sy, sx + 5, sy, *THEME.red)
+                        pico.draw_line(sx, sy - 5, sx, sy + 5, *THEME.red)
         self.lighting.draw(world, view, lights, sky, night_vision=night_vision, floor=floor)
         # 지면 조명으로 그려진 그림자 위에 수관을 별도로 합성한다.
         self._draw_trees(view, colliders, player.xy, sky, night_vision, debug)
@@ -484,7 +476,7 @@ class Renderer:
             color = (249, 225, 137) if trace.team == "player" else (230, 128, 92)
             pico.draw_line(*view.pico(*trace.start), *view.pico(*trace.end), *color)
         aim_point = None
-        if mouse is not None and not map_open and player.hp > 0 and flash_left <= 0:
+        if mouse is not None and not map_open and inventory_view is None and player.hp > 0 and flash_left <= 0:
             # 흔들리는 화면에서도 실제 조준한 월드 지점에 조준점을 함께 그린다.
             aim = camera.world(*mouse)
             x, y = view.pico(*aim)
@@ -494,7 +486,7 @@ class Renderer:
             gap = max(4, math.dist(simulation.player.xy, aim) * view.scale * math.tan(math.radians(spread)))
             for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 pico.draw_line(x + dx * gap, y + dy * gap, x + dx * (gap + 5), y + dy * (gap + 5),
-                               226, 230, 202)
+                               *THEME.white)
         if simulation.feedback.alpha > 0.001:
             self.vignette.opacify(simulation.feedback.alpha)
             self.vignette.draw(camera.width / 2, camera.height / 2, camera.width, camera.height)
