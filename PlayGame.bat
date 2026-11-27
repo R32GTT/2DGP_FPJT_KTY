@@ -7,10 +7,4 @@ if not exist ".venv\Scripts\python.exe" (
         exit /b 1
     )
 )
-".venv\Scripts\python.exe" -B -X utf8 -m prototype
-if errorlevel 1 (
-    echo.
-    echo [PlayGame] Game launch failed. The error is shown above.
-    pause
-    exit /b 1
-)
+wscript.exe "%~dp0PlayGame.vbs"

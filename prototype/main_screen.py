@@ -2,6 +2,7 @@
 
 import ctypes
 from concurrent.futures import ThreadPoolExecutor
+from math import cos, pi
 from time import perf_counter, sleep
 
 import pico2d as pico
@@ -20,6 +21,9 @@ ITEMS = (("new_game", "새 게임"), ("continue", "이어하기"),
 ITEM_CENTERS = (450, 600, 750, 900)
 MENU_IDLE_SECONDS = 8.0
 FRAME_SECONDS = 1 / 60
+RED_PULSE_SECONDS = 5.2
+RED_MIN_OPACITY = 0.08
+RED_MAX_OPACITY = 0.55
 
 
 def _smooth(start, end, value):
@@ -139,13 +143,11 @@ class MainScreen:
         self.base.draw(width / 2, height / 2, width, height)
         darkness = round(255 - 103 * _smooth(0.0, 1.3, elapsed))
         pico.draw_rectangle(0, 0, width, height, *THEME.black, darkness, filled=True)
-        # 후방 램프 틈새의 푸른빛은 정적인 몇 개의 도형으로 유지한다.
-        slit = _smooth(0.25, 1.2, elapsed)
-        if slit:
-            pico.draw_rectangle(636, 214, 644, 408, 54, 118, 164, round(23 * slit), filled=True)
-            pico.draw_rectangle(639, 214, 641, 408, 132, 203, 236, round(117 * slit), filled=True)
-        pulse = max(0.0, 1.0 - abs(elapsed - 0.62) / 0.27) ** 2
-        self.red_light.opacify(min(1.0, 0.19 * _smooth(0.25, 1.3, elapsed) + 0.81 * pulse))
+        first_flash = max(0.0, 1.0 - abs(elapsed - 0.62) / 0.27) ** 2
+        phase = max(0.0, elapsed - 1.3) / RED_PULSE_SECONDS
+        slow_pulse = (1.0 - cos(2 * pi * phase)) / 2
+        steady = RED_MIN_OPACITY + (RED_MAX_OPACITY - RED_MIN_OPACITY) * slow_pulse
+        self.red_light.opacify(min(1.0, steady * _smooth(0.25, 1.3, elapsed) + 0.92 * first_flash))
         self.red_light.draw(width / 2, height / 2, width, height)
         self.title.opacify(_smooth(0.95, 2.65, elapsed))
         self.title.draw(width / 2, height / 2, width, height)
