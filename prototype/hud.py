@@ -13,6 +13,7 @@ from .geometry import Rect
 from .inventory import BAG_LIMIT
 from .intelligence import OPERATION_NAMES
 from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
+from .minimap_image import MINIMAP_SCALE, build_minimap_image
 from .weapons import STAGE_NAMES
 from .hud_theme import ACCENT, FONT_PATH, FONT_SIZES, PANEL, PANEL_EDGE, TEXT
 
@@ -57,6 +58,9 @@ class HUD:
         self._map_world = None
         self._map_batches = {}
         self._map_image = None
+        self._mini_image = None
+        self._mini_world = None
+        self._mini_revision = -1
         self._shown_weapon = None
         self._weapon_card_until = 0.0
         self._active_threats = set()
@@ -77,6 +81,29 @@ class HUD:
             self._map_world = world
             self._map_batches.clear()
             self._map_image = pico.load_image(str(world.map_background_path))
+        if world.map_background_path is None:
+            self._prepare_minimap_image(world)
+
+    def _prepare_minimap_image(self, world):
+        if self._mini_world is world and self._mini_revision == world.revision:
+            return
+        image = build_minimap_image(world)
+        width, height = image.size
+        pixels = ctypes.create_string_buffer(image.tobytes())
+        surface = self.backend.SDL_CreateRGBSurfaceWithFormatFrom(
+            pixels, width, height, 32, width * 4, self.backend.SDL_PIXELFORMAT_RGBA32)
+        if not surface:
+            raise RuntimeError("미니맵 표면 생성 실패")
+        try:
+            texture = self.backend.SDL_CreateTextureFromSurface(self.backend.renderer, surface)
+        finally:
+            self.backend.SDL_FreeSurface(surface)
+        if not texture:
+            raise RuntimeError("미니맵 텍스처 생성 실패")
+        self.backend.SDL_SetTextureScaleMode(texture, self.backend.SDL_ScaleModeNearest)
+        self._mini_image = pico.Image(texture)
+        self._mini_world = world
+        self._mini_revision = world.revision
 
     def label(self, key, text, size=16, color=(223, 230, 218)):
         if not text:
@@ -316,12 +343,12 @@ class HUD:
             return
         width = 94
         self.label("game_health", f"{max(0, player.hp):.0f}/100", self.type["detail"], TEXT)
-        self.text("game_health", x - self.labels["game_health"].width / 2, y + 12)
-        pico.draw_rectangle(x - width / 2 - 2, y - 2, x + width / 2 + 2, y + 7,
+        self.text("game_health", x - self.labels["game_health"].width / 2, y + 20)
+        pico.draw_rectangle(x - width / 2 - 2, y - 7, x + width / 2 + 2, y + 2,
                             12, 21, 25, 220, filled=True)
-        pico.draw_rectangle(x - width / 2, y, x + width / 2, y + 5, 83, 42, 45, filled=True)
+        pico.draw_rectangle(x - width / 2, y - 5, x + width / 2, y, 83, 42, 45, filled=True)
         if player.hp > 0:
-            pico.draw_rectangle(x - width / 2, y, x - width / 2 + width * min(1.0, player.hp / 100), y + 5,
+            pico.draw_rectangle(x - width / 2, y - 5, x - width / 2 + width * min(1.0, player.hp / 100), y,
                                 244, 95, 89, filled=True)
 
     def _draw_ammo(self, weapon, aim_point, view):
@@ -362,6 +389,28 @@ class HUD:
             if level:
                 color = (round(214 + 41 * level), round(173 - 113 * level), round(104 - 43 * level))
                 pico.draw_rectangle(x - 33, y + 1, x - 33 + 66 * level, y + 4, *color, filled=True)
+
+    def _draw_gameplay_alerts(self, simulation, camera, *, map_open, paused):
+        if simulation.alarms:
+            territory = simulation.world.territory_at(simulation.player.xy)
+            alarm = simulation.alarms.get(territory)
+            if territory not in simulation.campaign.simulation.state.regions:
+                alarm = max((entry for entry in simulation.alarms.values()
+                             if entry.near(simulation.player.xy)), key=lambda entry: entry.until, default=None)
+            if alarm is not None and alarm.until > simulation.time:
+                self.label("region_alarm", f"지역 경보  ·  {math.ceil(alarm.until - simulation.time)}초", 16,
+                           (255, 133, 107))
+                x = (camera.width - self.labels["region_alarm"].width) / 2
+                self.text("region_alarm", x, camera.height - (52 if paused else 27))
+        if map_open or simulation.player.hp > 0 or simulation.respawn_selecting:
+            return
+        if simulation.respawn_target is not None:
+            message = "안전가옥 복귀 중"
+        else:
+            message = "ENTER  ·  재시작" if simulation.equipment_range else "ENTER  ·  안전가옥 복귀"
+        self.label("respawn_notice", message, 20, TEXT)
+        self.text("respawn_notice", (camera.width - self.labels["respawn_notice"].width) / 2,
+                  camera.height / 2 - 75)
 
     def _draw_threats(self, simulation, view, threat_candidates):
         if simulation is not self._threat_simulation:
@@ -466,7 +515,8 @@ class HUD:
             self._draw_debug(simulation, camera, search_counts)
         else:
             if not map_open and inventory_view is None:
-                self._draw_player_health(simulation.player, world_view or camera)
+                if simulation.time < simulation.player.hurt_until:
+                    self._draw_player_health(simulation.player, world_view or camera)
                 self._draw_enemy_awareness(visible_enemies, world_view or camera)
                 if simulation.player.hp > 0:
                     self._draw_threats(simulation, world_view or camera, threat_candidates)
@@ -482,6 +532,8 @@ class HUD:
         if map_open:
             self._region_map(simulation, camera, debug, selecting=simulation.respawn_selecting and not paused,
                              intel_index=intel_index)
+        if not debug:
+            self._draw_gameplay_alerts(simulation, camera, map_open=map_open, paused=paused)
         if inventory_view is not None:
             self._draw_inventory(camera, simulation.inventory.bag_weight, *inventory_view)
 
@@ -510,9 +562,8 @@ class HUD:
                             29, 44, 47, filled=True)
         player = simulation.player
         world = simulation.world
-        scale = 3.0
-        center_x = round(player.position.x * 4) / 4
-        center_y = round(player.position.y * 4) / 4
+        scale = MINIMAP_SCALE
+        center_x, center_y = player.xy
         bounds = Rect(center_x - map_width / (2 * scale), center_y - map_height / (2 * scale),
                       map_width / scale, map_height / scale)
 
@@ -528,31 +579,10 @@ class HUD:
                 self._draw_map_background(world, *point(world.bounds.x, world.bounds.y),
                                           world.bounds.w * scale, world.bounds.h * scale)
             else:
-                layout = center_x, center_y, world.revision, camera.height
-
-                def geometry():
-                    landmarks = ((layer.rect, layer.color) for layer in world.visible_layers(bounds)
-                                 if layer.role in {"water", "floor", "roof", "pavement"})
-                    yield from map_rectangles(landmarks, point, camera.height)
-                    for road in world.roads:
-                        ax, ay = road["start"]
-                        bx, by = road["end"]
-                        if max(ax, bx) < bounds.x or min(ax, bx) > bounds.right or max(ay, by) < bounds.y or min(ay, by) > bounds.bottom:
-                            continue
-                        start, end = point(ax, ay), point(bx, by)
-                        dx, dy = end[0] - start[0], end[1] - start[1]
-                        half = max(1.0, road.get("width", 4) * scale / 2)
-                        factor = half / max(1e-8, math.hypot(dx, dy))
-                        nx, ny = -dy * factor, dx * factor
-                        a, b = (start[0] + nx, camera.height - start[1] - ny), (end[0] + nx, camera.height - end[1] - ny)
-                        c, d = (end[0] - nx, camera.height - end[1] + ny), (start[0] - nx, camera.height - start[1] + ny)
-                        yield (a, b, c, a, c, d), (84, 108, 108)
-                    obstacles = ((collider.rect, (67, 81, 79) if collider.active else (98, 110, 105))
-                                 for collider in world.visible_colliders(bounds)
-                                 if collider.kind not in {"terrain", "tree"})
-                    yield from map_rectangles(obstacles, point, camera.height)
-
-                self._draw_map_batch("mini local", world, layout, geometry())
+                self._prepare_minimap_image(world)
+                self._mini_image.draw(*point(world.bounds.x + world.bounds.w / 2,
+                                             world.bounds.y + world.bounds.h / 2),
+                                      world.bounds.w * scale, world.bounds.h * scale)
             for actor in simulation.guards:
                 if actor.hp > 0 and (debug or actor.id in seen_enemies) and bounds.segment_entry(actor.xy, actor.xy) is not None:
                     x, y = point(*actor.xy)
@@ -777,6 +807,8 @@ class HUD:
         self._map_batches.clear()
         self._map_world = None
         self._map_image = None
+        self._mini_image = None
+        self._mini_world = None
         self.labels.clear()
         for font in chain(self.fonts.values(), self.scaled_fonts.values()):
             self.backend.TTF_CloseFont(font.font)
