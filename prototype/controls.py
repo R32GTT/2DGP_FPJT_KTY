@@ -1,9 +1,10 @@
 """SDL 입력을 상태·일회성 명령으로 변환. 전투와 AI는 SDL을 참조하지 않는다."""
 
 import ctypes
+import math
 import sdl2
 
-from .map_navigation import MapNavigation
+from .map_navigation import MapNavigation, RESPAWN_SIDEBAR
 
 
 class Controls:
@@ -18,16 +19,20 @@ class Controls:
         self.debug = False
         self.map_open = False
         self.map_navigation = MapNavigation()
+        self.map_press = None
+        self.map_clicks = []
         self.minimap_open = True
         self.inventory_open = False
         self.inventory_events = []
         self.intel_open = False
 
-    def poll(self, camera):
+    def poll(self, camera, *, respawn_selecting=False):
         actions = []
         self.inventory_events.clear()
+        self.map_clicks.clear()
         event = sdl2.SDL_Event()
         while sdl2.SDL_PollEvent(ctypes.byref(event)):
+            map_active = self.map_open or respawn_selecting
             if event.type == sdl2.SDL_QUIT:
                 self.running = False
             elif event.type == sdl2.SDL_WINDOWEVENT and event.window.event == sdl2.SDL_WINDOWEVENT_FOCUS_LOST:
@@ -36,16 +41,22 @@ class Controls:
                 self.aiming = self.trigger_pending = False
                 self.paused = True
                 self.map_navigation.dragging = False
+                self.map_press = None
             elif event.type == sdl2.SDL_KEYDOWN and not event.key.repeat:
                 key = event.key.keysym.sym
                 self.keys.add(key)
                 if key == sdl2.SDLK_ESCAPE:
-                    if self.inventory_open:
+                    if respawn_selecting:
+                        actions.append("respawn_cancel")
+                        self.map_press = None
+                        self.map_navigation.dragging = False
+                    elif self.inventory_open:
                         self.inventory_open = False
                     elif self.intel_open:
                         self.intel_open = self.map_open = False
                     elif self.map_open:
                         self.map_open = False
+                        self.map_press = None
                         self.map_navigation.dragging = False
                     else:
                         self.running = False
@@ -61,11 +72,13 @@ class Controls:
                     actions.append({sdl2.SDLK_F5: "save", sdl2.SDLK_F6: "quick_save",
                                     sdl2.SDLK_F8: "quick_load", sdl2.SDLK_F9: "load"}[key])
                 elif key == sdl2.SDLK_m:
-                    self.map_open = not self.map_open
-                    self.map_navigation.dragging = False
-                    self.firing = self.aiming = self.trigger_pending = False
-                    self.inventory_open = self.intel_open = False
-                elif key == sdl2.SDLK_HOME and self.map_open:
+                    if not respawn_selecting:
+                        self.map_open = not self.map_open
+                        self.map_press = None
+                        self.map_navigation.dragging = False
+                        self.firing = self.aiming = self.trigger_pending = False
+                        self.inventory_open = self.intel_open = False
+                elif key == sdl2.SDLK_HOME and map_active:
                     self.map_navigation.reset()
                 elif key == sdl2.SDLK_h:
                     self.minimap_open = not self.minimap_open
@@ -93,25 +106,37 @@ class Controls:
                     actions.append({sdl2.SDLK_f: "door", sdl2.SDLK_e: "supplies", sdl2.SDLK_r: "reload",
                                     sdl2.SDLK_c: "cancel", sdl2.SDLK_v: "fire_mode", sdl2.SDLK_RETURN: "respawn"}[key])
                 elif key in (sdl2.SDLK_EQUALS, sdl2.SDLK_PLUS, sdl2.SDLK_KP_PLUS):
-                    if self.map_open:
-                        self.map_navigation.zoom_at(1.2, self.mouse, (camera.width, camera.height))
+                    if map_active:
+                        self.map_navigation.zoom_at(1.2, self.mouse, (camera.width, camera.height),
+                                                    sidebar=RESPAWN_SIDEBAR if respawn_selecting else 0)
                     else:
                         camera.set_zoom(camera.magnification * 1.2)
                 elif key in (sdl2.SDLK_MINUS, sdl2.SDLK_KP_MINUS):
-                    if self.map_open:
-                        self.map_navigation.zoom_at(1 / 1.2, self.mouse, (camera.width, camera.height))
+                    if map_active:
+                        self.map_navigation.zoom_at(1 / 1.2, self.mouse, (camera.width, camera.height),
+                                                    sidebar=RESPAWN_SIDEBAR if respawn_selecting else 0)
                     else:
                         camera.set_zoom(camera.magnification / 1.2)
             elif event.type == sdl2.SDL_KEYUP:
                 self.keys.discard(event.key.keysym.sym)
             elif event.type == sdl2.SDL_MOUSEMOTION:
                 self.mouse = (event.motion.x, event.motion.y)
-                if self.map_open and self.map_navigation.dragging:
-                    self.map_navigation.move(event.motion.xrel, event.motion.yrel)
+                if map_active and self.map_press is not None:
+                    if not self.map_navigation.dragging and math.dist(self.mouse, self.map_press) >= 5:
+                        self.map_navigation.dragging = True
+                    if self.map_navigation.dragging:
+                        self.map_navigation.move(event.motion.xrel, event.motion.yrel)
             elif event.type in (sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP):
-                if self.map_open:
+                if map_active:
                     if event.button.button == sdl2.SDL_BUTTON_LEFT:
-                        self.map_navigation.dragging = event.type == sdl2.SDL_MOUSEBUTTONDOWN
+                        if event.type == sdl2.SDL_MOUSEBUTTONDOWN:
+                            self.map_press = (event.button.x, event.button.y)
+                            self.map_navigation.dragging = False
+                        else:
+                            if self.map_press is not None and not self.map_navigation.dragging:
+                                self.map_clicks.append((event.button.x, event.button.y))
+                            self.map_press = None
+                            self.map_navigation.dragging = False
                         self.firing = False
                     elif event.button.button == sdl2.SDL_BUTTON_RIGHT:
                         self.aiming = False
@@ -128,9 +153,10 @@ class Controls:
                 elif event.button.button == sdl2.SDL_BUTTON_RIGHT:
                     self.aiming = event.type == sdl2.SDL_MOUSEBUTTONDOWN
             elif event.type == sdl2.SDL_MOUSEWHEEL:
-                if self.map_open and event.wheel.y:
+                if map_active and event.wheel.y:
                     self.map_navigation.zoom_at(1.2 ** event.wheel.y, self.mouse,
-                                                (camera.width, camera.height))
+                                                (camera.width, camera.height),
+                                                sidebar=RESPAWN_SIDEBAR if respawn_selecting else 0)
                 elif self.inventory_open and event.wheel.y:
                     self.inventory_events.append(("wheel", self.mouse, event.wheel.y))
                 else:

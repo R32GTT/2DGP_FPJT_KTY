@@ -24,6 +24,8 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
     from .controls import Controls
     from .rendering import Renderer
     from .inventory_ui import build_inventory_layout
+    from .respawn_ui import hit_respawn_map
+    from .map_navigation import RESPAWN_SIDEBAR
 
     pico2d.open_canvas(*CANVAS_SIZE, sync=True)
     renderer = None
@@ -49,10 +51,27 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
         inventory_layout = None
         inventory_layout_until = 0.0
         intel_cursor = 0
+
+        def focus_respawn_site(site):
+            controls.map_navigation.focus(site["position"], simulation.world.bounds,
+                                          (camera.width, camera.height), sidebar=RESPAWN_SIDEBAR)
+
         while controls.running and (not frames or count < frames):
             started = perf_counter()
             elapsed, previous = min(MAX_SIMULATION_BACKLOG_S, started - previous), started
-            for action in controls.poll(camera):
+            actions = controls.poll(camera, respawn_selecting=simulation.respawn_selecting)
+            if simulation.respawn_selecting:
+                for mouse in controls.map_clicks:
+                    hit = hit_respawn_map(simulation, controls.map_navigation,
+                                          (camera.width, camera.height), mouse)
+                    if hit is not None:
+                        kind, value = hit
+                        if kind == "site":
+                            simulation.select_respawn_site(value)
+                            focus_respawn_site(simulation.respawn_sites[value])
+                        else:
+                            simulation.change_respawn_page(value)
+            for action in actions:
                 if action in {"save", "load", "quick_save", "quick_load"}:
                     try:
                         if not simulation.presence:
@@ -159,11 +178,16 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     if simulation.respawn_selecting:
                         if action.startswith("slot_"):
                             simulation.choose_respawn_slot(int(action[-1]))
-                            controls.map_open = False
+                            if simulation.respawn_selected_id is not None:
+                                focus_respawn_site(simulation.respawn_sites[simulation.respawn_selected_id])
                         elif action in {"respawn_previous", "respawn_next"}:
                             simulation.change_respawn_page(1 if action == "respawn_next" else -1)
-                        elif action == "cancel":
-                            simulation.respawn_selecting = False
+                        elif action == "respawn":
+                            if simulation.confirm_respawn():
+                                controls.map_open = False
+                        elif action in {"cancel", "respawn_cancel"}:
+                            simulation.cancel_respawn_selection()
+                            controls.map_open = False
                         continue
                     if (controls.firing or controls.map_open) and action in {"door", "supplies", "facility_alternate"}:
                         simulation.message = "지도를 닫은 뒤 상호작용" if controls.map_open else "사격 중에는 상호작용할 수 없음"
@@ -189,6 +213,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                         simulation.player.weapon.automatic = not simulation.player.weapon.automatic
                     elif action == "respawn" and simulation.player.hp <= 0:
                         controls.map_open = False
+                        controls.map_navigation.reset()
                         simulation.request_respawn()
             map_open = controls.map_open or (simulation.respawn_selecting and not controls.paused)
             if simulation.player.hp <= 0:

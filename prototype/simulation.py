@@ -133,6 +133,7 @@ class PlaySimulation:
         self.respawn_target = None
         self.respawn_site_id = None
         self.respawn_selecting = False
+        self.respawn_selected_id = None
         self.respawn_page = 0
         self.respawn_sites = {site["id"]: site for site in self.world.facilities if site["kind"] == "safehouse"}
         self.dropped = []
@@ -720,20 +721,46 @@ class PlaySimulation:
         self.respawn_page = max(0, min(self.respawn_pages - 1, self.respawn_page + delta))
 
     def choose_respawn_slot(self, key):
-        self.request_respawn(self.respawn_page * RESPAWN_PAGE_SIZE + key)
+        sites = tuple(self.respawn_sites)
+        index = self.respawn_page * RESPAWN_PAGE_SIZE + key
+        if 0 <= index < len(sites):
+            self.select_respawn_site(sites[index])
+
+    def select_respawn_site(self, site_id):
+        if not self.respawn_selecting or site_id not in self.respawn_sites:
+            return False
+        self.respawn_selected_id = site_id
+        self.respawn_page = tuple(self.respawn_sites).index(site_id) // RESPAWN_PAGE_SIZE
+        return True
+
+    def cancel_respawn_selection(self):
+        self.respawn_selecting = False
+        self.respawn_selected_id = None
+
+    def confirm_respawn(self):
+        if (not self.respawn_selecting or self.respawn_selected_id is None
+                or self.player.hp > 0 or self.respawn_target is not None):
+            return False
+        self._begin_respawn(self.respawn_selected_id)
+        return True
 
     def request_respawn(self, slot=None):
         if self.player.hp > 0 or self.respawn_target is not None:
             return
-        if slot is None and len(self.respawn_sites) > 1:
+        if slot is None and self.respawn_sites:
             self.respawn_page = 0
             self.respawn_selecting = True
+            self.respawn_selected_id = None
             return
         sites = tuple(self.respawn_sites)
         if slot is not None and not 0 <= slot < len(sites):
             return
+        self._begin_respawn(sites[slot or 0] if sites else None)
+
+    def _begin_respawn(self, site_id):
         self.respawn_selecting = False
-        self.respawn_site_id = sites[slot or 0] if sites else None
+        self.respawn_selected_id = None
+        self.respawn_site_id = site_id
         self._drop_equipment()
         self.combat.traces.clear()
         self.roster.materialized = False

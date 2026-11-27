@@ -1,4 +1,4 @@
-"""HUD의 글꼴, 흰·검·빨 팔레트와 투명도. 화면별 수치는 이곳에서 조정한다."""
+"""HUD 글꼴·기본 팔레트·지도 식별색·투명도. 화면별 수치는 이곳에서 조정한다."""
 
 from dataclasses import dataclass
 from hashlib import blake2s
@@ -22,6 +22,9 @@ class HUDTheme:
     black: tuple[int, int, int] = (0, 0, 0)
     red: tuple[int, int, int] = (232, 48, 52)
     red_dim: tuple[int, int, int] = (150, 30, 34)
+    player_blue: tuple[int, int, int] = (64, 157, 255)
+    vehicle_green: tuple[int, int, int] = (83, 216, 127)
+    supply_yellow: tuple[int, int, int] = (255, 213, 70)
     modal_alpha: int = 112
     panel_alpha: int = 135
     card_alpha: int = 150
@@ -44,6 +47,10 @@ ACCENT = THEME.red
 TEXT = THEME.white
 PANEL = THEME.black
 PANEL_EDGE = THEME.white
+
+
+def vehicle_marker_color(operation_kind):
+    return THEME.supply_yellow if operation_kind == "supply" else THEME.vehicle_green
 
 
 def map_tone(color):

@@ -12,7 +12,9 @@ from campaign.routes import find_route
 from campaign.simulation import Simulation
 from prototype import generated_world
 from prototype.generated_world import generate_world, region_seed
+from prototype.map_navigation import MapNavigation, RESPAWN_SIDEBAR
 from prototype.movement import move_actor
+from prototype.respawn_ui import hit_respawn_map, page_rects, row_rect
 from prototype.simulation import PlaySimulation
 from shapely import Point, box
 from prototype.site_planning import SAFEHOUSE_FACILITY_RADIUS
@@ -58,16 +60,54 @@ class GeneratedWorldTests(unittest.TestCase):
         play.player.hp = 0
         play.request_respawn()
         self.assertEqual(play.respawn_pages, 2)
+        _, next_page = page_rects((1280, 720))
+        page_click = ((next_page[0] + next_page[2]) // 2,
+                      (next_page[1] + next_page[3]) // 2)
+        self.assertEqual(hit_respawn_map(play, MapNavigation(), (1280, 720), page_click), ("page", 1))
         play.change_respawn_page(10)
         self.assertEqual(play.respawn_page, 1)
         play.choose_respawn_slot(3)
         self.assertIsNone(play.respawn_target)
+        self.assertIsNone(play.respawn_selected_id)
         play.choose_respawn_slot(0)
+        self.assertEqual(play.respawn_selected_id, sites[4])
+        self.assertIsNone(play.respawn_target)
+        self.assertTrue(play.respawn_selecting)
+        self.assertTrue(play.confirm_respawn())
         self.assertEqual(play.respawn_site_id, sites[4])
+        self.assertFalse(play.respawn_selecting)
         play.respawn_target = play.campaign.simulation.state.world_time + 1
         play.step()
         self.assertEqual(play.player.xy, tuple(play.respawn_sites[sites[4]]["position"]))
         self.assertEqual(play.player.hp, 100)
+
+    def test_single_safehouse_requires_mouse_selection_then_confirmation(self):
+        play = PlaySimulation(generate_world(42, region_count=1, basic=True))
+        play.player.hp = 0
+        play.request_respawn()
+        self.assertTrue(play.respawn_selecting)
+        self.assertFalse(play.confirm_respawn())
+        self.assertIsNone(play.respawn_target)
+
+        site = next(iter(play.respawn_sites.values()))
+        navigation = MapNavigation()
+        size = (1280, 720)
+        projection = navigation.transform(play.world.bounds, size, sidebar=RESPAWN_SIDEBAR)
+        marker = tuple(round(value) for value in projection.screen(*site["position"]))
+        self.assertEqual(hit_respawn_map(play, navigation, size, marker), ("site", site["id"]))
+        navigation.zoom_at(2, marker, size, sidebar=RESPAWN_SIDEBAR)
+        navigation.move(25, -18)
+        zoomed = navigation.transform(play.world.bounds, size, sidebar=RESPAWN_SIDEBAR)
+        zoomed_marker = tuple(round(value) for value in zoomed.screen(*site["position"]))
+        self.assertEqual(hit_respawn_map(play, navigation, size, zoomed_marker), ("site", site["id"]))
+        left, top, right, bottom = row_rect(size, 0)
+        self.assertEqual(hit_respawn_map(play, navigation, size,
+                                         ((left + right) // 2, (top + bottom) // 2)),
+                         ("site", site["id"]))
+        self.assertTrue(play.select_respawn_site(site["id"]))
+        self.assertIsNone(play.respawn_target)
+        self.assertTrue(play.confirm_respawn())
+        self.assertEqual(play.respawn_site_id, site["id"])
 
     def test_player_starts_in_the_first_regions_safehouse(self):
         play = PlaySimulation(self.scene)

@@ -13,10 +13,12 @@ from .geometry import Rect
 from .inventory import BAG_LIMIT
 from .intelligence import OPERATION_NAMES
 from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
-from .map_navigation import MapNavigation
+from .map_navigation import MapNavigation, RESPAWN_SIDEBAR
 from .minimap_image import MINIMAP_SCALE, build_minimap_image
+from .respawn_ui import page_rects, panel_rect, row_rect, visible_sites
 from .weapons import STAGE_NAMES
-from .hud_theme import ACCENT, FONT_PATH, FONT_SIZES, FONT_WIDTH_SCALE, PANEL, PANEL_EDGE, TEXT, THEME
+from .hud_theme import (ACCENT, FONT_PATH, FONT_SIZES, FONT_WIDTH_SCALE, PANEL, PANEL_EDGE,
+                        TEXT, THEME, vehicle_marker_color)
 
 
 AI_STATES = {"idle": "대기", "patrol": "순찰", "return": "복귀", "boarding": "집결", "regroup": "수색 후 집결",
@@ -414,7 +416,7 @@ class HUD:
         if simulation.respawn_target is not None:
             message = "안전가옥 복귀 중"
         else:
-            message = "ENTER  ·  재시작" if simulation.equipment_range else "ENTER  ·  안전가옥 복귀"
+            message = "ENTER  ·  재시작" if simulation.equipment_range else "ENTER  ·  안전가옥 선택"
         self.label("respawn_notice", message, 20, TEXT)
         self.text("respawn_notice", (camera.width - self.labels["respawn_notice"].width) / 2,
                   camera.height / 2 - 75)
@@ -479,22 +481,69 @@ class HUD:
         if shapes:
             MapBatch(self.backend, shapes).draw(self.backend)
 
-    def _draw_respawn_options(self, simulation, camera, point):
-        from .simulation import RESPAWN_PAGE_SIZE
-        start = simulation.respawn_page * RESPAWN_PAGE_SIZE
-        sites = list(simulation.respawn_sites.values())[start:start + RESPAWN_PAGE_SIZE]
-        for number, site in enumerate(sites, 1):
-            x, y = point(*site["position"])
-            marker = f"respawn_marker/{number}"
-            self.label(marker, str(number), 16, TEXT)
-            half_width = self.labels[marker].width / 2
-            pico.draw_rectangle(x - 10, y - 10, x + 10, y + 10, *ACCENT, filled=True)
-            self.text(marker, x - half_width, y)
-            stored = simulation.safehouse_stash.get(site["id"])
-            loadout = f"  ·  보관 {stored.spec.name}" if stored else ""
-            key = f"respawn_option/{number}"
-            self.label(key, f"[{number}] {site['name']}{loadout}", 16)
-            self.text(key, camera.width - 350, camera.height - 168 - number * 32)
+    def _draw_respawn_options(self, simulation, camera, projection):
+        size = camera.width, camera.height
+        left, top, map_width, map_height = projection.viewport
+
+        def box(rect, color, *, filled=False):
+            x0, y0, x1, y1 = rect
+            pico.draw_rectangle(x0, camera.height - y1, x1, camera.height - y0, *color, filled=filled)
+
+        selected = simulation.respawn_sites.get(simulation.respawn_selected_id)
+        for site in simulation.respawn_sites.values():
+            x, screen_y = projection.screen(*site["position"])
+            if not left + 12 <= x <= left + map_width - 12 or not top + 12 <= screen_y <= top + map_height - 12:
+                continue
+            y = camera.height - screen_y
+            active = site is selected
+            radius = 13 if active else 10
+            pico.draw_rectangle(x - radius, y - radius, x + radius, y + radius,
+                                *PANEL_EDGE, THEME.edge_alpha)
+            pico.draw_rectangle(x - radius + 2, y - radius + 2, x + radius - 2, y + radius - 2,
+                                *PANEL, THEME.card_alpha, filled=True)
+            pico.draw_rectangle(x - 5, y - 5, x + 5, y + 5,
+                                *(ACCENT if active else TEXT), filled=True)
+            if active:
+                self.label("respawn_selected_name", site["name"], 16, ACCENT)
+                label_width = self.labels["respawn_selected_name"].width + 16
+                label_x = max(left + 4, min(left + map_width - label_width - 4, x + 18))
+                label_y = max(top + 4, min(top + map_height - 30, screen_y - 33))
+                box((label_x, label_y, label_x + label_width, label_y + 26),
+                    (*PANEL, THEME.label_alpha), filled=True)
+                box((label_x, label_y, label_x + label_width, label_y + 26),
+                    (*PANEL_EDGE, THEME.edge_alpha))
+                self.text("respawn_selected_name", label_x + 8, camera.height - label_y - 13)
+
+        panel = panel_rect(size)
+        box(panel, (*PANEL, THEME.card_alpha), filled=True)
+        box(panel, (*PANEL_EDGE, THEME.edge_alpha))
+        self.label("respawn_title", "복귀 위치", 24, ACCENT)
+        self.text("respawn_title", panel[0] + 16, camera.height - 79)
+        self.label("respawn_help", "마커 또는 목록 클릭", 13, TEXT)
+        self.text("respawn_help", panel[0] + 16, camera.height - 107)
+        for index, site in enumerate(visible_sites(simulation)):
+            rect = row_rect(size, index)
+            active = site is selected
+            if active:
+                box(rect, (*THEME.red_dim, THEME.hover_alpha), filled=True)
+            box(rect, (*(ACCENT if active else PANEL_EDGE), THEME.edge_alpha))
+            key = f"respawn_option/{index}"
+            self.label(key, site["name"], 16, ACCENT if active else TEXT)
+            self.text(key, rect[0] + 10, camera.height - rect[1] - 17)
+        if simulation.respawn_pages > 1:
+            previous, following = page_rects(size)
+            for key, rect, glyph in (("respawn_previous", previous, "‹"),
+                                     ("respawn_next", following, "›")):
+                box(rect, (*PANEL_EDGE, THEME.edge_alpha))
+                self.label(key, glyph, 20, TEXT)
+                self.text(key, (rect[0] + rect[2] - self.labels[key].width) / 2,
+                          camera.height - (rect[1] + rect[3]) / 2)
+            self.label("respawn_page", f"{simulation.respawn_page + 1}/{simulation.respawn_pages}", 16)
+            self.text("respawn_page", (previous[2] + following[0] - self.labels["respawn_page"].width) / 2,
+                      camera.height - 337)
+        self.label("respawn_confirm", "선택 후 ENTER 확정 · ESC 취소", 13,
+                   ACCENT if selected else THEME.muted)
+        self.text("respawn_confirm", panel[0] + 16, camera.height - 374)
 
     def render(self, simulation, camera, *, paused, debug, update_ms, draw_ms, map_open=False,
                cache_count=0, search_counts=None, seen_enemies=(), inventory_view=None, intel_index=None,
@@ -628,9 +677,18 @@ class HUD:
                 if actor.hp > 0 and (debug or actor.id in seen_enemies) and bounds.segment_entry(actor.xy, actor.xy) is not None:
                     x, y = point(*actor.xy)
                     pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *ACCENT, filled=True)
+            operations = simulation.campaign.simulation.state.operations
+            for convoy in simulation.campaign.convoys(simulation.time, bounds=bounds):
+                if convoy.vehicles <= 0 or bounds.segment_entry((convoy.x, convoy.y),
+                                                                 (convoy.x, convoy.y)) is None:
+                    continue
+                x, y = point(convoy.x, convoy.y)
+                color = vehicle_marker_color(operations[convoy.id].kind)
+                pico.draw_rectangle(x - 4, y - 3, x + 4, y + 3, *PANEL_EDGE, filled=True)
+                pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, *color, filled=True)
             x, y = point(*player.xy)
-            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *TEXT, filled=True)
-            pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *ACCENT, filled=True)
+            pico.draw_rectangle(x - 6, y - 6, x + 6, y + 6, *PANEL_EDGE, filled=True)
+            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *THEME.player_blue, filled=True)
         finally:
             self.backend.SDL_RenderSetClipRect(self.backend.renderer, None)
         pico.draw_rectangle(left, bottom, left + map_width, bottom + map_height,
@@ -704,15 +762,13 @@ class HUD:
         width, height = camera.width, camera.height
         world = simulation.world
         bounds = world.bounds
-        viewport = (24, 24, width - 48, height - 48)
-        fit = min((viewport[2] - 24) / bounds.w, (viewport[3] - 24) / bounds.h)
-        scale = fit * navigation.zoom
-        navigation.clamp((bounds.w * scale, bounds.h * scale), viewport[2:])
-        center_x, center_y = bounds.x + bounds.w / 2, bounds.y + bounds.h / 2
+        projection = navigation.transform(bounds, (width, height),
+                                          sidebar=RESPAWN_SIDEBAR if selecting else 0)
+        viewport, scale = projection.viewport, projection.scale
 
         def point(x, y):
-            return (width / 2 + (x - center_x) * scale + navigation.pan_x,
-                    height / 2 - (y - center_y) * scale - navigation.pan_y)
+            screen_x, screen_y = projection.screen(x, y)
+            return screen_x, height - screen_y
 
         pico.draw_rectangle(0, 0, width, height,
                             *PANEL, THEME.modal_alpha, filled=True)
@@ -775,23 +831,24 @@ class HUD:
                 if actor.hp <= 0:
                     continue
                 x, y = point(*actor.xy)
-                color = TEXT if actor.team == "player" else ACCENT
-                pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *color, filled=True)
-            if debug or not world.data.get("generation"):
-                for convoy in simulation.campaign.convoys(simulation.time):
-                    if bounds.segment_entry((convoy.x, convoy.y), (convoy.x, convoy.y)) is None:
-                        continue
-                    x, y = point(convoy.x, convoy.y)
-                    pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, *ACCENT, filled=True)
+                if actor.team == "player":
+                    pico.draw_rectangle(x - 7, y - 7, x + 7, y + 7, *PANEL_EDGE, filled=True)
+                    pico.draw_rectangle(x - 5, y - 5, x + 5, y + 5, *THEME.player_blue, filled=True)
+                else:
+                    pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *ACCENT, filled=True)
+            for convoy in simulation.campaign.convoys(simulation.time, bounds=bounds):
+                if convoy.vehicles <= 0 or bounds.segment_entry((convoy.x, convoy.y),
+                                                                 (convoy.x, convoy.y)) is None:
+                    continue
+                x, y = point(convoy.x, convoy.y)
+                operation = state.operations[convoy.id]
+                color = vehicle_marker_color(operation.kind)
+                pico.draw_rectangle(x - 5, y - 4, x + 5, y + 4, *PANEL_EDGE, filled=True)
+                pico.draw_rectangle(x - 4, y - 3, x + 4, y + 3, *color, filled=True)
         finally:
             self.backend.SDL_RenderSetClipRect(self.backend.renderer, None)
         if selecting:
-            self.label("respawn_title", "복귀할 안전가옥 선택", 24, ACCENT)
-            self.label("respawn_help", f"← → 페이지 {simulation.respawn_page + 1}/{simulation.respawn_pages}"
-                       " · 1~4 선택 · C 닫기", 13)
-            self.text("respawn_title", 48, height - 62)
-            self.text("respawn_help", 48, height - 90)
-            self._draw_respawn_options(simulation, camera, point)
+            self._draw_respawn_options(simulation, camera, projection)
         elif intel_index is not None and world.data.get("generation"):
             self._draw_operation_notes(simulation, camera, intel_index, point)
 
