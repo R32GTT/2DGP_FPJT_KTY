@@ -9,6 +9,7 @@ from .interactions import nearby_facility
 
 OPERATION_NAMES = {"supply": "보급 수송", "export": "외부 출하", "repair": "시설 복구", "equipment": "장비 수송",
                    "redeployment": "병력 재배치", "motor_qrf": "차량 증원", "qrf": "도보 증원", "withdrawal": "철수"}
+MINIMAP_OBSERVATION_SECONDS = 45
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ def collect(play):
                 route=tuple(operation.route), quantity=quantity)
             count += 1
         if count:
+            refresh_intelligence_view(play)
             play.message = f"작전 기록 {count}건 확보 · I 정보 노트"
             return
 
@@ -81,7 +83,48 @@ def collect(play):
     key = truck.convoy.id
     note = play.operation_notes.get(key, OperationNote(key))
     play.operation_notes[key] = replace(note, observed_at=state.world_time, observed_position=(truck.x, truck.y))
+    refresh_intelligence_view(play)
     play.message = "차량 관측 위치 기록 · I 정보 노트"
+
+
+def refresh_intelligence_view(play):
+    """기록 변경 시에만 노트 순서와 지도 표시 정보를 갱신한다."""
+    state = play.campaign.simulation.state
+    notes = sorted(play.operation_notes.values(),
+                   key=lambda note: (-max(note.recorded_at or 0, note.observed_at or 0), note.operation_id))
+    play._sorted_operation_notes = tuple(notes)
+    play._observed_vehicle_markers = tuple(
+        (note.observed_position, state.operations[note.operation_id].kind if note.source else None, note.observed_at)
+        for note in notes if note.observed_position is not None and note.observed_at is not None
+        and note.operation_id in state.operations)
+    play._observed_vehicle_positions = tuple((position, kind)
+                                             for position, kind, _ in play._observed_vehicle_markers)
+    play._recent_vehicle_markers = {}
+
+
+def sorted_notes(play):
+    if not hasattr(play, "_sorted_operation_notes"):
+        refresh_intelligence_view(play)
+    return play._sorted_operation_notes
+
+
+def observed_vehicles(play, *, max_age=None):
+    """작전 기록에 남은 차량의 마지막 관측 위치만 돌려준다."""
+    if not hasattr(play, "_observed_vehicle_markers"):
+        refresh_intelligence_view(play)
+    markers = play._observed_vehicle_markers
+    if max_age is None:
+        return play._observed_vehicle_positions
+    now = play.campaign.simulation.state.world_time
+    cached = play._recent_vehicle_markers.get(max_age)
+    if cached is None or now >= cached[0]:
+        active = tuple((position, kind) for position, kind, seen_at in markers
+                       if now - seen_at <= max_age)
+        expires = min((seen_at + max_age + 1 for _, _, seen_at in markers
+                       if now - seen_at <= max_age), default=float("inf"))
+        cached = expires, active
+        play._recent_vehicle_markers[max_age] = cached
+    return cached[1]
 
 
 def restore_notes(state, rows):

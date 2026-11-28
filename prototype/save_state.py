@@ -8,7 +8,7 @@ from .actors import Actor
 from .ai_state import Brain, CombatState, Incident, RadioState, SearchCue
 from .lighting import OPTICS_MODES
 from .inventory import AMMUNITION
-from .intelligence import restore_notes
+from .intelligence import refresh_intelligence_view, restore_notes
 from .perception import Knowledge
 from .simulation import RegionAlarm
 from .transport import Trip
@@ -117,6 +117,7 @@ def restore(play, row):
     if not math.isfinite(play.time) or int(play.time + 1e-8) != state.world_time:
         raise ValueError("현장·캠페인 시각 불일치")
     play.operation_notes = restore_notes(state, row["operation_notes"])
+    refresh_intelligence_view(play)
     for key, saved in row.get("alarms", {}).items():
         position, until = tuple(saved["position"]), saved["until"]
         if (key not in state.regions or len(position) != 2 or not all(map(math.isfinite, position))

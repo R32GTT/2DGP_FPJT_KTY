@@ -20,6 +20,7 @@ from .interactions import (
 )
 from .geometry import Rect
 from .inventory import AMMUNITION, NIGHT_KIT, PICKUP_REACH, FieldInventory, weapon_slots
+from .intelligence import refresh_intelligence_view
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
 from .throwables import BURST_SECONDS, SmokeCloud, Throwables
@@ -107,6 +108,7 @@ class PlaySimulation:
         self.guards = self.roster.sync()
         self.events, self.feedback = EventBus(), Feedback()
         self.operation_notes = {}
+        refresh_intelligence_view(self)
         self.alarms = {}
         authored_lights = {instance["id"]: instance["lights"] for instance in self.world.data.get("placed_prefabs", ())
                            if instance.get("lights")}

@@ -11,9 +11,9 @@ import pico2d as pico
 from campaign.clock import world_clock
 from .geometry import Rect
 from .inventory import BAG_LIMIT
-from .intelligence import OPERATION_NAMES
+from .intelligence import MINIMAP_OBSERVATION_SECONDS, OPERATION_NAMES, observed_vehicles, sorted_notes
 from .map_batch import MapBatch, map_colliders, map_rectangles, map_roads
-from .map_navigation import MapNavigation, RESPAWN_SIDEBAR
+from .map_navigation import INTEL_SIDEBAR, MapNavigation, RESPAWN_SIDEBAR
 from .minimap_image import MINIMAP_SCALE, build_minimap_image
 from .respawn_ui import page_rects, panel_rect, row_rect, visible_sites
 from .weapons import STAGE_NAMES
@@ -687,13 +687,18 @@ class HUD:
                 if actor.hp > 0 and (debug or actor.id in seen_enemies) and bounds.segment_entry(actor.xy, actor.xy) is not None:
                     x, y = point(*actor.xy)
                     pico.draw_rectangle(x - 2, y - 2, x + 2, y + 2, *ACCENT, filled=True)
-            operations = simulation.campaign.simulation.state.operations
-            for convoy in simulation.campaign.convoys(simulation.time, bounds=bounds):
-                if convoy.vehicles <= 0 or bounds.segment_entry((convoy.x, convoy.y),
-                                                                 (convoy.x, convoy.y)) is None:
+            if debug:
+                operations = simulation.campaign.simulation.state.operations
+                vehicles = (((convoy.x, convoy.y), operations[convoy.id].kind)
+                            for convoy in simulation.campaign.convoys(simulation.time, bounds=bounds)
+                            if convoy.vehicles > 0)
+            else:
+                vehicles = observed_vehicles(simulation, max_age=MINIMAP_OBSERVATION_SECONDS)
+            for position, kind in vehicles:
+                if bounds.segment_entry(position, position) is None:
                     continue
-                x, y = point(convoy.x, convoy.y)
-                color = vehicle_marker_color(operations[convoy.id].kind)
+                x, y = point(*position)
+                color = vehicle_marker_color(kind)
                 pico.draw_rectangle(x - 4, y - 3, x + 4, y + 3, *PANEL_EDGE, filled=True)
                 pico.draw_rectangle(x - 3, y - 2, x + 3, y + 2, *color, filled=True)
             x, y = point(*player.xy)
@@ -773,7 +778,8 @@ class HUD:
         world = simulation.world
         bounds = world.bounds
         projection = navigation.transform(bounds, (width, height),
-                                          sidebar=RESPAWN_SIDEBAR if selecting else 0)
+                                          sidebar=RESPAWN_SIDEBAR if selecting else
+                                          INTEL_SIDEBAR if intel_index is not None else 0)
         viewport, scale = projection.viewport, projection.scale
 
         def point(x, y):
@@ -846,13 +852,17 @@ class HUD:
                     pico.draw_rectangle(x - 5, y - 5, x + 5, y + 5, *THEME.player_blue, filled=True)
                 else:
                     pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *ACCENT, filled=True)
-            for convoy in simulation.campaign.convoys(simulation.time, bounds=bounds):
-                if convoy.vehicles <= 0 or bounds.segment_entry((convoy.x, convoy.y),
-                                                                 (convoy.x, convoy.y)) is None:
+            if debug:
+                vehicles = (((convoy.x, convoy.y), state.operations[convoy.id].kind)
+                            for convoy in simulation.campaign.convoys(simulation.time, bounds=bounds)
+                            if convoy.vehicles > 0)
+            else:
+                vehicles = observed_vehicles(simulation)
+            for position, kind in vehicles:
+                if bounds.segment_entry(position, position) is None:
                     continue
-                x, y = point(convoy.x, convoy.y)
-                operation = state.operations[convoy.id]
-                color = vehicle_marker_color(operation.kind)
+                x, y = point(*position)
+                color = vehicle_marker_color(kind)
                 pico.draw_rectangle(x - 5, y - 4, x + 5, y + 4, *PANEL_EDGE, filled=True)
                 pico.draw_rectangle(x - 4, y - 3, x + 4, y + 3, *color, filled=True)
         finally:
@@ -860,35 +870,76 @@ class HUD:
         if selecting:
             self._draw_respawn_options(simulation, camera, projection)
         elif intel_index is not None and world.data.get("generation"):
-            self._draw_operation_notes(simulation, camera, intel_index, point)
+            self._draw_operation_notes(simulation, camera, intel_index, point, viewport)
 
-    def _draw_operation_notes(self, simulation, camera, index, point):
-        x, top = camera.width - 440, camera.height - 180
-        self.label("intel_title", "정보 노트  ·  ↑↓ 선택  /  ESC 닫기", 16, ACCENT)
-        self.text("intel_title", x, top)
-        notes = sorted(simulation.operation_notes.values(),
-                       key=lambda note: (-max(note.recorded_at or 0, note.observed_at or 0), note.operation_id))
+    def _draw_operation_notes(self, simulation, camera, index, point, viewport):
+        right = camera.width - 18
+        left = right - 382
+        card_bottom, card_top = camera.height - 382, camera.height - 50
+        detail_bottom, detail_top = 74, card_bottom - 12
+        notes = sorted_notes(simulation)
+        state = simulation.campaign.simulation.state
+        if notes:
+            index = min(index, len(notes) - 1)
+            selected = notes[index]
+            bounds = simulation.world.bounds
+            left_view, bottom_view, width_view, height_view = viewport
+            clip = self.backend.SDL_Rect(left_view, camera.height - bottom_view - height_view,
+                                         width_view, height_view)
+            self.backend.SDL_RenderSetClipRect(self.backend.renderer, ctypes.byref(clip))
+            try:
+                route = [(state.nodes[key].position.x, state.nodes[key].position.y) for key in selected.route]
+                for start, end in zip(route, route[1:]):
+                    if all(bounds.segment_entry(node, node) is not None for node in (start, end)):
+                        pico.draw_line(*point(*start), *point(*end), *ACCENT)
+                if selected.observed_position is not None and bounds.segment_entry(
+                        selected.observed_position, selected.observed_position) is not None:
+                    marker_x, marker_y = point(*selected.observed_position)
+                    pico.draw_rectangle(marker_x - 7, marker_y - 7, marker_x + 7, marker_y + 7, *ACCENT)
+            finally:
+                self.backend.SDL_RenderSetClipRect(self.backend.renderer, None)
+
+        pico.draw_rectangle(left, card_bottom, right, card_top,
+                            *THEME.note_green, 232, filled=True)
+        pico.draw_rectangle(left, card_bottom, right, card_top, *THEME.note_edge, 230)
+        pico.draw_rectangle(left + 25, card_bottom + 14, left + 27, card_top - 57,
+                            *ACCENT, 90, filled=True)
+        self.label("intel_title", "정보 노트", 22, THEME.note_text)
+        self.text("intel_title", left + 38, card_top - 36)
+        pico.draw_rectangle(left + 17, card_top - 58, right - 17, card_top - 57,
+                            *THEME.note_edge, 155, filled=True)
         if not notes:
             intel_key = binding_name(self.bindings["collect_intel"])
-            self.label("intel_empty", f"창고·HQ 단말 또는 보이는 수송대에서 {intel_key}", 13)
-            self.text("intel_empty", x, top - 38)
+            self.label("intel_empty", "기록된 정보 없음", 16, THEME.note_text)
+            self.text("intel_empty", left + 40, card_top - 105)
+            self.label("intel_hint", f"창고·HQ 단말 또는 차량 근처에서 {intel_key}", 13, THEME.note_text)
+            self.text("intel_hint", left + 40, card_top - 139)
             return
-        state = simulation.campaign.simulation.state
-        index = min(index, len(notes) - 1)
         first = min(max(0, index - 3), max(0, len(notes) - 5))
         for offset, note in enumerate(notes[first:first + 5], first):
             op = state.operations[note.operation_id]
             kind = OPERATION_NAMES[op.kind] if note.source else "미확인 차량"
-            y = top - 34 - (offset - first) * 26
+            y = card_top - 96 - (offset - first) * 44
             key = f"intel_row/{offset - first}"
             if offset == index:
-                pico.draw_rectangle(x - 8, y - 12, x + 344, y + 10,
-                                    *ACCENT, THEME.hover_alpha, filled=True)
-            self.label(key, f"{offset + 1}. {kind}", 16)
-            self.text(key, x, y)
+                pico.draw_rectangle(left + 31, y - 17, right - 14, y + 19,
+                                    *THEME.note_selected, 215, filled=True)
+            pico.draw_rectangle(left + 34, y - 21, right - 17, y - 20,
+                                *THEME.note_edge, 66, filled=True)
+            self.label(key, f"{offset + 1}. {kind}", 16, THEME.note_text)
+            self.text(key, left + 41, y)
 
         note = notes[index]
         op = state.operations[note.operation_id]
+        pico.draw_rectangle(left, detail_bottom, right, detail_top,
+                            *PANEL, THEME.card_alpha + 55, filled=True)
+        pico.draw_rectangle(left, detail_bottom, right, detail_top,
+                            *THEME.note_edge, THEME.edge_alpha)
+        detail_title = OPERATION_NAMES[op.kind] if note.source else "현장 관측"
+        self.label("intel_detail_title", detail_title, 19, THEME.note_text)
+        self.text("intel_detail_title", left + 20, detail_top - 35)
+        pico.draw_rectangle(left + 18, detail_top - 53, right - 18, detail_top - 52,
+                            *ACCENT, 210, filled=True)
         details = []
         if note.source:
             names = {site["campaign_id"]: site["name"] for site in simulation.world.facilities}
@@ -904,17 +955,8 @@ class HUD:
             details.append(f"마지막 현장 관측  {world_clock(note.observed_at)}")
         for index, detail in enumerate(details):
             key = f"intel_detail/{index}"
-            self.label(key, detail, 13)
-            self.text(key, x, top - 173 - 22 * index)
-
-        bounds = simulation.world.bounds
-        route = [(state.nodes[key].position.x, state.nodes[key].position.y) for key in note.route]
-        for start, end in zip(route, route[1:]):
-            if all(bounds.segment_entry(node, node) is not None for node in (start, end)):
-                pico.draw_line(*point(*start), *point(*end), *ACCENT)
-        if note.observed_position is not None and bounds.segment_entry(note.observed_position, note.observed_position) is not None:
-            x, y = point(*note.observed_position)
-            pico.draw_rectangle(x - 4, y - 4, x + 4, y + 4, *ACCENT)
+            self.label(key, detail, 13, THEME.note_text)
+            self.text(key, left + 20, detail_top - 82 - 27 * index)
 
     def close(self):
         self._map_batches.clear()

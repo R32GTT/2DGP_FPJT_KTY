@@ -25,6 +25,10 @@ class HUDTheme:
     player_blue: tuple[int, int, int] = (64, 157, 255)
     vehicle_green: tuple[int, int, int] = (83, 216, 127)
     supply_yellow: tuple[int, int, int] = (255, 213, 70)
+    note_green: tuple[int, int, int] = (39, 70, 48)
+    note_edge: tuple[int, int, int] = (154, 191, 151)
+    note_text: tuple[int, int, int] = (235, 244, 231)
+    note_selected: tuple[int, int, int] = (72, 113, 73)
     modal_alpha: int = 112
     panel_alpha: int = 135
     card_alpha: int = 150

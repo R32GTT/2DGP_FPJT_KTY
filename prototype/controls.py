@@ -4,7 +4,7 @@ import ctypes
 import math
 import sdl2
 
-from .map_navigation import MapNavigation, RESPAWN_SIDEBAR
+from .map_navigation import INTEL_SIDEBAR, MapNavigation, RESPAWN_SIDEBAR
 from .settings import DEFAULT_BINDINGS, input_mods, load_settings
 
 
@@ -41,6 +41,7 @@ class Controls:
         event = sdl2.SDL_Event()
         while sdl2.SDL_PollEvent(ctypes.byref(event)):
             map_active = self.map_open or respawn_selecting
+            sidebar = RESPAWN_SIDEBAR if respawn_selecting else INTEL_SIDEBAR if self.intel_open else 0
             if event.type == sdl2.SDL_QUIT:
                 self.running = False
             elif event.type == sdl2.SDL_WINDOWEVENT and event.window.event == sdl2.SDL_WINDOWEVENT_FOCUS_LOST:
@@ -109,13 +110,13 @@ class Controls:
                 elif command == "zoom_in":
                     if map_active:
                         self.map_navigation.zoom_at(1.2, self.mouse, (camera.width, camera.height),
-                                                    sidebar=RESPAWN_SIDEBAR if respawn_selecting else 0)
+                                                    sidebar=sidebar)
                     else:
                         camera.set_zoom(camera.magnification * 1.2)
                 elif command == "zoom_out":
                     if map_active:
                         self.map_navigation.zoom_at(1 / 1.2, self.mouse, (camera.width, camera.height),
-                                                    sidebar=RESPAWN_SIDEBAR if respawn_selecting else 0)
+                                                    sidebar=sidebar)
                     else:
                         camera.set_zoom(camera.magnification / 1.2)
             elif event.type == sdl2.SDL_KEYUP:
@@ -159,7 +160,7 @@ class Controls:
                 if map_active and event.wheel.y:
                     self.map_navigation.zoom_at(1.2 ** event.wheel.y, self.mouse,
                                                 (camera.width, camera.height),
-                                                sidebar=RESPAWN_SIDEBAR if respawn_selecting else 0)
+                                                sidebar=sidebar)
                 elif self.inventory_open and event.wheel.y:
                     self.inventory_events.append(("wheel", self.mouse, event.wheel.y))
                 else:

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 
 RESPAWN_SIDEBAR = 360
+INTEL_SIDEBAR = 422
 
 
 @dataclass(frozen=True)
