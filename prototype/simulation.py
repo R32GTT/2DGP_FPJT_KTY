@@ -15,6 +15,7 @@ from .events import EventBus
 from .feedback import Feedback
 from .movement import move_actor
 from .interactions import (
+    _emit_sabotage,
     disable_watch_post, exchange_safehouse_weapon, nearby_facility, nearby_road_control,
     nearby_watch_post, use_facility, use_road_control,
 )
@@ -396,7 +397,7 @@ class PlaySimulation:
         kind = site["kind"]
         action = "stock" if stock_resource else "watch" if at_watch else ("stash" if alternate else "normal") if kind == "safehouse" else (
             "sabotage" if alternate or kind not in ("warehouse", "hq") else "normal")
-        mode = self.inventory.sabotage_mode if action in ("sabotage", "watch") else "hand"
+        mode = self.inventory.sabotage_mode if action in ("sabotage", "watch", "stock") else "hand"
         charge_id = site["id"] + ("#watch" if at_watch else f"#stock:{stock_resource}" if stock_resource else "")
         if action in ("sabotage", "watch", "stock") and site["campaign_id"]:
             facility = self.campaign.simulation.state.facilities[site["campaign_id"]]
@@ -451,10 +452,20 @@ class PlaySimulation:
         charges, self.planted_charges = self.planted_charges, {}
         for charge_id, floor in sorted(charges.items()):
             at_watch = charge_id.endswith("#watch")
-            site_id = charge_id.removesuffix("#watch")
+            site_id, _, stock_resource = charge_id.partition("#stock:")
+            site_id = site_id.removesuffix("#watch")
             site = self.facilities_by_id[site_id]
-            point = tuple(site["watch_post"][0] if at_watch else site["terminal"])
-            if at_watch:
+            point = (self.supply_stack_points[(site_id, stock_resource)] if stock_resource else
+                     tuple(site["watch_post"][0] if at_watch else site["terminal"]))
+            if stock_resource:
+                state = self.campaign.simulation.state
+                count = state.facilities[site_id].inventory[stock_resource]
+                if count:
+                    self.campaign.simulation.apply_action({"type": "destroy_stock", "owner_id": site_id,
+                                                           "amount": {stock_resource: count}})
+                self.campaign.damage_facility(site_id, damage=25)
+                _emit_sabotage(self, site_id, point, method="c4")
+            elif at_watch:
                 disable_watch_post(self, site, method="c4")
             else:
                 use_facility(self, site, sabotage=True, method="c4")

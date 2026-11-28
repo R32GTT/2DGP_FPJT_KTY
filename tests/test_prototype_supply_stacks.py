@@ -42,6 +42,31 @@ class SupplyStackTests(unittest.TestCase):
             self.play.update_facility_interaction(True)
         self.assertGreater(self.play.inventory.carried["cargo:supplies"], 1)
 
+    def test_c4_destroys_only_target_stack_and_calls_repair_crew(self):
+        site_id, resource, point = self.stack("ammunition")
+        facility = self.state.facilities[site_id]
+        before = facility.inventory[resource]
+        supplies = facility.inventory["supplies"]
+        self.play.player.position = Position(*point)
+        self.play.inventory.carried[C4] = 1
+        self.play.inventory.selected_sabotage_mode = "c4"
+        for _ in range(round(2 / FIXED_DT) + 1):
+            self.play.update_facility_interaction(True)
+        charge_id = f"{site_id}#stock:{resource}"
+        self.assertIn(charge_id, self.play.planted_charges)
+        self.assertEqual(facility.inventory[resource], before)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "supply.json.gz"
+            save_game(self.play, path)
+            self.play = load_game(path)
+        self.state = self.play.campaign.simulation.state
+        facility = self.state.facilities[site_id]
+        self.play.detonate_charges()
+        self.assertEqual(facility.inventory[resource], 0)
+        self.assertEqual(facility.inventory["supplies"], supplies)
+        self.assertEqual(self.state.ledger.destroyed[resource], before)
+        assert_invariants(self.state)
+
 
 if __name__ == "__main__":
     unittest.main()

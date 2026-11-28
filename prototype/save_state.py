@@ -199,6 +199,7 @@ def restore(play, row):
     site_ids = {site["id"] for site in play.world.facilities if site["campaign_id"]}
     site_ids.update(site["id"] + "#watch" for site in play.world.facilities
                     if site["campaign_id"] and site.get("watch_post"))
+    site_ids.update(f"{site}#stock:{resource}" for site, resource, _ in play.supply_stacks)
     if (not isinstance(charges, dict) or not charges.keys() <= site_ids
             or any(type(floor) is not int or floor < 0 for floor in charges.values())):
         raise ValueError("잘못된 C4 설치 상태")
