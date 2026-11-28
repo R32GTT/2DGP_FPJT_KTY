@@ -4,6 +4,7 @@ from collections import defaultdict
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 import math
+from zlib import crc32
 
 from scipy.spatial import cKDTree
 
@@ -392,7 +393,8 @@ class IndoorSweep(Reservations):
             flags.update(zip(missing, geometry.sight_flags(origin, missing)))
         return sum(flags[point] for point in nearby)
 
-    def observation_point(self, origin, heading, candidates, remaining, navigation, *, revision=None):
+    def observation_point(self, origin, heading, candidates, remaining, navigation, *, revision=None,
+                          actor_id=""):
         forward_x, forward_y = math.cos(heading), math.sin(heading)
 
         def travel_cost(point):
@@ -418,6 +420,8 @@ class IndoorSweep(Reservations):
             cost = travel_cost(point)
             if not navigation.clear(origin, point):
                 cost += 2 * SAMPLE_M
-            return gain > 0, gain - cost / (2 * SAMPLE_M), -cost, point
+            # 큰 가시 이득은 유지하면서, 비슷한 경로에서는 병사별로 다른 위치를 고른다.
+            variation = (crc32(f"{actor_id}:{point[0]:.3f}:{point[1]:.3f}".encode()) % 1024) / 1024
+            return gain > 0, gain - cost / (2 * SAMPLE_M) + variation * 0.2, -cost, point
 
         return max(shortlist, key=score)

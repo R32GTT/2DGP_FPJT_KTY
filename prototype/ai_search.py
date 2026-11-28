@@ -1,6 +1,7 @@
 """단서 조사와 실내 관찰 진행을 관리한다."""
 
 import math
+from zlib import crc32
 
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
@@ -239,7 +240,7 @@ class SearchController:
             candidates = [p for p in area.room_points[room] if p in available]
         return min(authored, key=lambda p: math.dist(actor.xy, p), default=None) or (sweep.observation_point(
             actor.xy, actor.facing if brain.motion.heading is None else brain.motion.heading,
-            candidates, remaining, self.world.navigation, revision=revision) if candidates else None)
+            candidates, remaining, self.world.navigation, revision=revision, actor_id=actor.id) if candidates else None)
 
     @staticmethod
     def reset_walking_look(brain):
@@ -385,7 +386,8 @@ class Visit(Sequence):
     def __init__(self, controller, actor, brain, confirmed):
         self.controller, self.actor, self.brain = controller, actor, brain
         self.time, self.lease, self.goal, self.since = 0, None, None, None
-        self.hold = .5 if confirmed else .85
+        tempo = 0.85 + 0.3 * (crc32(actor.id.encode()) % 1024) / 1024
+        self.hold = (.5 if confirmed else .85) * tempo
         super().__init__("investigate", memory=True, children=[VisitStep("move", self.move), VisitStep("observe", self.observe)])
 
     def initialise(self):

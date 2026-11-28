@@ -20,6 +20,18 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_equal_viewpoints_allow_stable_individual_choices(self):
+        geometry = SpatialIndex()
+        navigation = Navigation({}, [], geometry)
+        sweep = IndoorSweep(SimpleNamespace(view_coverage={}), (0, 0), 0)
+        candidates = [(3, 1), (3, -1)]
+        choices = [sweep.observation_point((0, 0), 0, candidates, [(5, 0)], navigation,
+                                           revision=1, actor_id=f"guard_{index}") for index in range(12)]
+        self.assertEqual(set(choices), set(candidates))
+        self.assertEqual(choices, [sweep.observation_point((0, 0), 0, candidates, [(5, 0)], navigation,
+                                                          revision=1, actor_id=f"guard_{index}")
+                                   for index in range(12)])
+
     def test_look_groups_samples_across_angle_wrap(self):
         left = [(5 * math.cos(angle), 5 * math.sin(angle))
                 for angle in (math.pi - 0.1, -math.pi + 0.1)]
