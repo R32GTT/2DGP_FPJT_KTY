@@ -1,6 +1,31 @@
 # 그림 기반 플레이 목업
 
 `PlayPrototype.bat`를 더블클릭한다. 기존 군수 코어에 그림 레이어·로컬 AI·총기 상태·화면 효과를 연결한 검증용 장면이다.
+
+## 함수별 CPU 프로파일
+
+통합 런처에서 장면을 선택하고 **함수별 CPU 시간 기록 (py-spy)**을 켜면 게임 종료 후
+프로젝트 루트의 `reports/<시작 시각>/`에 보고서를 저장한다.
+창을 정상적으로 닫거나 프레임 제한에 도달해야 보고서가 완성된다. 런처의 **실행 종료**는 실행 트리를 강제로 끝내므로 보고서를 만들지 않는다.
+콘솔에서는 다음처럼 같은 게임 옵션을 `--` 뒤에 전달할 수 있다.
+
+```powershell
+& .\.venv\Scripts\python.exe -m prototype.profiler -- --scene prototype/scenarios/two_region_campaign.json --frames 600
+& .\.venv\Scripts\python.exe -m prototype.profiler --reports-dir reports -- --ai-scenario sound --headless --frames 3000
+```
+
+각 타임스탬프 폴더에는 `report.md`(전체 함수 표와 해석), `flamegraph.svg`(플레임 그래프),
+`flamegraph.html`(검색·시간 표시·클릭 확대가 되는 대화형 그래프)을 저장한다.
+`functions.csv`는 함수별 원자료, `samples.speedscope.json`은 호출 스택 원본,
+`metadata.json`은 표본 속도와 별도 `py-spy`·보고서 작성 프로세스의 CPU 시간이다.
+보고서와 CSV는 표본에 나타난 Python 함수 전체를 파일·함수 이름·시작 줄로 구별한다.
+`self_cpu_s_est`는 함수 자체에서 관측된 시간, `inclusive_cpu_s_est`는 하위 호출을 포함한 시간이다.
+포괄 시간은 함수 사이에 중복되므로 열 전체를 합산하지 않는다.
+
+`py-spy`는 게임 밖의 프로세스로 실행되어 계측 코드의 CPU 시간이 게임 함수에 더해지지 않는다.
+게임의 실행 중인 스레드를 초당 100회 표본 추출하므로, CSV의 초 값은 정확한 호출별 실측값이 아니라 활성 CPU 시간의 추정치다.
+짧은 호출은 표본에 없을 수 있고, 네이티브 라이브러리 내부 함수와 대기 시간은 기본 결과에 포함되지 않는다.
+더 많은 표본이 필요하면 `--rate 200`처럼 지정할 수 있지만 계측 부담도 늘어난다.
 Windows용 64비트 Python 3.12 또는 3.13이 필요하다. 실행 시 `.venv`를 자동 생성하고 루트 `requirements.txt`로
 빠진 패키지와 변경된 버전을 반영한다. 첫 설치·의존성 갱신에는 인터넷 연결이 필요하다.
 설치 오류가 나면 콘솔에 표시하고 실행을 중단한다. `SetupEnvironment.bat`로 환경 준비만 따로 실행할 수도 있다.

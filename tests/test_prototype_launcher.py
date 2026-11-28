@@ -19,6 +19,12 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("목업 코어 실행", result.stdout)
 
+    def test_profile_option_wraps_game_arguments(self):
+        command = build_command(self.targets["ai_door_queue"], {**self.values, "profile": True})
+        self.assertEqual(command[6:8], ["prototype.profiler", "--"])
+        self.assertIn("--headless", command)
+        self.assertIn("--scene", command)
+
     def test_invalid_options_are_rejected_before_starting(self):
         self.values["headless"] = False
         for key, value in (("seed", "invalid"), ("frames", "-1"), ("zoom", "nan"), ("zoom", "4.1")):

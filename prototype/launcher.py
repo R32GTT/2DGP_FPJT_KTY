@@ -81,7 +81,7 @@ def build_command(target, values):
         raise ValueError("프레임 수는 0 이상이어야 합니다")
     command += ["--frames", str(frames)]
     if values["headless"]:
-        return command + ["--headless"]
+        return profile_command(command + ["--headless"], values)
     if values["zoom"] != "장면 기본값":
         try:
             zoom = float(values["zoom"])
@@ -95,13 +95,20 @@ def build_command(target, values):
             command.append("--" + ("" if SWITCHES[values[key]] else "no-") + key)
     if values["map_open"]:
         command.append("--map-open")
-    return command
+    return profile_command(command, values)
+
+
+def profile_command(command, values):
+    if not values.get("profile", False):
+        return command
+    return command[:6] + ["prototype.profiler", "--", *command[7:]]
 
 
 class Launcher:
     def __init__(self, root):
         self.root, self.targets = root, discover_targets()
         self.process, self.output = None, Queue()
+        self.profiled_process = False
         self.selected_key, self.last_modes = None, {}
         root.title("REVENANT · 통합 테스트 런처")
         root.geometry("980x820")
@@ -133,7 +140,7 @@ class Launcher:
                     "zoom": "장면 기본값", "paused": "장면 기본값", "debug": "장면 기본값",
                     "region_sizes": "", "region_importances": ""}
         self.values = {key: tk.StringVar(root, value=value) for key, value in defaults.items()}
-        self.values.update({key: tk.BooleanVar(root) for key in ("headless", "map_open")})
+        self.values.update({key: tk.BooleanVar(root) for key in ("headless", "map_open", "profile")})
         self.fields = {}
         rows = [("mode", "훈련 종류", ["기본"]), ("seed", "생성 시드", None),
                 ("region", "지역 크기", list(REGIONS)), ("importance", "지역 중요도", list(IMPORTANCE)),
@@ -151,12 +158,14 @@ class Launcher:
             self.fields[key] = widget
         self.random_button = ttk.Button(options, text="새 시드", command=lambda: self.values["seed"].set(random.SystemRandom().randrange(2**31)))
         self.random_button.grid(row=1, column=2, padx=(6, 0))
-        for row, (key, label) in enumerate((("headless", "화면 없이 코어만 실행"), ("map_open", "지도를 연 상태로 시작")), len(rows)):
+        for row, (key, label) in enumerate((("headless", "화면 없이 코어만 실행"),
+                                             ("map_open", "지도를 연 상태로 시작"),
+                                             ("profile", "함수별 CPU 시간 기록 (py-spy)")), len(rows)):
             widget = ttk.Checkbutton(options, text=label, variable=self.values[key])
             widget.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
             self.fields[key] = widget
         ttk.Label(options, text="지역별 설정: 비우면 공통값 사용 · 쉼표로 구분\n예: 소형,중형,소형,소형 / 일반,핵심,일반,일반\n프레임 0: 무제한 · P 일시정지 · M 지도 · F5/F9 저장·불러오기",
-                  foreground="#555555", wraplength=410).grid(row=len(rows) + 2, column=0, columnspan=3, sticky="w", pady=(12, 0))
+                  foreground="#555555", wraplength=410).grid(row=len(rows) + 3, column=0, columnspan=3, sticky="w", pady=(12, 0))
         log_frame = ttk.LabelFrame(root, text="실행 결과 · 오류", padding=6)
         log_frame.grid(row=1, column=0, sticky="nsew", padx=12)
         self.log = ScrolledText(log_frame, height=10, wrap="word", state="disabled", font=("Consolas", 10))
@@ -192,6 +201,9 @@ class Launcher:
             self.selected_key = key
         for key, widget in self.fields.items():
             enabled = generated if key in {"seed", "region", "regions", "importance", "region_sizes", "region_importances"} else play
+            if key == "profile":
+                widget.configure(state="normal" if play else "disabled")
+                continue
             if key == "mode":
                 enabled = play and len(modes) > 1
             if key in {"zoom", "paused", "debug", "map_open"} and self.values["headless"].get():
@@ -226,6 +238,7 @@ class Launcher:
             self.process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             text=True, encoding="utf-8", errors="replace",
                                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.profiled_process = target["kind"] != "test" and self.values["profile"].get()
         except (ValueError, OSError) as error:
             messagebox.showerror("실행할 수 없습니다", str(error), parent=self.root)
             return
@@ -261,7 +274,12 @@ class Launcher:
 
     def stop(self):
         if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
+            if self.profiled_process and sys.platform == "win32":
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.process.pid)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False)
+            else:
+                self.process.terminate()
 
     def close(self):
         self.stop()

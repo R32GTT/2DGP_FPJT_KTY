@@ -7,6 +7,7 @@
 - 구현 계획·인계: [CAMPAIGN_IMPLEMENTATION.md](CAMPAIGN_IMPLEMENTATION.md)
 - 기존 시설 제작 도구: [maptool/README.md](maptool/README.md)
 - 그림 기반 지역 플레이 목업: [prototype/README.md](prototype/README.md) — `PlayPrototype.bat` 실행, `M` 지역 지도
+- 함수별 CPU 프로파일: 런처에서 py-spy 기록을 켜면 루트 `reports/<시작 시각>/`에 Markdown·SVG·대화형 HTML 저장
 - 목업 에셋 요청 규격: [assets/prototype/README.md](assets/prototype/README.md)
 
 ## 개발 환경
