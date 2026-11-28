@@ -658,6 +658,8 @@ class PlaySimulation:
                 self.respawn_site_id = None
                 self.player.position = Position(*(site["position"] if site else self.world.safehouse))
                 self.player.hp, self.player.armor = 100, 0
+                self.player.armor_max = 40
+                self.player.armor_equipment.clear()
                 self.player.lamp, self.player.night_vision, self.player.ir_laser = "off", False, False
                 self.roster.materialized = True
                 self.ai.reset()

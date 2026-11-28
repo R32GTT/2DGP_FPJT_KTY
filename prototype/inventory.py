@@ -4,23 +4,19 @@ import math
 
 from .interactions import nearby_facility
 from .supply_stacks import nearby_stack
+from .supply_uses import AMMO_USES, EQUIPMENT_USES, ARMOR_REPAIR_PER_PART
 from .throwables import load_throwables
 
 
-AMMUNITION = {
-    "pistol": ("권총탄", 0.014, 24),
-    "rifle": ("5.56 × 45mm", 0.018, 60),
-    "shell": ("산탄", 0.04, 12),
-    "precision": ("저격총탄", 0.027, 10),
-    "machine_gun": ("기관총탄", 0.024, 80),
-}
+AMMUNITION = {key: (item.name, item.round_weight, item.rounds) for key, item in AMMO_USES.items()}
 CARGO_ITEMS = {
     "supplies": ("보급품 상자", 1.0),
     "ammunition": ("탄약 상자", 2.0),
     "repair_parts": ("수리 부품 상자", 2.5),
     "night_gear": ("야간 장비 세트", 1.0),
 }
-SABOTAGE_ITEMS = {"tool:multitool": ("멀티툴", 1.2), "charge:c4": ("C4", 0.8)}
+SABOTAGE_ITEMS = {key: (item.name, item.weight) for key, item in EQUIPMENT_USES.items()
+                  if key in {"tool:multitool", "charge:c4"}}
 C4 = "charge:c4"
 MULTITOOL = "tool:multitool"
 NIGHT_KIT = "cargo:night_gear"
@@ -87,6 +83,9 @@ class FieldInventory:
             return CARGO_ITEMS[key.removeprefix("cargo:")]
         if key in SABOTAGE_ITEMS:
             return SABOTAGE_ITEMS[key]
+        if key in EQUIPMENT_USES:
+            item = EQUIPMENT_USES[key]
+            return item.name, item.weight
         part = self.parts[key]
         return part.name, part.weight
 
@@ -355,15 +354,82 @@ class FieldInventory:
         play.message = f"{self.item(key)[0]} ×{amount} 회수"
 
     def _unpack_ammunition(self, ammo_type):
+        ammo = AMMO_USES[ammo_type]
         name, weight, rounds = AMMUNITION[ammo_type]
-        if self.bag_weight - self.item(AMMO_CRATE)[1] + weight * rounds > BAG_LIMIT + 1e-8:
+        cost = ammo.ammunition_cost
+        if self.carried.get(AMMO_CRATE, 0) < cost:
+            self.play.message = "탄약 상자 부족"
+            return
+        if self.bag_weight - self.item(AMMO_CRATE)[1] * cost + weight * rounds > BAG_LIMIT + 1e-8:
             self.play.message = "가방 용량 부족"
             return
-        self.play.campaign.simulation.apply_action({"type": "unpack_player_ammunition"})
-        self._remove(self.carried, AMMO_CRATE, 1)
+        self.play.campaign.simulation.apply_action({"type": "unpack_player_ammunition", "amount": cost})
+        self._remove(self.carried, AMMO_CRATE, cost)
         key = f"ammo:{ammo_type}"
         self.carried[key] = self.carried.get(key, 0) + rounds
         self.play.message = f"탄약 상자 개봉 · {name} {rounds}발"
+
+    def safehouse_actions(self, site_id):
+        stored = self.stored.get(site_id, {})
+        for ammo in AMMO_USES.values():
+            if stored.get(AMMO_CRATE, 0) >= ammo.ammunition_cost:
+                yield (f"안전가옥  ·  {ammo.name} {ammo.rounds}발 준비",
+                       ("prepare_ammo", site_id, ammo.id))
+        for gear in EQUIPMENT_USES.values():
+            if all(stored.get(f"cargo:{resource}", 0) >= amount
+                   for resource, amount in gear.cost.items()):
+                yield (f"안전가옥  ·  {gear.name} 준비", ("prepare_equipment", site_id, gear.id))
+        if stored.get("cargo:repair_parts", 0) and self.play.player.armor < self.play.player.armor_max:
+            yield (f"안전가옥  ·  방어구 {ARMOR_REPAIR_PER_PART} 수리",
+                   ("repair_armor", site_id))
+
+    def _spend_safehouse(self, site_id, costs):
+        site = nearby_facility(self.play.world, self.play.player.xy)
+        stored = self.stored.get(site_id, {})
+        if site is None or site["id"] != site_id or site["kind"] != "safehouse" or any(
+                stored.get(f"cargo:{resource}", 0) < amount for resource, amount in costs.items()):
+            self.play.message = "안전가옥 보급품 부족"
+            return None
+        self.play.campaign.simulation.apply_action({"type": "use_player_supplies", "cost": costs})
+        for resource, amount in costs.items():
+            self._remove(stored, f"cargo:{resource}", amount)
+        return stored
+
+    def prepare_ammo(self, site_id, ammo_type):
+        ammo = AMMO_USES[ammo_type]
+        stored = self._spend_safehouse(site_id, {"ammunition": ammo.ammunition_cost})
+        if stored is not None:
+            key = f"ammo:{ammo_type}"
+            stored[key] = stored.get(key, 0) + ammo.rounds
+            self.play.message = f"안전가옥에 {ammo.name} {ammo.rounds}발 준비"
+
+    def prepare_equipment(self, site_id, item_id):
+        gear = EQUIPMENT_USES[item_id]
+        stored = self._spend_safehouse(site_id, gear.cost)
+        if stored is not None:
+            stored[item_id] = stored.get(item_id, 0) + 1
+            self.play.message = f"안전가옥에 {gear.name} 준비"
+
+    def repair_armor(self, site_id):
+        if self.play.player.armor >= self.play.player.armor_max:
+            return
+        if self._spend_safehouse(site_id, {"repair_parts": 1}) is not None:
+            player = self.play.player
+            player.armor = min(player.armor_max, player.armor + ARMOR_REPAIR_PER_PART)
+            self.play.message = f"방어구 수리 · {player.armor}/{player.armor_max}"
+
+    def equip_armor(self, item_id):
+        gear = EQUIPMENT_USES[item_id]
+        player = self.play.player
+        if (not gear.armor_bonus or not self.carried.get(item_id)
+                or player.armor_equipment.get(item_id) or player.armor_max + gear.armor_bonus > 100):
+            self.play.message = "해당 방어구를 장착할 수 없습니다"
+            return
+        self._remove(self.carried, item_id, 1)
+        player.armor_equipment[item_id] = True
+        player.armor_max += gear.armor_bonus
+        player.armor += gear.armor_bonus
+        self.play.message = f"{gear.name} 장착 · 방어력 {player.armor}/{player.armor_max}"
 
     def _change_part(self, key, equip):
         weapon = self.play.player.weapon
@@ -431,6 +497,7 @@ class FieldInventory:
                 rows.append(("안전가옥  ·  무기 보관·교환", ("stash_gun", site)))
             for key, count in sorted(self.stored.get(safehouse, {}).items()):
                 rows.append((f"보관함  ·  {self.item(key)[0]} ×{count} 회수", ("take", safehouse, key)))
+            rows.extend(self.safehouse_actions(safehouse))
         active_throwable = self.active_throwable
         for key, weapon in self.carried_weapons.items():
             rows.append((f"가방  ·  {weapon.spec.name} 장착", ("equip_bag_gun", key)))
@@ -443,10 +510,13 @@ class FieldInventory:
             if key.startswith("throwable:"):
                 state = "선택 중 · G 투척" if key == active_throwable else "투척물 선택"
                 rows.append((f"{label}  ·  {state}", ("select_throwable", key)))
-            if key == AMMO_CRATE and player.weapon and player.weapon.spec.ammo_type in AMMUNITION:
+            if (key == AMMO_CRATE and player.weapon and player.weapon.spec.ammo_type in AMMUNITION
+                    and count >= AMMO_USES[player.weapon.spec.ammo_type].ammunition_cost):
                 ammo_type = player.weapon.spec.ammo_type
                 name, _, rounds = AMMUNITION[ammo_type]
                 rows.append((f"{label}  ·  {name} {rounds}발 꺼내기", ("unpack_ammunition", ammo_type)))
+            if key in EQUIPMENT_USES and EQUIPMENT_USES[key].armor_bonus:
+                rows.append((f"{label}  ·  장착", ("equip_armor", key)))
             rows.append((f"{label} {'보관' if safehouse else '내려놓기'}", ("put", safehouse, key)))
         return rows
 
@@ -490,6 +560,14 @@ class FieldInventory:
             self.take_facility_stock(*args, single=single)
         elif kind == "unpack_ammunition":
             self._unpack_ammunition(*args)
+        elif kind == "prepare_ammo":
+            self.prepare_ammo(*args)
+        elif kind == "prepare_equipment":
+            self.prepare_equipment(*args)
+        elif kind == "repair_armor":
+            self.repair_armor(*args)
+        elif kind == "equip_armor":
+            self.equip_armor(*args)
         elif kind == "stash_gun":
             from .interactions import exchange_safehouse_weapon
             self.play.message = exchange_safehouse_weapon(self.play, args[0])

@@ -5,6 +5,7 @@ import math
 
 from .inventory import AMMO_CRATE, C4, MULTITOOL, weapon_slots
 from .interactions import nearby_facility
+from .supply_uses import AMMO_USES, EQUIPMENT_USES
 
 
 @dataclass(frozen=True)
@@ -98,8 +99,11 @@ def build_inventory_layout(inventory, size, bag_scroll=0, floor_scroll=0):
             action = ("select_sabotage", "c4" if key == C4 else "multitool")
             if inventory.sabotage_mode == action[1]:
                 name += "  ·  선택 중"
-        elif key == AMMO_CRATE and player.weapon:
+        elif (key == AMMO_CRATE and player.weapon
+              and count >= AMMO_USES[player.weapon.spec.ammo_type].ammunition_cost):
             action = ("unpack_ammunition", player.weapon.spec.ammo_type)
+        elif key in EQUIPMENT_USES and EQUIPMENT_USES[key].armor_bonus:
+            action = ("equip_armor", key)
         elif key in compatible:
             action = ("part", key, True)
         bag_rows.append((("bag", key), f"{name}  {count}", (), action, ""))
@@ -140,6 +144,8 @@ def build_inventory_layout(inventory, size, bag_scroll=0, floor_scroll=0):
         for key, count in sorted(inventory.stored.get(safehouse, {}).items()):
             floor_rows.append((('take', safehouse, key), f"{inventory.item(key)[0]}  {count}", (),
                                ("take", safehouse, key), ""))
+        for label, action in inventory.safehouse_actions(safehouse):
+            floor_rows.append((action, label, (), action, ""))
 
     def place(rows, box, zone, scroll):
         result = []

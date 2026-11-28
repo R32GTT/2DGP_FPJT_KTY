@@ -273,9 +273,16 @@ class Simulation:
             remove(state, inventory, action["amount"],
                    outcome="captured" if kind == "capture" else "destroyed", owner_id=owner_id)
         elif kind == "unpack_player_ammunition":
-            if not state.player_stock["ammunition"]:
+            amount = action.get("amount", 1)
+            if type(amount) is not int or amount <= 0 or state.player_stock["ammunition"] < amount:
                 raise ValueError("확보한 탄약 상자 부족")
-            consume(state, state.player_stock, {"ammunition": 1}, reason="player_ammunition_unpacked")
+            consume(state, state.player_stock, {"ammunition": amount}, reason="player_ammunition_unpacked")
+        elif kind == "use_player_supplies":
+            costs = action["cost"]
+            if not isinstance(costs, dict) or not costs or any(
+                    type(amount) is not int or amount <= 0 for amount in costs.values()):
+                raise ValueError("잘못된 안전가옥 보급 비용")
+            consume(state, state.player_stock, costs, reason="player_safehouse_use")
         elif kind in {"destroy_vehicle", "damage_unit"}:
             self._damage_asset(action)
         elif kind == "resume_transport":
