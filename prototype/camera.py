@@ -31,12 +31,12 @@ class PlayCamera:
 
     def follow(self, position, mouse=None, *, aiming=False, look_multiplier=1.0, dt=None):
         half_w, half_h = self.width / 2, self.height / 2
-        limit_x, limit_y = (7.2, 7.2) if aiming else (2.4, 4.2)
+        limit_x, limit_y = (14.4, 14.4) if aiming else (4.8, 8.4)
         mx, my = mouse if mouse is not None else (half_w, half_h)
         if aiming:
             target_x = max(-1.0, min(1.0, (mx - half_w) / half_w)) * limit_x
         else:
-            target_x = max(-limit_x, min(limit_x, (mx - half_w) / self.scale * 0.24))
+            target_x = max(-limit_x, min(limit_x, (mx - half_w) / self.scale * 0.48))
         target_y = max(-1.0, min(1.0, (my - half_h) / half_h)) * limit_y
         if aiming:
             target_x *= look_multiplier
