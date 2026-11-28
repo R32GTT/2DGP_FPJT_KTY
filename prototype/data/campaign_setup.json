@@ -12,7 +12,7 @@
   "facilities": {
     "hq": {
       "capabilities": ["command", "garrison", "qrf"], "units": [10],
-      "mobile_units": [4, 4], "vehicles": {"troop_truck": 2}, "staffing_target": 10,
+      "mobile_units": [4, 4], "vehicles": {"troop_truck": 2, "truck": 1}, "staffing_target": 10,
       "inventory": {"supplies": 100, "ammunition": 80, "repair_parts": 12},
       "minimum_stock": {"supplies": 10, "ammunition": 10, "repair_parts": 2},
       "target_stock": {"supplies": 100, "ammunition": 80, "repair_parts": 5}

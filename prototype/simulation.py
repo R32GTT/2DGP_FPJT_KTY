@@ -236,6 +236,8 @@ class PlaySimulation:
         for event in events:
             if event.kind == "facility_damaged" and self.presence:
                 key = event.data["facility"]
+                if self.campaign.simulation.state.facilities[key].damage:
+                    self.campaign.simulation.apply_action({"type": "report_facility_damage", "facility_id": key})
                 region = self.campaign.simulation.state.facilities[key].region_id
                 point = event.data.get("point", event.position)
                 result = self.campaign.report_facility_attack(key, point, event.time)

@@ -66,7 +66,7 @@ def plan_transport(state: CampaignState, origin_id: str, destination_id: str,
     cargo = stock()
     for name in state.resource_priority:
         floor = minimum(state, origin_id, name)
-        if origin_id != state.source.id and (kind == "export" or
+        if origin_id != state.source.id and kind != "repair" and (kind == "export" or
                 "logistics" in state.facilities[destination_id].capabilities):
             floor = max(floor, origin.target_stock[name])
         spare = available(state, origin_id, name) - floor

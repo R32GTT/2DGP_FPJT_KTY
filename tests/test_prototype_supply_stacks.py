@@ -65,6 +65,11 @@ class SupplyStackTests(unittest.TestCase):
         self.assertEqual(facility.inventory[resource], 0)
         self.assertEqual(facility.inventory["supplies"], supplies)
         self.assertEqual(self.state.ledger.destroyed[resource], before)
+        self.play._dispatch()
+        self.assertEqual(self.state.repair_requests[site_id], 25)
+        self.play.campaign.simulation.advance_to(6)
+        self.assertTrue(any(op.kind == "repair" and op.destination_id == site_id
+                            for op in self.state.operations.values()))
         assert_invariants(self.state)
 
     def test_only_new_soldiers_lose_equipment_after_stock_is_destroyed(self):
@@ -90,6 +95,27 @@ class SupplyStackTests(unittest.TestCase):
                          original_ammo)
         self.assertEqual(old.weapon.attachments, original_parts)
         assert_invariants(self.state)
+
+    def test_warehouse_c4_destroys_stock_but_repair_does_not_restore_it(self):
+        site_id = self.site["id"]
+        facility = self.state.facilities[site_id]
+        self.play.player.position = Position(*self.site["terminal"])
+        self.play.inventory.carried[C4] = 1
+        self.play.inventory.selected_sabotage_mode = "c4"
+        for _ in range(round(2 / FIXED_DT) + 1):
+            self.play.update_facility_interaction(True, alternate=True)
+        self.assertIn(site_id, self.play.planted_charges)
+        self.play.detonate_charges()
+        self.assertEqual(facility.damage, 100)
+        self.assertFalse(any(facility.inventory.values()))
+        self.play._dispatch()
+        self.play.roster.materialized = False
+        self.play.campaign.simulation.advance_to(150)
+        self.assertEqual(facility.damage, 0)
+        self.assertFalse(any(facility.inventory.values()))
+        self.assertNotIn(site_id, self.state.repair_requests)
+        self.assertTrue(any(op.kind == "repair" and op.destination_id == site_id
+                            and op.phase == "completed" for op in self.state.operations.values()))
 
     def test_generated_campaign_has_no_external_stock_delivery(self):
         self.assertTrue(self.state.rules["local_supply_only"])
