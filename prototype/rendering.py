@@ -11,7 +11,7 @@ from .ai_config import RADIO_GRACE_SECONDS, RADIO_TRANSMIT_SECONDS
 from .geometry import Rect
 from .camera import CANVAS_SIZE
 from .hud import HUD
-from .hud_theme import THEME
+from .hud_theme import THEME, vehicle_marker_color
 from .lighting import Lighting, incident_light, smooth
 from .map_images import MapImages
 from .perception import INSPECT_THRESHOLD, NOTICE_THRESHOLD, SOUND_MEMORY_SECONDS
@@ -30,6 +30,9 @@ BODY_SIZE_M = (0.75, 0.375)
 BODY_FORWARD_OFFSET = math.pi / 2
 STOCK_COLORS = {"supplies": (173, 145, 79), "ammunition": (118, 140, 92),
                 "repair_parts": (109, 137, 149), "night_gear": (103, 117, 159)}
+TRUCK_LABELS = {"supply": "보급차", "export": "출하차", "equipment": "장비차",
+                "repair": "수리차", "redeployment": "병력차", "motor_qrf": "증원차",
+                "recapture": "탈환차"}
 
 
 class Renderer:
@@ -62,6 +65,8 @@ class Renderer:
         self.smoke = smoke_image(self.backend)
         self.hud = HUD(self.backend, settings)
         self.hud.prepare_map(world)
+        for kind, label in TRUCK_LABELS.items():
+            self.hud.label(f"truck-{kind}", label, size=13, color=vehicle_marker_color(kind))
         self.last_draw_ms = 0.0
         for name in self.missing:
             print(f"임시 그래픽 사용: {name}")
@@ -425,6 +430,8 @@ class Renderer:
                     self.truck.opacify(alpha)
                     last_alpha = alpha
                 self.truck.draw(*view.pico(x, y), TRUCK_SIZE[0] * view.scale, TRUCK_SIZE[1] * view.scale)
+            labeled_convoys = set()
+            operations = simulation.campaign.simulation.state.operations
             for truck, alpha in zip(moving, alphas[len(parked):]):
                 if alpha == 0:
                     continue
@@ -433,6 +440,23 @@ class Renderer:
                     last_alpha = alpha
                 x, y = view.pico(truck.x, truck.y)
                 self.truck.rotate_draw(-truck.heading, x, y, TRUCK_SIZE[0] * view.scale, TRUCK_SIZE[1] * view.scale)
+                convoy_id = truck.convoy.id
+                if (alpha >= 0.35 and convoy_id not in labeled_convoys
+                        and math.dist(player.xy, (truck.x, truck.y)) <= 18):
+                    kind = operations[convoy_id].kind
+                    key = f"truck-{kind}"
+                    if key in self.hud.labels:
+                        label = self.hud.labels[key]
+                        _, label_y = view.pico(truck.x, truck.bounds.y - 0.35)
+                        opacity = round(alpha * 255)
+                        pico.draw_rectangle(x - label.width / 2 - 9, label_y - 10,
+                                            x + label.width / 2 + 7, label_y + 10,
+                                            *THEME.black, round(opacity * 0.7), filled=True)
+                        pico.draw_rectangle(x - label.width / 2 - 9, label_y - 10,
+                                            x - label.width / 2 - 6, label_y + 10,
+                                            *vehicle_marker_color(kind), opacity, filled=True)
+                        self.hud.text(key, x - label.width / 2, label_y, opacity=opacity)
+                        labeled_convoys.add(convoy_id)
                 if truck.stopped:
                     for side in (-0.7, 0.7):
                         px, py = truck.world_point(2.45, side)

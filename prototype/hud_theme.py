@@ -54,7 +54,13 @@ PANEL_EDGE = THEME.white
 
 
 def vehicle_marker_color(operation_kind):
-    return THEME.supply_yellow if operation_kind == "supply" else THEME.vehicle_green
+    if operation_kind in {"supply", "export"}:
+        return THEME.supply_yellow
+    if operation_kind == "equipment":
+        return (190, 151, 238)
+    if operation_kind == "repair":
+        return (100, 195, 235)
+    return THEME.vehicle_green
 
 
 def map_tone(color):
