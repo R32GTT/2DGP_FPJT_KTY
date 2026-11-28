@@ -83,6 +83,14 @@ class SearchController:
         if investigating and memory.sound_at > latest and (cue is None or memory.sound_at >= cue.at):
             cue = SearchCue("sound", memory.last_sound, memory.sound_at)
         if cue is not None:
+            # 실내를 확인하는 중에는 약한 실외 소리를 후속 단서로 남긴다.
+            # 수색이 끝나면 같은 최신 단서를 다음 틱에 다시 평가한다.
+            sweep = brain.search.task.sweep
+            if (cue.kind == "sound" and sweep is not None and not sweep.complete
+                    and memory.gunshot_origin is None and memory.sound_priority < config.SEARCH_INTERRUPT_SOUND_PRIORITY
+                    and any(floor.segment_entry(actor.xy, actor.xy) is not None for floor in sweep.area.floors)
+                    and not any(floor.segment_entry(cue.point, cue.point) is not None for floor in sweep.area.floors)):
+                return
             if (brain.search.investigating_priority and cue.kind == previous.kind and cue.point == previous.point):
                 return
             self.interrupt_search(actor, brain)

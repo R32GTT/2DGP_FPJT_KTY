@@ -7,6 +7,7 @@ from unittest.mock import patch
 from campaign.models import Position
 from prototype.actors import Actor
 from prototype.ai import Brain, EnemyAI, Intent
+from prototype.ai_state import SearchCue
 from prototype.ai_motion import turn_indoor_gaze
 from prototype.geometry import Collider, Rect, SpatialIndex
 from prototype.indoor_search import IndoorSweep, build_search_areas, sample_views
@@ -19,6 +20,34 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_weak_outdoor_noise_waits_for_indoor_sweep_but_gunshot_interrupts(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 5.4]]}},
+                                facilities=[], geometry=geometry, revision=0,
+                                navigation=Navigation({}, [], geometry))
+        area, = build_search_areas(world)
+        guard = Actor("guard", Position(2.7, 2.7))
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        sweep = brain.search.task.sweep = IndoorSweep(area, guard.xy, 0)
+        original = brain.search.priority_cue = SearchCue("sound", guard.xy, 1)
+        brain.memory.last_sound, brain.memory.sound_at = (8, 2.7), 2
+        brain.memory.sound_priority = 0.4
+
+        ai.search.update_priority_cue(guard, brain, False, True, None)
+        self.assertEqual(brain.search.priority_cue, original)
+        self.assertIs(brain.search.task.sweep, sweep)
+
+        brain.memory.gunshot_origin = (8, 2.7)
+        ai.search.update_priority_cue(guard, brain, False, True, None)
+        self.assertEqual(brain.search.priority_cue.point, (8, 2.7))
+
+        brain.search.priority_cue = original
+        brain.memory.gunshot_origin = None
+        sweep.checked.update(area.points)
+        ai.search.update_priority_cue(guard, brain, False, True, None)
+        self.assertEqual(brain.search.priority_cue.point, (8, 2.7))
+
     def test_fixed_sight_reuses_squad_geometry_but_updates_on_door_change(self):
         geometry = SpatialIndex()
         door = Collider("door", Rect(2, -1, .2, 2), kind="door")
