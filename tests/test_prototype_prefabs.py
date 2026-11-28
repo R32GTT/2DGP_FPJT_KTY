@@ -12,6 +12,29 @@ SCENE = Path(__file__).resolve().parents[1] / "prototype/scenarios/prefab_test.j
 
 
 class FacilityPrefabTests(unittest.TestCase):
+    def test_baked_search_matches_runtime_geometry_after_rotation(self):
+        source = json.loads(SCENE.read_text(encoding="utf-8"))
+        for prefab in ("field_comms_01", "field_hq_01", "field_warehouse_01"):
+            for angle in (0, 90):
+                with self.subTest(prefab=prefab, rotation=angle):
+                    scene = deepcopy(source)
+                    scene["navigation"], scene["navigation_edges"] = {}, []
+                    scene["prefab_instances"] = [{"id": "site", "prefab": f"prototype/data/prefabs/{prefab}.json",
+                                                  "position": [0, 0], "rotation": angle}]
+                    baked = World(scene)
+                    self.assertIn("baked_search", baked._search_layouts["site"][1])
+                    scene["search_layouts"] = {"site": {}}
+                    runtime = World(scene)
+                    a, b = baked.search_areas[0], runtime.search_areas[0]
+                    def normalized(rows):
+                        return frozenset(tuple(round(value, 6) for value in point) for point in rows)
+
+                    self.assertEqual(normalized(a.points), normalized(b.points))
+                    self.assertEqual({normalized(rows) for rows in a.room_points.values()},
+                                     {normalized(rows) for rows in b.room_points.values()})
+                    self.assertEqual({normalized(rows) for rows in a.room_corners.values()},
+                                     {normalized(rows) for rows in b.room_corners.values()})
+
     def test_rotated_prefab_keeps_connectors_and_every_room_reachable(self):
         source = json.loads(SCENE.read_text(encoding="utf-8"))
         for angle in (0, 90, 180, 270):

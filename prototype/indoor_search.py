@@ -146,7 +146,25 @@ def search_area_layouts(world):
             for key, rows in areas.items()}
 
 
+def _baked_search_area(key, floors, baked):
+    points = tuple(sorted(map(tuple, baked["points"])))
+    rooms = {tuple(point): room for point, room in zip(baked["points"], baked["room_ids"])}
+    by_room = defaultdict(list)
+    for point in points:
+        by_room[rooms[point]].append(point)
+    original = tuple(map(tuple, baked["points"]))
+    corners = {int(room): tuple(original[index] for index in indices)
+               for room, indices in baked["corners"].items()}
+    observations = {(x, y): room for x, y, room in baked["observations"]}
+    poses = tuple(SearchPose((x, y), (look_x, look_y), room)
+                  for x, y, look_x, look_y, room in baked["entry_poses"])
+    return SearchArea(key, floors, points, rooms, {room: tuple(rows) for room, rows in by_room.items()},
+                      corners, entry_poses=poses, observations=observations)
+
+
 def build_search_area(world, key, floors, layout):
+    if "baked_search" in layout:
+        return _baked_search_area(key, floors, layout["baked_search"])
     spacing = layout.get("sample_spacing", SAMPLE_M)
     if not math.isfinite(spacing) or spacing <= 0:
         raise ValueError(f"수색 표본 간격 오류: {key}")

@@ -6,6 +6,7 @@ import math
 
 from .actors import Actor
 from .geometry import Rect
+from .search_bake import place_bake, source_hash, FORMAT as SEARCH_BAKE_FORMAT
 
 
 def has_walkable_access(definition):
@@ -113,14 +114,21 @@ def expand_instances(scene, root):
              "colliders": list(scene["colliders"]),
              "navigation": dict(scene["navigation"]),
              "navigation_edges": list(scene["navigation_edges"]),
-             "search_areas": dict(scene.get("search_areas", {}))}
+             "search_areas": dict(scene.get("search_areas", {})),
+             "search_layouts": dict(scene.get("search_layouts", {}))}
     definitions = {}
+    search_bakes = {}
     scene["placed_prefabs"] = []
     for row in scene.get("prefab_instances", ()):
         path = root / row["prefab"]
         if path not in definitions:
             definitions[path] = json.loads(path.read_text(encoding="utf-8"))
         definition = definitions[path]
+        if path not in search_bakes:
+            bake_path = path.parent / "search_bakes" / path.name
+            bake = json.loads(bake_path.read_text(encoding="utf-8")) if bake_path.exists() else None
+            search_bakes[path] = (bake if bake is not None and bake.get("format") == SEARCH_BAKE_FORMAT
+                                  and bake.get("source_hash") == source_hash(definition) else None)
         if definition.get("format") != "revenant.facility_prefab.v1":
             raise ValueError(f"지원하지 않는 시설 프리팹: {path}")
         if row.get("version", definition["version"]) != definition["version"]:
@@ -152,6 +160,8 @@ def expand_instances(scene, root):
             scene["navigation"][prefix + key] = placement.point(point)
         scene["navigation_edges"].extend((prefix + a, prefix + b) for a, b in definition["navigation_edges"])
         scene.setdefault("search_areas", {})[row["id"]] = floors
+        if search_bakes[path] is not None and row["id"] not in scene["search_layouts"]:
+            scene["search_layouts"][row["id"]] = {"baked_search": place_bake(search_bakes[path], placement)}
         connectors = {key: {**connector, "position": placement.point(connector["position"]),
                             "direction": rotate(connector["direction"], placement.turns),
                             "node": prefix + connector["node"]}
