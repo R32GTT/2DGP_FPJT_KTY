@@ -8,6 +8,7 @@ from time import perf_counter, sleep
 
 from .ai_scenarios import SCENARIOS
 from .intelligence import collect as collect_intel
+from .interactions import nearby_facility, nearby_road_control, nearby_watch_post
 from .simulation import FIXED_DT, PlaySimulation
 from .savegame import CampaignSaveError, DEFAULT_SAVE, QUICK_SAVE, load_game, save_game
 from .world import DEFAULT_SCENE
@@ -231,7 +232,7 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                             simulation.cancel_respawn_selection()
                             controls.map_open = False
                         continue
-                    if (controls.firing or controls.map_open) and action in {"door", "supplies", "facility_alternate"}:
+                    if (controls.firing or controls.map_open) and action in {"door", "supplies", "facility_alternate", "detonate"}:
                         simulation.message = "지도를 닫은 뒤 상호작용" if controls.map_open else "사격 중에는 상호작용할 수 없음"
                         continue
                     if action == "throw":
@@ -242,9 +243,16 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     elif action == "door":
                         simulation.use_door()
                     elif action == "supplies":
-                        simulation.take_supplies()
+                        if (nearby_road_control(simulation.world, simulation.player.xy) is not None
+                                or simulation.inventory.nearby(simulation.dropped) is not None
+                                or nearby_facility(simulation.world, simulation.player.xy) is None
+                                and nearby_watch_post(simulation.world, simulation.player.xy) is None):
+                            simulation.take_supplies()
                     elif action == "facility_alternate":
-                        simulation.use_facility_alternate()
+                        if nearby_facility(simulation.world, simulation.player.xy) is None:
+                            simulation.use_facility_alternate()
+                    elif action == "detonate":
+                        simulation.detonate_charges()
                     elif action == "reload":
                         simulation.reload()
                     elif action == "cancel":
@@ -283,7 +291,10 @@ def run_window(simulation, *, frames=0, zoom=None, paused=None, debug=None, map_
                     simulation.step((0, 0) if interface_open else controls.direction,
                                     aim_offset=aim_offset, firing=not interface_open and (controls.firing or pressed),
                                     sprint=controls.sprint, aiming=aiming,
-                                    trigger_pressed=pressed and not interface_open, walking=controls.walking)
+                                    trigger_pressed=pressed and not interface_open, walking=controls.walking,
+                                    interact_held=(not interface_open and not controls.firing
+                                                   and (controls.interacting or controls.alternate_interacting)),
+                                    interact_alternate=controls.alternate_interacting)
                     last_step_s = perf_counter() - step_started
                     accumulator -= FIXED_DT
                     steps += 1

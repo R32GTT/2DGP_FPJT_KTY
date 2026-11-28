@@ -22,6 +22,7 @@ ACTION_GROUPS = (
              ("weapon_3", "무기 3"), ("weapon_4", "무기 4"))),
     ("상호작용", (("door", "문"), ("supplies", "보급"),
                   ("facility_alternate", "시설 보조 동작"), ("inventory", "가방"),
+                  ("detonate", "C4 원격 기폭"),
                   ("map", "지도"), ("minimap", "미니맵"),
                   ("intel", "작전 정보"), ("collect_intel", "정보 수집"),
                   ("lamp", "손전등"), ("night_vision", "야간 투시"),
@@ -62,6 +63,7 @@ DEFAULT_BINDINGS = {
     **{f"weapon_{n}": key(getattr(sdl2, f"SDLK_{n}")) for n in range(1, 5)},
     "door": key(sdl2.SDLK_f), "supplies": key(sdl2.SDLK_e),
     "facility_alternate": key(sdl2.SDLK_e, MOD_SHIFT),
+    "detonate": key(sdl2.SDLK_b),
     "inventory": key(sdl2.SDLK_TAB), "map": key(sdl2.SDLK_m),
     "minimap": key(sdl2.SDLK_h), "intel": key(sdl2.SDLK_i),
     "collect_intel": key(sdl2.SDLK_i, MOD_SHIFT),
@@ -194,6 +196,12 @@ def load_settings(path=None):
                 binding = Binding(value.get("device"), value.get("code"), value.get("mods", 0))
                 if _valid(action, binding):
                     loaded[action] = binding
+            if "detonate" not in stored and len(set(loaded.values())) != len(loaded):
+                for code in (sdl2.SDLK_j, sdl2.SDLK_o, sdl2.SDLK_p, sdl2.SDLK_t):
+                    candidate = key(code)
+                    if candidate not in loaded.values():
+                        loaded["detonate"] = candidate
+                        break
             if len(set(loaded.values())) == len(loaded):
                 settings.bindings = loaded
     except (OSError, ValueError, TypeError):

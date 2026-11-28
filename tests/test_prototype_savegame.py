@@ -14,6 +14,7 @@ from campaign.models import Position
 from campaign.persistence import campaign_payload
 from campaign.resources import assert_invariants
 from prototype.generated_world import generate_world
+from prototype.interactions import exchange_safehouse_weapon
 from prototype.launcher import ROOT, build_command, discover_targets
 from prototype.savegame import CampaignSaveError, load_game, save_game
 from prototype.simulation import PlaySimulation
@@ -25,6 +26,40 @@ class PlaySaveTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.scene = generate_world(42, region_count=2)
+
+    def test_identical_equipped_guns_and_bag_gun_survive_save(self):
+        play = PlaySimulation(self.scene)
+        first = WeaponState.ready(play.specs["ar_a"])
+        second = WeaponState.ready(play.specs["ar_a"])
+        second.magazine = 8
+        bag_gun = WeaponState.ready(play.specs["ar_b"])
+        play.player.loadout = {"ar_a": first, "ar_a#2": second}
+        play.player.active_weapon = "ar_a#2"
+        play.inventory.stow_reserve(bag_gun)
+        play.inventory.carried_weapons = {"ar_b": bag_gun}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "weapons.json.gz"
+            save_game(play, path)
+            restored = load_game(path)
+        self.assertEqual(restored.player.active_weapon, "ar_a#2")
+        self.assertEqual([weapon.magazine for weapon in restored.player.loadout.values()], [30, 8])
+        self.assertEqual(restored.inventory.carried_weapons["ar_b"].spec.id, "ar_b")
+        self.assertEqual(restored.inventory.carried_weapons["ar_b"].reserve, 0)
+
+    def test_safehouse_can_exchange_for_a_second_identical_primary(self):
+        play = PlaySimulation(self.scene)
+        site = next(site for site in play.world.facilities if site["kind"] == "safehouse")
+        first = WeaponState.ready(play.specs["ar_a"])
+        equipped = WeaponState.ready(play.specs["ar_b"])
+        stored = WeaponState.ready(play.specs["ar_a"])
+        play.player.loadout = {"ar_a": first, "ar_b": equipped}
+        play.player.active_weapon = "ar_b"
+        play.safehouse_stash[site["id"]] = stored
+        exchange_safehouse_weapon(play, site)
+        self.assertEqual(len(play.player.loadout), 2)
+        self.assertIs(play.player.weapon, stored)
+        self.assertIn(first, play.player.loadout.values())
+        self.assertIs(play.safehouse_stash[site["id"]], equipped)
 
     def test_safehouse_stash_survives_save_and_respawn(self):
         play = PlaySimulation(self.scene)

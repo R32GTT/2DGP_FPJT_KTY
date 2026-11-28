@@ -102,7 +102,7 @@ class Controls:
                     actions.append("respawn_previous" if key == sdl2.SDLK_LEFT else "respawn_next")
                 elif command and command.startswith("weapon_"):
                     actions.append(f"slot_{int(command[-1]) - 1}")
-                elif command in ("door", "supplies", "reload", "cancel", "fire_mode",
+                elif command in ("door", "supplies", "detonate", "reload", "cancel", "fire_mode",
                                  "respawn", "throw"):
                     actions.append(command)
                 elif command == "fire" and not (map_active or self.inventory_open or self.intel_open):
@@ -184,6 +184,14 @@ class Controls:
     @property
     def walking(self):
         return self.settings.held("walk", self.keys, self.buttons)
+
+    @property
+    def interacting(self):
+        return self.settings.held("supplies", self.keys, self.buttons)
+
+    @property
+    def alternate_interacting(self):
+        return self.settings.held("facility_alternate", self.keys, self.buttons)
 
     def consume_trigger(self):
         pressed, self.trigger_pending = self.trigger_pending, False

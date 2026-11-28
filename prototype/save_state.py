@@ -7,7 +7,7 @@ from campaign.models import Position
 from .actors import Actor
 from .ai_state import Brain, CombatState, Incident, RadioState, SearchCue
 from .lighting import OPTICS_MODES
-from .inventory import AMMUNITION
+from .inventory import AMMUNITION, BAG_LIMIT
 from .intelligence import refresh_intelligence_view, restore_notes
 from .perception import Knowledge
 from .simulation import RegionAlarm
@@ -24,14 +24,17 @@ def tuples(value):
 
 
 def weapons(loadout):
-    return {key: {name: value for name, value in vars(weapon).items() if name != "spec"}
+    return {key: {"spec_id": weapon.spec.id,
+                  **{name: value for name, value in vars(weapon).items() if name != "spec"}}
             for key, weapon in loadout.items()}
 
 
 def restore_weapons(rows, specs):
     loadout = {}
     for key, row in rows.items():
-        weapon = WeaponState(specs[key], **row)
+        values = dict(row)
+        spec_id = values.pop("spec_id", key)
+        weapon = WeaponState(specs[spec_id], **values)
         if (type(weapon.stage) is not int or not 0 <= weapon.stage < len(weapon.spec.reload_stages)
                 or type(weapon.reloading) is not bool
                 or type(weapon.stage_elapsed) not in (int, float)
@@ -99,8 +102,12 @@ def capture(play):
             "dropped": [[point, weapons(loadout)] for point, loadout in play.dropped],
             "safehouse_stash": {key: weapons({weapon.spec.id: weapon})
                                 for key, weapon in play.safehouse_stash.items()},
-            "inventory": {"carried": play.inventory.carried, "stored": play.inventory.stored,
-                          "ground": play.inventory.ground, "selected_throwable": play.inventory.selected_throwable},
+            "planted_charges": play.planted_charges,
+            "inventory": {"carried": play.inventory.carried,
+                          "carried_weapons": weapons(play.inventory.carried_weapons),
+                          "stored": play.inventory.stored,
+                          "ground": play.inventory.ground, "selected_throwable": play.inventory.selected_throwable,
+                          "selected_sabotage_mode": play.inventory.selected_sabotage_mode},
             "throwables": play.throwables.snapshot(),
             "pending_events": [asdict(event) for event in play.events.pending],
             "random": play.combat.random.getstate(), "reports": play.campaign._reports,
@@ -177,10 +184,25 @@ def restore(play, row):
         play.safehouse_stash[key] = next(iter(restore_weapons(slot, play.specs).values()))
     inventory = row["inventory"]
     play.inventory.carried = play.inventory.validate_items(inventory["carried"])
+    play.inventory.carried_weapons = restore_weapons(inventory.get("carried_weapons", {}), play.specs)
+    if play.inventory.bag_weight > BAG_LIMIT + 1e-8:
+        raise ValueError("가방 용량 초과")
     selection = inventory["selected_throwable"]
     if selection is not None and (selection not in play.inventory.carried or not selection.startswith("throwable:")):
         raise ValueError("잘못된 투척물 선택 상태")
     play.inventory.selected_throwable = selection
+    mode = inventory.get("selected_sabotage_mode", "hand")
+    if mode not in ("hand", "multitool", "c4"):
+        raise ValueError("잘못된 시설 파괴 방식")
+    play.inventory.selected_sabotage_mode = mode
+    charges = row.get("planted_charges", {})
+    site_ids = {site["id"] for site in play.world.facilities if site["campaign_id"]}
+    site_ids.update(site["id"] + "#watch" for site in play.world.facilities
+                    if site["campaign_id"] and site.get("watch_post"))
+    if (not isinstance(charges, dict) or not charges.keys() <= site_ids
+            or any(type(floor) is not int or floor < 0 for floor in charges.values())):
+        raise ValueError("잘못된 C4 설치 상태")
+    play.planted_charges = dict(charges)
     play.throwables.restore(row["throwables"], play.time)
     play.inventory.stored = {key: play.inventory.validate_items(items) for key, items in inventory["stored"].items()}
     if not play.inventory.stored.keys() <= play.respawn_sites.keys():

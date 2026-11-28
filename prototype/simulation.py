@@ -19,11 +19,11 @@ from .interactions import (
     nearby_watch_post, use_facility, use_road_control,
 )
 from .geometry import Rect
-from .inventory import AMMUNITION, NIGHT_KIT, PICKUP_REACH, FieldInventory, weapon_slots
+from .inventory import AMMUNITION, C4, MULTITOOL, NIGHT_KIT, PICKUP_REACH, FieldInventory, weapon_slots
 from .intelligence import refresh_intelligence_view
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
-from .throwables import BURST_SECONDS, SmokeCloud, Throwables
+from .throwables import Activation, BURST_SECONDS, SmokeCloud, Throwables
 from .transport import TransportCrew
 from .campaign_presence import CampaignPresence
 from .weapons import WeaponState, load_attachments, load_weapons
@@ -50,6 +50,7 @@ class PlaySimulation:
                  stack_drill=False, stack_variant=0, campaign=None, materialized=True, equipment_range=False,
                  world_root=None, initial_position=None):
         self.world = World(scene, world_root=world_root, initial_position=initial_position)
+        self.facilities_by_id = {site["id"]: site for site in self.world.facilities}
         self.equipment_range, self.range_night = equipment_range, False
         range_setup = self.world.data.get("equipment_range")
         if equipment_range and (not range_setup or ai_scenario or search_drill or stack_drill):
@@ -141,6 +142,9 @@ class PlaySimulation:
         self.dropped = []
         self.safehouse_stash = {}
         self.inventory = FieldInventory(self, parts)
+        self.facility_interaction = None
+        self.interaction_latched = False
+        self.planted_charges = {}
         if new_campaign and self.presence and campaign.state.player_stock["night_gear"]:
             self.inventory.carried[NIGHT_KIT] = campaign.state.player_stock["night_gear"]
         self.throwables = Throwables(self.inventory.throwable_specs)
@@ -342,6 +346,107 @@ class PlaySimulation:
         for region in [key for key, alarm in self.alarms.items() if alarm.until <= self.time]:
             del self.alarms[region]
 
+    def raise_facility_alarm(self, facility_id, point):
+        region = self.campaign.simulation.state.facilities[facility_id].region_id
+        previous = self.alarms.get(region)
+        until = max(previous.until if previous else 0, self.time + ALARM_SECONDS)
+        self.alarms[region] = RegionAlarm(tuple(point), until)
+        self.events.emit_at("alarm_started", self.time, self.player.id, tuple(point),
+                            {"team": self.player.team, "region": region, "speaker": tuple(point)})
+
+    def update_facility_interaction(self, held, *, alternate=False):
+        if not held or self.player.hp <= 0:
+            self.facility_interaction = None
+            self.interaction_latched = False
+            return
+        if self.interaction_latched:
+            return
+        progress = self.facility_interaction
+        if progress is not None and progress["position"] == self.player.xy and progress["identity"][3] == alternate:
+            site = self.facilities_by_id[progress["identity"][0]]
+            at_watch = progress["identity"][1] == "watch"
+        else:
+            if (nearby_road_control(self.world, self.player.xy) is not None
+                    or self.inventory.nearby(self.dropped) is not None):
+                self.facility_interaction = None
+                return
+            site = nearby_facility(self.world, self.player.xy)
+            watch = nearby_watch_post(self.world, self.player.xy)
+            at_watch = watch is not None and (site is None or
+                        math.dist(self.player.xy, watch["watch_post"][0])
+                        < math.dist(self.player.xy, site["terminal"]))
+            if at_watch:
+                site = watch
+        if site is None:
+            self.facility_interaction = None
+            return
+        kind = site["kind"]
+        action = "watch" if at_watch else ("stash" if alternate else "normal") if kind == "safehouse" else (
+            "sabotage" if alternate or kind not in ("warehouse", "hq") else "normal")
+        mode = self.inventory.sabotage_mode if action in ("sabotage", "watch") else "hand"
+        charge_id = site["id"] + ("#watch" if at_watch else "")
+        if action in ("sabotage", "watch") and site["campaign_id"]:
+            facility = self.campaign.simulation.state.facilities[site["campaign_id"]]
+            if facility.damage == 100 or at_watch and facility.watch_disabled:
+                self.facility_interaction = None
+                return
+            if mode == "c4" and charge_id in self.planted_charges:
+                self.message = "이 시설에는 C4가 이미 설치됨 · B로 기폭"
+                self.facility_interaction = None
+                self.interaction_latched = True
+                return
+        duration = (2.0 if mode == "c4" else 4.0 if mode == "multitool" else 8.0)
+        if action not in ("sabotage", "watch"):
+            duration = 1.5
+        label = ("C4 설치" if mode == "c4" else "멀티툴 파괴" if mode == "multitool" else "맨손 파괴") if action in ("sabotage", "watch") else (
+            "무기 보관함" if action == "stash" else "시설 상호작용")
+        identity = (site["id"], action, mode, alternate)
+        if progress is None or progress["identity"] != identity or progress["position"] != self.player.xy:
+            progress = {"identity": identity, "elapsed": 0.0, "duration": duration, "label": label,
+                        "binding": "facility_alternate" if alternate else "supplies",
+                        "position": self.player.xy}
+            self.facility_interaction = progress
+        progress["elapsed"] = min(duration, progress["elapsed"] + FIXED_DT)
+        if progress["elapsed"] < duration - 1e-9:
+            return
+        self.facility_interaction = None
+        self.interaction_latched = True
+        if action == "stash":
+            self.message = exchange_safehouse_weapon(self, site)
+        elif action == "normal":
+            self.message = use_facility(self, site, method="hand" if kind == "hq" else None)
+        elif mode == "c4":
+            self.inventory._remove(self.inventory.carried, C4, 1)
+            if C4 not in self.inventory.carried:
+                self.inventory.selected_sabotage_mode = "hand"
+            self.planted_charges[charge_id] = self.player.position.floor
+            self.message = f"{site['name']}에 C4 설치 · B로 원격 기폭"
+        elif action == "watch":
+            self.message = disable_watch_post(self, site, method=mode)
+        else:
+            self.message = use_facility(self, site, sabotage=True, method=mode)
+
+    def detonate_charges(self):
+        if self.player.hp <= 0 or not self.planted_charges:
+            self.message = "설치된 C4 없음"
+            return
+        charges, self.planted_charges = self.planted_charges, {}
+        for charge_id, floor in sorted(charges.items()):
+            at_watch = charge_id.endswith("#watch")
+            site_id = charge_id.removesuffix("#watch")
+            site = self.facilities_by_id[site_id]
+            point = tuple(site["watch_post"][0] if at_watch else site["terminal"])
+            if at_watch:
+                disable_watch_post(self, site, method="c4")
+            else:
+                use_facility(self, site, sabotage=True, method="c4")
+            frag = self.throwables.specs["frag"]
+            self.throwable_bursts.append(Activation(frag, self.player.id, floor, point,
+                                                    self.time, self.player.team))
+            self.combat.blast(self.world, point, floor, frag.effect.radius,
+                              (self.player, *self.guards), self.time, self.player.id)
+        self.message = f"C4 {len(charges)}개 원격 기폭"
+
     def _drop_equipment(self):
         self.cancel_reload()
         for weapon in self.player.loadout.values():
@@ -500,10 +605,12 @@ class PlaySimulation:
                                      "strength": min(1.0, effect.noise_radius / 20), "reason": effect.kind})
 
     def step(self, direction=(0, 0), aim=None, firing=False, sprint=False, *, aiming=False,
-             trigger_pressed=False, walking=False, aim_offset=None):
+             trigger_pressed=False, walking=False, aim_offset=None,
+             interact_held=False, interact_alternate=False):
         if self.campaign_complete:
             return
         if self.respawn_target is not None:
+            self.update_facility_interaction(False)
             current = self.campaign.simulation.state.world_time
             self.campaign.simulation.advance_to(min(self.respawn_target, current + 60))
             self.time = float(self.campaign.simulation.state.world_time)
@@ -570,6 +677,8 @@ class PlaySimulation:
                     FIXED_DT, aiming=aiming, movement_speed_mps=moved / FIXED_DT,
                     sprinting=sprint and not walking)
         self._update_throwables()
+        self.update_facility_interaction(interact_held and direction == (0, 0) and not firing,
+                                         alternate=interact_alternate)
         self._dispatch()
         self._player_exposure = None
         intents = self.ai.update(self.guards, self.player, self.time, player_motion=player_motion)
@@ -664,7 +773,8 @@ class PlaySimulation:
             inventory.ground.append((point, items))
         stock = {**dict.fromkeys(inventory.parts, 1),
                  **{f"ammo:{key}": row[2] for key, row in AMMUNITION.items()},
-                 **{f"throwable:{key}": 2 for key in inventory.throwable_specs}}
+                 **{f"throwable:{key}": 2 for key in inventory.throwable_specs},
+                 MULTITOOL: 1, C4: 3}
         for key, count in stock.items():
             items[key] = max(items.get(key, 0), count)
         self.message = "입구 보급함 재고 보충"

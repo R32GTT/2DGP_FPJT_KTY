@@ -19,6 +19,9 @@ CARGO_ITEMS = {
     "repair_parts": ("수리 부품 상자", 2.5),
     "night_gear": ("야간 장비 세트", 1.0),
 }
+SABOTAGE_ITEMS = {"tool:multitool": ("멀티툴", 1.2), "charge:c4": ("C4", 0.8)}
+C4 = "charge:c4"
+MULTITOOL = "tool:multitool"
 NIGHT_KIT = "cargo:night_gear"
 AMMO_CRATE = "cargo:ammunition"
 BAG_LIMIT = 40.0
@@ -31,16 +34,28 @@ def weapon_slots(loadout):
     return (*((long_guns + [None, None])[:2]), sidearm)
 
 
+def unique_weapon_key(weapons, weapon):
+    key = weapon.spec.id
+    if key not in weapons:
+        return key
+    number = 2
+    while f"{key}#{number}" in weapons:
+        number += 1
+    return f"{key}#{number}"
+
+
 class FieldInventory:
     def __init__(self, play, parts):
         self.play, self.parts = play, parts
         self.throwable_specs = load_throwables()
         self.selected_throwable = None
-        self.carried, self.stored = {}, {}
+        self.selected_sabotage_mode = "hand"
+        self.carried, self.carried_weapons, self.stored = {}, {}, {}
         throwable_stock = {f"throwable:{spec.id}": spec.warehouse_quantity for spec in self.throwable_specs.values()
                            if spec.warehouse_quantity}
         self.ground = [
             (tuple(site["terminal"]), {**dict.fromkeys(parts, 1), **throwable_stock,
+                                      MULTITOOL: 1, C4: 3,
                                       **{f"ammo:{key}": row[2] for key, row in AMMUNITION.items()}})
             for site in play.world.facilities if site["kind"] == "warehouse"
         ]
@@ -69,6 +84,8 @@ class FieldInventory:
             return spec.name, spec.weight
         if key.startswith("cargo:"):
             return CARGO_ITEMS[key.removeprefix("cargo:")]
+        if key in SABOTAGE_ITEMS:
+            return SABOTAGE_ITEMS[key]
         part = self.parts[key]
         return part.name, part.weight
 
@@ -88,6 +105,11 @@ class FieldInventory:
         if self.selected_throwable in self.carried:
             return self.selected_throwable
         return next((key for key in self.carried if key.startswith("throwable:")), None)
+
+    @property
+    def sabotage_mode(self):
+        key = MULTITOOL if self.selected_sabotage_mode == "multitool" else C4
+        return self.selected_sabotage_mode if self.selected_sabotage_mode == "hand" or key in self.carried else "hand"
 
     def consume_throwable(self, key):
         self._remove(self.carried, key, 1)
@@ -113,14 +135,16 @@ class FieldInventory:
 
     @property
     def bag_weight(self):
-        return sum(self.item(key)[1] * amount for key, amount in self.carried.items())
+        return (sum(self.item(key)[1] * amount for key, amount in self.carried.items())
+                + sum(self.weapon_weight(weapon) for weapon in self.carried_weapons.values()))
+
+    def weapon_weight(self, weapon):
+        return (weapon.spec.weight + sum(self.parts[key].weight for key in weapon.attachments.values())
+                + (weapon.ammo + weapon.reserve) * AMMUNITION.get(weapon.spec.ammo_type, ("", 0.0, 0))[1])
 
     @property
     def movement_multiplier(self):
-        weapon_weight = sum(
-            weapon.spec.weight + sum(self.parts[key].weight for key in weapon.attachments.values())
-            + (weapon.ammo + weapon.reserve) * AMMUNITION.get(weapon.spec.ammo_type, ("", 0.0, 0))[1]
-            for weapon in self.play.player.loadout.values())
+        weapon_weight = sum(self.weapon_weight(weapon) for weapon in self.play.player.loadout.values())
         return max(0.78, 1.0 - 0.025 * max(0.0, weapon_weight + self.bag_weight - 9.0))
 
     def _reachable_piles(self, rows):
@@ -134,7 +158,7 @@ class FieldInventory:
                    default=None)
 
     def take_gun(self, index=None, key=None, slot=None):
-        play, player = self.play, self.play.player
+        play = self.play
         if index is None:
             index = self.nearby(play.dropped)
         if index is None:
@@ -142,35 +166,106 @@ class FieldInventory:
         _, guns = play.dropped[index]
         key = key or next(iter(guns))
         candidate = guns[key]
-        if (slot == 2 and candidate.spec.category != "pistol"
-                or slot in (0, 1) and candidate.spec.category == "pistol"):
+        if not self._valid_gun_slot(candidate, slot):
             return False
         incoming = guns.pop(key)
         self.stow_reserve(incoming)
-        first, second, sidearm = weapon_slots(player.loadout)
-        replaced = None
-        if key in player.loadout:
-            replaced = key
-        elif incoming.spec.category == "pistol":
-            replaced = sidearm
-        elif slot in (0, 1) and (first, second)[slot] is not None:
-            replaced = (first, second)[slot]
-        elif first and second:
-            replaced = player.active_weapon if player.active_weapon in (first, second) else second
-        play.cancel_reload()
+        replaced = self._equip_gun(incoming, slot)
         if replaced:
-            outgoing = player.loadout[replaced]
+            old_key, outgoing = replaced
             self.stow_reserve(outgoing)
-            guns[replaced] = outgoing
-            player.loadout = {(key if old == replaced else old): (incoming if old == replaced else weapon)
-                              for old, weapon in player.loadout.items()}
-        else:
-            player.loadout[key] = incoming
-        player.active_weapon, player.equip_until = key, play.time + 0.25
+            guns[old_key] = outgoing
         if not guns:
             play.dropped.pop(index)
         play.message = f"{incoming.spec.name} {'교환' if replaced else '회수'}"
         return True
+
+    @staticmethod
+    def _valid_gun_slot(weapon, slot):
+        return slot is None or slot in (0, 1, 2) and (slot == 2) == (weapon.spec.category == "pistol")
+
+    def _replacement(self, weapon, slot):
+        first, second, sidearm = weapon_slots(self.play.player.loadout)
+        if weapon.spec.category == "pistol":
+            return sidearm
+        if slot in (0, 1):
+            return (first, second)[slot]
+        if first and second:
+            active = self.play.player.active_weapon
+            return active if active in (first, second) else second
+        return None
+
+    def _equip_gun(self, incoming, slot):
+        play, player = self.play, self.play.player
+        replaced = self._replacement(incoming, slot)
+        play.cancel_reload()
+        remaining = {key: weapon for key, weapon in player.loadout.items() if key != replaced}
+        new_key = unique_weapon_key(remaining, incoming)
+        outgoing = player.loadout.get(replaced)
+        if outgoing:
+            player.loadout = {(new_key if key == replaced else key): (incoming if key == replaced else weapon)
+                              for key, weapon in player.loadout.items()}
+        else:
+            player.loadout[new_key] = incoming
+        player.active_weapon, player.equip_until = new_key, play.time + 0.25
+        return (replaced, outgoing) if outgoing else None
+
+    def store_gun(self, index, key):
+        guns = self.play.dropped[index][1]
+        weapon = guns[key]
+        if self.bag_weight + self.weapon_weight(weapon) > BAG_LIMIT + 1e-8:
+            self.play.message = "가방 용량 부족"
+            return False
+        guns.pop(key)
+        self.stow_reserve(weapon)
+        self.carried_weapons[unique_weapon_key(self.carried_weapons, weapon)] = weapon
+        if not guns:
+            self.play.dropped.pop(index)
+        self.play.message = f"{weapon.spec.name} 가방에 보관"
+        return True
+
+    def stow_gun(self, slot):
+        player = self.play.player
+        key = weapon_slots(player.loadout)[slot]
+        if key is None:
+            return False
+        weapon = player.loadout[key]
+        if self.bag_weight + self.weapon_weight(weapon) > BAG_LIMIT + 1e-8:
+            self.play.message = "가방 용량 부족"
+            return False
+        if key == player.active_weapon:
+            self.play.cancel_reload()
+        player.loadout.pop(key)
+        self.stow_reserve(weapon)
+        self.carried_weapons[unique_weapon_key(self.carried_weapons, weapon)] = weapon
+        if key == player.active_weapon:
+            player.active_weapon = next(iter(player.loadout), "")
+            player.equip_until = self.play.time + 0.25
+        self.play.message = f"{weapon.spec.name} 가방에 보관"
+        return True
+
+    def equip_carried_gun(self, key, slot=None):
+        weapon = self.carried_weapons.get(key)
+        if weapon is None or not self._valid_gun_slot(weapon, slot):
+            return False
+        replaced = self._replacement(weapon, slot)
+        outgoing = self.play.player.loadout.get(replaced)
+        if (self.bag_weight - self.weapon_weight(weapon)
+                + (self.weapon_weight(outgoing) if outgoing else 0) > BAG_LIMIT + 1e-8):
+            self.play.message = "가방 용량 부족"
+            return False
+        self.carried_weapons.pop(key)
+        exchanged = self._equip_gun(weapon, slot)
+        if exchanged:
+            self.stow_reserve(exchanged[1])
+            self.carried_weapons[unique_weapon_key(self.carried_weapons, exchanged[1])] = exchanged[1]
+        self.play.message = f"{weapon.spec.name} 장착"
+        return True
+
+    def drop_carried_gun(self, key):
+        weapon = self.carried_weapons.pop(key, None)
+        if weapon is not None:
+            self.play.dropped.append((self.play.player.xy, {key: weapon}))
 
     def feed_reserve(self, weapon):
         if weapon.reloading or weapon.stage >= 2 or (weapon.stage == 0 and weapon.magazine_attached and
@@ -197,10 +292,14 @@ class FieldInventory:
             player.equip_until = self.play.time + 0.25
 
     def drop_carried(self):
+        if self.carried_weapons:
+            self.play.dropped.append((self.play.player.xy, self.carried_weapons))
+            self.carried_weapons = {}
         if self.carried:
             self.ground.append((self.play.player.xy, self.carried))
             self.carried = {}
         self.selected_throwable = None
+        self.selected_sabotage_mode = "hand"
         self.sync_night_gear()
 
     @staticmethod
@@ -308,8 +407,14 @@ class FieldInventory:
             for key, count in sorted(self.stored.get(safehouse, {}).items()):
                 rows.append((f"보관함  ·  {self.item(key)[0]} ×{count} 회수", ("take", safehouse, key)))
         active_throwable = self.active_throwable
+        for key, weapon in self.carried_weapons.items():
+            rows.append((f"가방  ·  {weapon.spec.name} 장착", ("equip_bag_gun", key)))
         for key, count in sorted(self.carried.items()):
             label = f"가방  ·  {self.item(key)[0]} ×{count}"
+            if key in SABOTAGE_ITEMS:
+                mode = "multitool" if key == MULTITOOL else "c4"
+                status = "선택 중" if self.sabotage_mode == mode else "파괴 도구 선택"
+                rows.append((f"{label}  ·  {status}", ("select_sabotage", mode)))
             if key.startswith("throwable:"):
                 state = "선택 중 · G 투척" if key == active_throwable else "투척물 선택"
                 rows.append((f"{label}  ·  {state}", ("select_throwable", key)))
@@ -339,8 +444,14 @@ class FieldInventory:
         elif kind == "select_throwable":
             self.selected_throwable = args[0]
             self.play.message = f"{self.item(args[0])[0]} 선택 · G 투척"
+        elif kind == "select_sabotage":
+            self.selected_sabotage_mode = "hand" if self.sabotage_mode == args[0] else args[0]
+            label = {"hand": "맨손", "multitool": "멀티툴", "c4": "C4"}[self.selected_sabotage_mode]
+            self.play.message = f"시설 파괴 방식 · {label} · 시설에서 E 또는 Shift+E 길게 누르기"
         elif kind == "gun":
             self.take_gun(*args)
+        elif kind == "equip_bag_gun":
+            self.equip_carried_gun(*args)
         elif kind == "drop_gun":
             self.drop_weapon(weapon_slots(self.play.player.loadout).index(self.play.player.active_weapon))
         elif kind == "ground":
@@ -393,7 +504,7 @@ class FieldInventory:
             if shift or target is not None and target.zone == "floor":
                 self.drop_weapon(slot)
             elif target is not None and target.zone == "bag":
-                return
+                self.stow_gun(slot)
             elif target is not None and target.zone == "slot" and target.key[0] in (0, 1) and slot in (0, 1):
                 keys = list(self.play.player.loadout)
                 first, second, _ = weapon_slots(self.play.player.loadout)
@@ -411,12 +522,25 @@ class FieldInventory:
                 slot = target.key[0] if target and target.zone == "slot" else None
                 if slot is not None and slot not in (0, 1, 2):
                     return
-                self.take_gun(source.action[1], source.action[2], slot)
+                if target is not None and target.zone == "bag":
+                    self.store_gun(source.action[1], source.action[2])
+                else:
+                    self.take_gun(source.action[1], source.action[2], slot)
             else:
                 self.activate_action(source.action, single=shift)
             return
         if source.zone == "bag":
             key = source.key[1]
+            if source.key[0] == "bag_gun":
+                if key not in self.carried_weapons:
+                    return
+                if shift or target is not None and target.zone == "floor":
+                    self.drop_carried_gun(key)
+                elif target is not None and target.zone == "slot" and target.key[0] in (0, 1, 2):
+                    self.equip_carried_gun(key, target.key[0])
+                elif target is None:
+                    self.equip_carried_gun(key)
+                return
             if key not in self.carried:
                 return
             if shift or target is not None and target.zone == "floor":

@@ -594,6 +594,21 @@ class HUD:
                              intel_index=intel_index, navigation=map_navigation or MapNavigation())
         if not debug:
             self._draw_gameplay_alerts(simulation, camera, map_open=map_open, paused=paused)
+        if simulation.planted_charges and not (map_open or inventory_view is not None):
+            planted = f"C4 {len(simulation.planted_charges)}개 설치 · {binding_name(self.bindings['detonate'])} 기폭"
+            self.label("planted_c4", planted, 15, ACCENT)
+            self.text("planted_c4", width - self.labels["planted_c4"].width - 16, 70)
+        progress = simulation.facility_interaction
+        if progress is not None and not (paused or map_open or inventory_view is not None):
+            fraction = min(1.0, progress["elapsed"] / progress["duration"])
+            left, bottom, right = width / 2 - 150, 95, width / 2 + 150
+            pico.draw_rectangle(left, bottom, right, bottom + 12,
+                                *PANEL, THEME.track_alpha, filled=True)
+            pico.draw_rectangle(left + 2, bottom + 2, left + 2 + 296 * fraction, bottom + 10,
+                                *ACCENT, filled=True)
+            message = f"{progress['label']}  ·  {binding_name(self.bindings[progress['binding']])} 유지"
+            self.label("facility_hold", message, 16, TEXT)
+            self.text("facility_hold", (width - self.labels["facility_hold"].width) / 2, bottom + 22)
         if inventory_view is not None:
             self._draw_inventory(camera, *inventory_view, weapon_images or {})
 

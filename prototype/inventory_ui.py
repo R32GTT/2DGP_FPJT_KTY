@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .inventory import AMMO_CRATE, weapon_slots
+from .inventory import AMMO_CRATE, C4, MULTITOOL, weapon_slots
 from .interactions import nearby_facility
 
 
@@ -83,12 +83,20 @@ def build_inventory_layout(inventory, size, bag_scroll=0, floor_scroll=0):
                                             "-" + part.name, action=("part", part_id, False)))
 
     bag_rows = []
+    for key, weapon in inventory.carried_weapons.items():
+        details = tuple("-" + inventory.parts[part].name for part in weapon.attachments.values())
+        bag_rows.append((("bag_gun", key), weapon.spec.name, details,
+                         ("equip_bag_gun", key), weapon.spec.id))
     compatible = {part.id for part in player.weapon.spec.compatible} if player.weapon else set()
     for key, count in sorted(inventory.carried.items()):
         name = inventory.item(key)[0]
         action = ()
         if key.startswith("throwable:"):
             action = ("select_throwable", key)
+        elif key in (C4, MULTITOOL):
+            action = ("select_sabotage", "c4" if key == C4 else "multitool")
+            if inventory.sabotage_mode == action[1]:
+                name += "  ·  선택 중"
         elif key == AMMO_CRATE and player.weapon:
             action = ("unpack_ammunition", player.weapon.spec.ammo_type)
         elif key in compatible:

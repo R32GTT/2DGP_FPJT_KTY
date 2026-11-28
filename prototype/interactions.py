@@ -45,8 +45,6 @@ def exchange_safehouse_weapon(simulation, facility):
     equipped, stored = player.weapon, stash.get(key)
     if equipped is None and stored is None:
         return "안전가옥 보관함이 비어 있음"
-    if stored and stored.spec.id in player.loadout and stored.spec.id != player.active_weapon:
-        return "같은 종류의 무기를 이미 휴대 중입니다. 해당 무기를 장착한 뒤 교체하세요"
     if stored:
         pistol = stored.spec.category == "pistol"
         count = sum((weapon.spec.category == "pistol") == pistol
@@ -61,9 +59,12 @@ def exchange_safehouse_weapon(simulation, facility):
     else:
         stash.pop(key)
     if stored:
+        from .inventory import unique_weapon_key
+
         simulation.inventory.stow_reserve(stored)
-        player.loadout[stored.spec.id] = stored
-        player.active_weapon = stored.spec.id
+        new_key = unique_weapon_key(player.loadout, stored)
+        player.loadout[new_key] = stored
+        player.active_weapon = new_key
     else:
         player.active_weapon = next(iter(player.loadout), "")
     if player.weapon:
@@ -75,7 +76,7 @@ def exchange_safehouse_weapon(simulation, facility):
     return f"{equipped.spec.name} 보관"
 
 
-def use_facility(simulation, facility, *, sabotage=False):
+def use_facility(simulation, facility, *, sabotage=False, method=None):
     player, bridge = simulation.player, simulation.campaign
     kind, key = facility["kind"], facility["campaign_id"]
     if kind == "safehouse":
@@ -89,6 +90,8 @@ def use_facility(simulation, facility, *, sabotage=False):
     if key:
         current = bridge.simulation.state.facilities[key].damage
         if current >= 100:
+            if method == "c4":
+                _emit_sabotage(simulation, key, facility["terminal"], method=method)
             return f"{facility['name']} 기능이 이미 무력화됨"
         if kind == "warehouse" and not sabotage:
             amount = bridge.take_supplies(key)
@@ -96,10 +99,11 @@ def use_facility(simulation, facility, *, sabotage=False):
         if kind == "hq" and not sabotage:
             if not bridge.disable_component(key, "relay_disabled"):
                 return "HQ 통신 중계기가 이미 무력화됨"
-            _emit_sabotage(simulation, key, facility["terminal"])
+            _emit_sabotage(simulation, key, facility["terminal"], method=method)
             return "HQ 통신 중계기 무력화 · 외부 증원 차단"
-        damage = bridge.damage_facility(key, destroy_inventory=kind == "warehouse")
-        _emit_sabotage(simulation, key, facility["terminal"])
+        damage = bridge.damage_facility(key, damage=100 if method else 25,
+                                        destroy_inventory=kind == "warehouse")
+        _emit_sabotage(simulation, key, facility["terminal"], method=method)
         if kind == "warehouse" and damage == 100:
             return f"{facility['name']} 무력화 · 재고 파괴"
         if damage == 100:
@@ -112,17 +116,25 @@ def use_facility(simulation, facility, *, sabotage=False):
     return facility["name"]
 
 
-def disable_watch_post(simulation, site):
+def disable_watch_post(simulation, site, *, method=None):
     key = site["campaign_id"]
     state = simulation.campaign.simulation.state
     if state.facilities[key].damage == 100 or not simulation.campaign.disable_component(key, "watch_disabled"):
         return "감시초소가 이미 무력화됨"
-    _emit_sabotage(simulation, key, site["watch_post"][0])
+    _emit_sabotage(simulation, key, site["watch_post"][0], method=method)
     return "감시초소 무력화"
 
 
-def _emit_sabotage(simulation, key, point):
+def _emit_sabotage(simulation, key, point, *, method=None):
+    if method == "multitool":
+        return
     events, time, player = simulation.events, simulation.time, simulation.player
-    events.emit("noise", time, player, radius=14, strength=1.0, reason="sabotage")
-    events.emit("facility_damaged", time, player, facility=key, point=tuple(point),
-                damage=simulation.campaign.simulation.state.facilities[key].damage)
+    point = tuple(point)
+    events.emit_at("noise", time, player.id, point,
+                   {"team": player.team, "radius": 36 if method == "c4" else 14,
+                    "strength": 1.0, "reason": "explosion" if method == "c4" else "sabotage"})
+    events.emit_at("facility_damaged", time, player.id, point,
+                   {"team": player.team, "facility": key, "point": point,
+                    "damage": simulation.campaign.simulation.state.facilities[key].damage})
+    if method in ("hand", "c4"):
+        simulation.raise_facility_alarm(key, point)
