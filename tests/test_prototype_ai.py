@@ -247,6 +247,51 @@ class PrototypeAITests(unittest.TestCase):
         memory = ai.brains[receiver.id].memory
         self.assertEqual((memory.reported, memory.reported_at), ((4, 4), 5.0))
 
+    def test_finished_search_retains_evidence_without_resuming_old_contact(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry),
+                                door_on_ai_path=lambda *_: None,
+                                door_on_ai_path_from=lambda *args, **kwargs: None,
+                                indoor_search_area=lambda *_: None)
+        guard = Actor("guard", Position(0, 0))
+        player = Actor("player", Position(20, 0), team="player", hp=0)
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        brain.memory.last_seen, brain.memory.seen_at = (3, 0), 1.0
+        brain.memory.reported, brain.memory.reported_at = (6, 0), 2.0
+        brain.contact_at = 2.0
+        brain.combat.combat_alert_until = 0.0
+
+        brain.clear_contact()
+        ai.update([guard], player, 3.0)
+
+        self.assertEqual((brain.memory.last_seen, brain.memory.seen_at), ((3, 0), 1.0))
+        self.assertEqual((brain.memory.reported, brain.memory.reported_at), ((6, 0), 2.0))
+        self.assertIsNone(brain.contact_at)
+        self.assertEqual(guard.state, "idle")
+        self.assertIsNone(brain.search.priority_cue)
+
+    def test_newer_radio_report_supersedes_old_personal_sighting(self):
+        geometry = SpatialIndex()
+        world = SimpleNamespace(geometry=geometry, revision=0, navigation=Navigation({}, [], geometry),
+                                door_on_ai_path=lambda *_: None,
+                                door_on_ai_path_from=lambda *args, **kwargs: None,
+                                indoor_search_area=lambda *_: None)
+        guard = Actor("guard", Position(0, 0))
+        player = Actor("player", Position(20, 0), team="player", hp=0)
+        ai = EnemyAI(world, [guard], [[]])
+        brain = ai.brains[guard.id]
+        brain.memory.last_seen, brain.memory.seen_at = (3, 0), 1.0
+        brain.combat.combat_alert_until = 20.0
+
+        ai.update([guard], player, 2.0)
+        self.assertEqual(brain.search.priority_cue, SearchCue("seen", (3, 0), 1.0))
+        brain.memory.reported, brain.memory.reported_at = (8, 0), 5.0
+        ai.update([guard], player, 6.0)
+
+        self.assertEqual(brain.search.priority_cue, SearchCue("reported", (8, 0), 5.0))
+        self.assertEqual(brain.search.task.target, (8, 0))
+
     def test_quiet_footstep_does_not_replace_an_active_gunshot_investigation(self):
         guard = Actor("guard", Position(0, 0))
         player = Actor("player", Position(6, 0), team="player")

@@ -48,8 +48,8 @@ class SearchController:
         self.incidents[key] = Incident(0.0, point, indoor=IndoorSweep(area, point, 0.0) if area else None)
         for actor in actors:
             brain = self.brains[actor.id]
-            brain.search.priority_cue = None
-            brain.search.priority_checked = False
+            brain.search.priority_cue = SearchCue("reported", point, 0.0)
+            brain.search.priority_checked = True
             brain.incident = key
             brain.memory.reported = point
             brain.memory.reported_at = 0.0
@@ -74,10 +74,15 @@ class SearchController:
     def update_priority_cue(self, actor, brain, tracking, investigating, incoming):
         memory = brain.memory
         previous = brain.search.priority_cue
+        if previous is not None and previous.kind == "seen" and memory.reported_at > previous.at:
+            self.interrupt_search(actor, brain)
+            brain.search.priority_cue = previous = None
         latest = previous.at if previous is not None else -math.inf
         cue = None
-        if tracking and memory.seen_at > latest:
+        if tracking and memory.seen_at >= memory.reported_at and memory.seen_at > latest:
             cue = SearchCue("seen", memory.last_seen, memory.seen_at)
+        if memory.reported is not None and memory.reported_at > (cue.at if cue else latest):
+            cue = SearchCue("reported", memory.reported, memory.reported_at)
         recent_gunshot = memory.gunshot_origin is not None and brain.combat.incoming_at <= memory.sound_heard_at + 0.25
         if incoming is not None and not recent_gunshot and brain.combat.incoming_at > (cue.at if cue else latest):
             cue = SearchCue("impact", incoming, brain.combat.incoming_at)

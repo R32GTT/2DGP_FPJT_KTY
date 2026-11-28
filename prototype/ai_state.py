@@ -216,7 +216,9 @@ class Brain:
     def clear_contact(self):
         if self.search.task.execution is not None:
             self.search.task.execution.stop(Status.INVALID)
-        self.memory.last_seen = self.memory.reported = None
+        # 조사 종료는 관측 기록의 삭제와 다르다. 기록의 시각은 후속 단서와 비교할 때 사용한다.
+        self.contact_at = None
+        self.radio.started_at = None
         self.search.task.cue = self.search.task.target = self.search.cover = self.search.arrival = None
         self.search.priority_cue = None
         self.combat.peek_home = self.combat.incoming = self.combat.formation = self.search.reported_check = None

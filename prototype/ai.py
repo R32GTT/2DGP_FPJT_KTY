@@ -388,7 +388,7 @@ class EnemyAI:
         priority = actor.state == "search" and goal is not None and situation.priority_search and not room
         approach = None
         if goal is not None and actor.state in {"search", "alert"} and not room:
-            if priority and cue.point == goal and cue.kind == "seen":
+            if priority and cue.point == goal and cue.kind in {"seen", "reported"}:
                 approach = "seen"
             elif (priority and cue.point == goal and cue.kind == "sound") or (not situation.priority_search and goal == memory.last_sound):
                 approach = ("sound", memory.sound_at)
