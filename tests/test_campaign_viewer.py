@@ -36,5 +36,22 @@ class CameraAndClockTests(unittest.TestCase):
         camera.set_zoom(5)
         self.assertEqual(camera.magnification, 4.0)
 
+    def test_mouse_look_range_increases_by_twenty_percent_while_aiming_too(self):
+        camera = PlayCamera(width=1600, height=1080, zoom=0.5)
+        position = (23.0, -12.0)
+        mouse = (camera.width, camera.height)
+        for aiming, expected in ((False, (2.4, 4.2)), (True, (7.2, 7.2))):
+            with self.subTest(aiming=aiming):
+                camera.follow(position, mouse, aiming=aiming)
+                self.assertAlmostEqual(camera.look_x, expected[0])
+                self.assertAlmostEqual(camera.look_y, expected[1])
+                self.assertAlmostEqual(camera.world(camera.width / 2, camera.height / 2)[0] - position[0], expected[0])
+                self.assertAlmostEqual(camera.world(camera.width / 2, camera.height / 2)[1] - position[1], expected[1])
+
+        camera = PlayCamera()
+        camera.follow((0, 0), (camera.width, camera.height))
+        self.assertAlmostEqual(camera.look_x, 1.6)
+        self.assertAlmostEqual(camera.look_y, 3.5)
+
     def test_world_clock_keeps_days(self):
         self.assertEqual(world_clock(86400 + 3661), "D02  01:01:01")
