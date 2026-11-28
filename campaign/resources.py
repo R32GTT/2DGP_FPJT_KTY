@@ -178,7 +178,8 @@ def issue_ammunition(state: CampaignState, facility_id: str, requested: int) -> 
     facility = state.facilities[facility_id]
     if facility.damage == 100 or state.regions[facility.region_id].owner != "enemy":
         return 0
-    amount = min(requested, max(0, available(state, facility_id, "ammunition")))
+    amount = min(requested, max(0, available(state, facility_id, "ammunition")
+                                   - minimum(state, facility_id, "ammunition")))
     if not amount:
         return 0
     return consume(state, facility.inventory, {"ammunition": amount},

@@ -4,6 +4,7 @@ from collections import defaultdict
 import math
 
 from campaign.models import Position
+from campaign.resources import available, consume, issue_ammunition
 
 from .actors import Actor
 from .weapons import WeaponState
@@ -87,7 +88,28 @@ class CampaignRoster:
                 spec = weapon(index) if callable(weapon) else weapon
                 actor.loadout = {spec.id: WeaponState.ready(spec)}
                 actor.active_weapon = spec.id
-                actor.inventory[f"ammo:{spec.ammo_type}"] = actor.weapon.reserve
+                facility = self.bridge.node_facilities.get(node)
+                if self.world.data.get("generation"):
+                    rounds_per_crate = min(spec.capacity, spec.reserve)
+                    requested = (actor.weapon.ammo + spec.reserve) // rounds_per_crate if rounds_per_crate else 0
+                    issued = issue_ammunition(state, facility.id, requested) if facility else 0
+                    rounds = issued * rounds_per_crate
+                    loaded = min(actor.weapon.ammo, rounds)
+                    actor.weapon.magazine = max(0, loaded - int(actor.weapon.chambered))
+                    actor.weapon.chambered = loaded > 0
+                    reserve = max(0, rounds - loaded)
+                    if (facility and facility.damage < 100
+                            and available(state, facility.id, "supplies")
+                            > facility.minimum_stock["supplies"]):
+                        optic = next((part for part in spec.compatible if part.slot == "optic"), None)
+                        if optic is not None:
+                            consume(state, facility.inventory, {"supplies": 1},
+                                    reason="garrison_attachment", owner_id=facility.id)
+                            actor.weapon.attachments[optic.slot] = optic.id
+                else:
+                    reserve = actor.weapon.reserve
+                if reserve:
+                    actor.inventory[f"ammo:{spec.ammo_type}"] = reserve
                 actor.weapon.reserve = 0
                 self.actors.append(actor)
                 members.append(actor)
