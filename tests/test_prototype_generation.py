@@ -278,9 +278,9 @@ class GeneratedMapTests(unittest.TestCase):
         self.assertEqual(len(state.roads), len(self.scene["roads"]))
         for road in state.roads.values():
             self.assertAlmostEqual(road.length_m, math.dist(network["nodes"][road.start], network["nodes"][road.end]))
-        hq = next(facility for facility in state.facilities.values() if "command" in facility.capabilities)
-        operation, = [op for op in state.operations.values() if op.destination_id == hq.id]
-        initial = hq.inventory["supplies"]
+        operation = next(op for op in state.operations.values() if op.kind == "supply"
+                         and op.destination_id in state.facilities
+                         and state.reservations[op.id].cargo["supplies"] > 0)
         amount = state.reservations[operation.id].cargo["supplies"]
         original_player = play.player.xy
         seen_trucks = False
@@ -291,16 +291,19 @@ class GeneratedMapTests(unittest.TestCase):
             play._sync_guards()
             seen_trucks |= bool(play.transports.trucks)
             if operation.delivered_at is None:
-                self.assertEqual(hq.inventory["supplies"], initial)
+                self.assertFalse(any(row["kind"] == "handed_over" and row["operation_id"] == operation.id
+                                     for row in state.history))
             if second == 45:
                 self.assertTrue(play.transports.trucks)
                 snapshot = deserialize_campaign(serialize_campaign(state))
         self.assertTrue(seen_trucks)
         self.assertIsNotNone(operation.delivered_at)
-        self.assertEqual(hq.inventory["supplies"], initial + amount)
+        self.assertEqual(operation.cargo["supplies"], 0)
         self.assertEqual(play.player.xy, original_player)
-        self.assertEqual(sum(row["kind"] == "handed_over" and row["operation_id"] == operation.id
-                             for row in state.history), 1)
+        handovers = [row for row in state.history
+                     if row["kind"] == "handed_over" and row["operation_id"] == operation.id]
+        self.assertEqual(len(handovers), 1)
+        self.assertEqual(handovers[0]["cargo"]["supplies"], amount)
         Simulation(snapshot).advance_to(120)
         self.assertEqual(asdict(snapshot), asdict(state))
         assert_invariants(state)
@@ -313,7 +316,9 @@ class GeneratedMapTests(unittest.TestCase):
         state = build_generated_state(world.data, setup)
         hq = next(facility for facility in state.facilities.values() if "command" in facility.capabilities)
         self.assertEqual(hq.inventory["supplies"], 7)
-        self.assertTrue(all(vehicle.capacity == 180 for key, vehicle in state.vehicles.items() if not key.startswith("external/")))
+        self.assertTrue(any("/truck/" in key for key in state.vehicles if not key.startswith("external/")))
+        self.assertTrue(all(vehicle.capacity == setup["vehicle_profiles"][key.rsplit("/", 2)[1]]["capacity"]
+                            for key, vehicle in state.vehicles.items() if not key.startswith("external/")))
         play = PlaySimulation(self.scene)
         campaign = play.campaign.simulation
         campaign.advance_to(45)
