@@ -10,7 +10,7 @@ from prototype.ai import Brain, EnemyAI, Intent
 from prototype.ai_state import SearchCue
 from prototype.ai_motion import turn_indoor_gaze
 from prototype.geometry import Collider, Rect, SpatialIndex
-from prototype.indoor_search import IndoorSweep, build_search_areas, sample_views
+from prototype.indoor_search import IndoorSweep, build_search_areas, choose_look, sample_views
 from prototype.navigation import Navigation
 from prototype.simulation import PlaySimulation
 
@@ -20,6 +20,12 @@ KILLHOUSE_SCENE = FACILITY_SCENE.with_name("ai_killhouse.json")
 
 
 class IndoorSearchTests(unittest.TestCase):
+    def test_look_groups_samples_across_angle_wrap(self):
+        left = [(5 * math.cos(angle), 5 * math.sin(angle))
+                for angle in (math.pi - 0.1, -math.pi + 0.1)]
+        samples = {point: 1 for point in [*left, (5, 0)]}
+        self.assertIn(choose_look((0, 0), 0, SpatialIndex(), samples), left)
+
     def test_weak_outdoor_noise_waits_for_indoor_sweep_but_gunshot_interrupts(self):
         geometry = SpatialIndex()
         world = SimpleNamespace(data={"search_areas": {"room": [[0, 0, 5.4, 5.4]]}},

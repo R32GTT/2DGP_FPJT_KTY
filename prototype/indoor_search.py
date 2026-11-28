@@ -1,6 +1,7 @@
 """실내 수색은 맵의 걸을 수 있는 표본점과 실제 시야로 진행한다."""
 
 from collections import defaultdict
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 import math
 
@@ -76,13 +77,26 @@ def choose_look(xy, facing, geometry, samples, *, max_offset=math.pi, scan_range
             candidates.append((point, offset, distance, weight))
     flags = geometry.sight_flags(xy, [row[0] for row in candidates])
     visible = [row for row, clear in zip(candidates, flags) if clear]
+    if not visible:
+        return None
+    # 원형 각도를 펼친 뒤 누적합으로 각 시야 부채꼴의 가중치를 한 번에 계산한다.
+    ordered = sorted(visible, key=lambda row: row[1])
+    angles = [row[1] for row in ordered]
+    extended = [angle - math.tau for angle in angles] + angles + [angle + math.tau for angle in angles]
+    weights = [row[3] for row in ordered] * 3
+    distances = [row[2] for row in ordered] * 3
+    weight_sum, distance_sum = [0], [0.0]
+    for weight, distance in zip(weights, distances):
+        weight_sum.append(weight_sum[-1] + weight)
+        distance_sum.append(distance_sum[-1] + distance)
     best = None
     for point, point_angle, distance, _ in visible:
         offset = max(-max_offset, min(max_offset, point_angle))
-        seen = [row for row in visible if abs(math.remainder(row[1] - offset, math.tau)) <= SCAN_HALF_CONE]
+        first = bisect_left(extended, offset - SCAN_HALF_CONE)
+        last = bisect_right(extended, offset + SCAN_HALF_CONE)
         # 가까운 표본 하나보다 시야로 확인할 수 있는 공간 전체를 비교한다.
         nearby_angle = continue_scan and abs(point_angle) <= math.radians(60)
-        score = (nearby_angle, sum(row[3] for row in seen), sum(row[2] for row in seen),
+        score = (nearby_angle, weight_sum[last] - weight_sum[first], round(distance_sum[last] - distance_sum[first], 9),
                  -abs(offset), distance, point)
         if best is None or score > best[0]:
             best = score, point
