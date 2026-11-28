@@ -36,6 +36,18 @@ def field_approach(count, y=-65, distance=15):
     return simulation, guards
 
 
+def establish_contact(ai, guards, player, time=0):
+    """Start a combat scenario after the guards have actually identified the player."""
+    for guard in guards:
+        brain = ai.brains[guard.id]
+        brain.memory.visible = brain.memory.exposed = True
+        brain.memory.recognition = 1.0
+        brain.memory.vision_at = brain.memory.seen_at = time
+        brain.memory.last_seen = player.xy
+        brain.contact_at = time
+        brain.combat.combat_alert_until = time + 5
+
+
 class PrototypeAITests(unittest.TestCase):
     def test_move_result_distinguishes_arrival_failure_and_temporary_wait(self):
         geometry = SpatialIndex()
@@ -89,6 +101,7 @@ class PrototypeAITests(unittest.TestCase):
         brain = ai.brains[guard.id]
         brain.combat.action, brain.combat.action_goal = "cover", guard.xy
         brain.combat.cover_threat, brain.combat.cover_revision = (6, 3), world.revision
+        establish_contact(ai, [guard], player, 1)
         ai.update([guard], player, 1)
         self.assertIsNone(brain.combat.peek_home)
         self.assertEqual(brain.combat.action, "fire")
@@ -101,6 +114,7 @@ class PrototypeAITests(unittest.TestCase):
         blocker_brain = simulation.ai.brains[blocker.id]
         blocker_brain.patrol = [blocker.xy]
         brain = simulation.ai.brains[shooter.id]
+        establish_contact(simulation.ai, [shooter], simulation.player)
 
         simulation.step()
         self.assertEqual((simulation.combat.shots, brain.combat.burst, brain.combat.fire_at), (0, 0, 0))
@@ -119,6 +133,7 @@ class PrototypeAITests(unittest.TestCase):
         simulation, guards = field_approach(3, distance=7)
         for index, guard in enumerate(guards):
             guard.position = Position(-7 - index * 0.65, -65)
+        establish_contact(simulation.ai, guards, simulation.player)
         with patch.object(simulation.combat, "_damage", return_value=False):
             for _ in range(105):
                 simulation.step()
@@ -208,6 +223,7 @@ class PrototypeAITests(unittest.TestCase):
         ally = Actor("ally", Position(0, 2), facing=math.pi)
         player = Actor("player", Position(15.99, 0), team="player")
         ai = EnemyAI(world, [guard, ally], [[], []])
+        establish_contact(ai, [guard], player)
         for frame in range(1, 121):
             player.position.x = 15.99 if (frame - 1) // 9 % 2 == 0 else 16.01
             ai.update([guard, ally], player, frame / 60)
@@ -246,6 +262,7 @@ class PrototypeAITests(unittest.TestCase):
 
     def test_squad_updates_its_stops_when_player_steps_out_of_range(self):
         simulation, guards = field_approach(2)
+        establish_contact(simulation.ai, guards, simulation.player)
         with patch.object(simulation.combat, "fire"):
             for _ in range(30):
                 simulation.step()
@@ -269,6 +286,7 @@ class PrototypeAITests(unittest.TestCase):
                         loadout={"ar_a": WeaponState.ready(spec)}) for index in range(2)]
         player = Actor("player", Position(15.5, 0), team="player")
         ai = EnemyAI(world, guards, [[], []])
+        establish_contact(ai, guards, player)
         for frame in range(1, 140):
             intents = ai.update(guards, player, frame / 60)
             for guard in guards:
@@ -349,8 +367,9 @@ class PrototypeAITests(unittest.TestCase):
         for count, y in ((1, -65), (2, -65), (6, -65), (2, -79.65)):
             with self.subTest(count=count, y=y):
                 simulation, guards = field_approach(count, y)
+                establish_contact(simulation.ai, guards, simulation.player)
 
-                # 사격 피해 없이 지각부터 실제 이동까지 비교한다.
+                # 사격 피해 없이 접촉 이후의 실제 이동을 비교한다.
                 with patch.object(simulation.combat, "fire"):
                     for _ in range(30):
                         simulation.step()
@@ -359,14 +378,14 @@ class PrototypeAITests(unittest.TestCase):
                         self.assertEqual(guards[0].xy[1], y)
                         continue
 
-                    plan, = simulation.ai.squad.approaches.values()
+                    plan = next(plan for key, plan in simulation.ai.squad.approaches.items() if key[-1] == "advance")
                     destinations = [plan.orders[guard.id].destination for guard in guards]
                     self.assertEqual(len(set(destinations)), count)
                     early_width = max(guard.xy[1] for guard in guards) - min(guard.xy[1] for guard in guards)
                     self.assertGreater(early_width, 1.0)
                     self.assertTrue(all(math.dist(guard.xy, point) > 0.5
                                         for guard, point in zip(guards, destinations)))
-                    for _ in range(360):
+                    for _ in range(900 if count == 6 else 360):
                         simulation.step()
 
                 self.assertTrue(all(math.dist(guard.xy, point) < 0.1
@@ -380,6 +399,7 @@ class PrototypeAITests(unittest.TestCase):
                 clue = player.xy
                 with patch.object(simulation.combat, "fire"):
                     if reason == "seen":
+                        establish_contact(simulation.ai, [front, following], player)
                         for _ in range(30):
                             simulation.step()
                         player.position = Position(20, clue[1])
