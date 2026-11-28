@@ -52,18 +52,22 @@ class IndoorSearchTests(unittest.TestCase):
         brain.memory.last_sound, brain.memory.sound_at = (8, 2.7), 2
         brain.memory.sound_priority = 0.4
 
-        ai.search.update_priority_cue(guard, brain, False, True, None)
+        ai.search.update_priority_cue(guard, brain, False, True, None, 2)
         self.assertEqual(brain.search.priority_cue, original)
         self.assertIs(brain.search.task.sweep, sweep)
 
         brain.memory.gunshot_origin = (8, 2.7)
-        ai.search.update_priority_cue(guard, brain, False, True, None)
+        ai.search.update_priority_cue(guard, brain, False, True, None, 2)
         self.assertEqual(brain.search.priority_cue.point, (8, 2.7))
 
         brain.search.priority_cue = original
         brain.memory.gunshot_origin = None
+        ai.search.update_priority_cue(guard, brain, False, True, None, 9)
+        self.assertEqual(brain.search.priority_cue.point, (8, 2.7))
+
+        brain.search.priority_cue = original
         sweep.checked.update(area.points)
-        ai.search.update_priority_cue(guard, brain, False, True, None)
+        ai.search.update_priority_cue(guard, brain, False, True, None, 2)
         self.assertEqual(brain.search.priority_cue.point, (8, 2.7))
 
     def test_fixed_sight_reuses_squad_geometry_but_updates_on_door_change(self):

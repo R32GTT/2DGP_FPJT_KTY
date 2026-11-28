@@ -71,7 +71,7 @@ class SearchController:
         brain.motion.plan_at = 0.0
         brain.motion.blocked_by = brain.motion.door_wait = ""
 
-    def update_priority_cue(self, actor, brain, tracking, investigating, incoming):
+    def update_priority_cue(self, actor, brain, tracking, investigating, incoming, time):
         memory = brain.memory
         previous = brain.search.priority_cue
         if previous is not None and previous.kind == "seen" and memory.reported_at > previous.at:
@@ -94,6 +94,7 @@ class SearchController:
             sweep = brain.search.task.sweep
             if (cue.kind == "sound" and sweep is not None and not sweep.complete
                     and memory.gunshot_origin is None and memory.sound_priority < config.SEARCH_INTERRUPT_SOUND_PRIORITY
+                    and time - cue.at < config.SEARCH_INTERRUPT_DEFER_S
                     and any(floor.segment_entry(actor.xy, actor.xy) is not None for floor in sweep.area.floors)
                     and not any(floor.segment_entry(cue.point, cue.point) is not None for floor in sweep.area.floors)):
                 return

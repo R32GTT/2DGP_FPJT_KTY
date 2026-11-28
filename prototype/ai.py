@@ -154,7 +154,7 @@ class EnemyAI:
                     self.search.interrupt_search(actor, brain)
             elif situation.confirmed or (situation.investigating and memory.gunshot_origin is not None):
                 self.search.update_priority_cue(actor, brain, situation.tracking and brain.combat.peek_home is None,
-                                          situation.investigating, situation.incoming if situation.confirmed else None)
+                                          situation.investigating, situation.incoming if situation.confirmed else None, time)
             else:
                 brain.search.priority_cue = None
         elif memory.exposed or memory.recognition or memory.suspicion:
