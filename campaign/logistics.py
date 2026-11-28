@@ -136,7 +136,8 @@ def plan_supplies(state: CampaignState) -> None:
             if plan_transport(state, origin_id, destination.id, needed) is not None:
                 break
         else:
-            if "logistics" in destination.capabilities:
+            if "logistics" in destination.capabilities and not state.rules.get(
+                    "local_supply_only", state.rules.get("setup_version", 0)):
                 plan_transport(state, state.source.id, destination.id, needed,
                                reason="외부 정기 보급 수요")
 

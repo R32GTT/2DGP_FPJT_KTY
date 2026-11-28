@@ -139,7 +139,8 @@ def plan_recaptures(state):
     if not supporters:
         return
     origins = [site for site in state.facilities.values() if site.region_id in supporters and site.damage < 100]
-    origins.append(state.source)
+    if not state.rules.get("local_supply_only", state.rules.get("setup_version", 0)):
+        origins.append(state.source)
     units = {}
     for unit in state.units.values():
         if (unit.faction == "enemy" and unit.mobile and unit.status == "available"

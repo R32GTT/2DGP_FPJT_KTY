@@ -91,6 +91,12 @@ class SupplyStackTests(unittest.TestCase):
         self.assertEqual(old.weapon.attachments, original_parts)
         assert_invariants(self.state)
 
+    def test_generated_campaign_has_no_external_stock_delivery(self):
+        self.assertTrue(self.state.rules["local_supply_only"])
+        plan_supplies(self.state)
+        self.assertFalse(any(op.kind == "supply" and op.origin_id == self.state.source.id
+                             for op in self.state.operations.values()))
+
 
 if __name__ == "__main__":
     unittest.main()
