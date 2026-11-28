@@ -37,6 +37,8 @@ class SearchArea:
     room_corners: dict[int, tuple[tuple[float, float], ...]]
     entry_poses: tuple[SearchPose, ...] = ()
     observations: dict[tuple[float, float], int] = field(default_factory=dict)
+    viewpoints: dict[int, tuple[tuple[float, float], ...]] = field(default_factory=dict)
+    view_coverage: dict[tuple[float, float], frozenset] = field(default_factory=dict)
 
     def room_of(self, point):
         room = self.rooms.get(point, self.observations.get(point))
@@ -172,8 +174,13 @@ def _baked_search_area(key, floors, baked):
     observations = {(x, y): room for x, y, room in baked["observations"]}
     poses = tuple(SearchPose((x, y), (look_x, look_y), room)
                   for x, y, look_x, look_y, room in baked["entry_poses"])
+    viewpoints = {int(room): tuple(tuple(point) for point in rows)
+                  for room, rows in baked.get("viewpoints", {}).items()}
+    coverage = {tuple(point): frozenset(tuple(sample) for sample in rows)
+                for point, rows in baked.get("view_coverage", ())}
     return SearchArea(key, floors, points, rooms, {room: tuple(rows) for room, rows in by_room.items()},
-                      corners, entry_poses=poses, observations=observations)
+                      corners, entry_poses=poses, observations=observations,
+                      viewpoints=viewpoints, view_coverage=coverage)
 
 
 def build_search_area(world, key, floors, layout):
@@ -396,14 +403,17 @@ class IndoorSweep(Reservations):
         nearby = sorted(candidates, key=lambda point: (travel_cost(point), point))
         # 확인한 표본에도 다시 설 수 있다. 미확인 표본은 가려진 구역의 후보로 남긴다.
         pending = set(remaining)
-        shortlist = dict.fromkeys(nearby[:4] + [point for point in nearby if point in pending][:4])
+        shortlist = dict.fromkeys(nearby if len(nearby) <= 20 else nearby[:4] +
+                                   [point for point in nearby if point in pending][:4])
         stride = math.ceil(len(remaining) / OBSERVATION_SAMPLE_LIMIT)
         samples = remaining[::stride]
 
         def score(point):
             # 어느 지점에 서야 가구나 벽 뒤의 미확인 공간이 더 많이 드러나는지 비교한다.
-            visible = self.fixed_view_count(point, samples, navigation.geometry, revision)
-            gain = max(visible * stride, int(point in pending))
+            baked = self.area.view_coverage.get(point) if self.area is not None and revision == 0 else None
+            visible = len(baked & pending) if baked is not None else self.fixed_view_count(
+                point, samples, navigation.geometry, revision) * stride
+            gain = max(visible, int(point in pending))
             # 우회 경로는 공용 경로 탐색에서 계산한다. 후보 평가에는 직행 여부만 사용한다.
             cost = travel_cost(point)
             if not navigation.clear(origin, point):

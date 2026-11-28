@@ -234,7 +234,9 @@ class SearchController:
             return target
         authored = (p for p in area.observations if p in available and area.observations[p] == room
                     and sweep.fixed_view_count(p, remaining, self.world.geometry, revision))
-        candidates = [p for p in area.room_points[room] if p in available]
+        candidates = [p for p in area.viewpoints.get(room, area.room_points[room]) if p in available]
+        if not candidates:
+            candidates = [p for p in area.room_points[room] if p in available]
         return min(authored, key=lambda p: math.dist(actor.xy, p), default=None) or (sweep.observation_point(
             actor.xy, actor.facing if brain.motion.heading is None else brain.motion.heading,
             candidates, remaining, self.world.navigation, revision=revision) if candidates else None)

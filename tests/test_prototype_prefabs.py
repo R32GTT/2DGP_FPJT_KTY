@@ -34,6 +34,10 @@ class FacilityPrefabTests(unittest.TestCase):
                                      {normalized(rows) for rows in b.room_points.values()})
                     self.assertEqual({normalized(rows) for rows in a.room_corners.values()},
                                      {normalized(rows) for rows in b.room_corners.values()})
+                    for room, samples in a.room_points.items():
+                        views = a.viewpoints[room]
+                        self.assertLess(len(views), len(samples))
+                        self.assertEqual(set(samples), set().union(*(a.view_coverage[point] for point in views)))
 
     def test_rotated_prefab_keeps_connectors_and_every_room_reachable(self):
         source = json.loads(SCENE.read_text(encoding="utf-8"))
