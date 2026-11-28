@@ -51,7 +51,14 @@ class CameraAndClockTests(unittest.TestCase):
         camera = PlayCamera()
         camera.follow((0, 0), (camera.width, camera.height))
         self.assertAlmostEqual(camera.look_x, 1.6)
-        self.assertAlmostEqual(camera.look_y, 3.5)
+        self.assertAlmostEqual(camera.look_y, 4.2)
+        camera.follow((0, 0), (camera.width, camera.height), aiming=True, look_multiplier=1.5)
+        self.assertAlmostEqual(camera.world(camera.width / 2, camera.height / 2)[0], 10.8)
+        self.assertAlmostEqual(camera.world(camera.width / 2, camera.height / 2)[1], 10.8)
+        camera.set_zoom(4)
+        camera.recenter((0, 0))
+        self.assertAlmostEqual(camera.world(camera.width / 2, camera.height / 2)[0], 10.8)
+        self.assertAlmostEqual(camera.world(camera.width / 2, camera.height / 2)[1], 10.8)
 
     def test_world_clock_keeps_days(self):
         self.assertEqual(world_clock(86400 + 3661), "D02  01:01:01")

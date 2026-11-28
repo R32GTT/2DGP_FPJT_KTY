@@ -32,8 +32,6 @@ class PlayCamera:
     def follow(self, position, mouse=None, *, aiming=False, look_multiplier=1.0, dt=None):
         half_w, half_h = self.width / 2, self.height / 2
         limit_x, limit_y = (7.2, 7.2) if aiming else (2.4, 4.2)
-        limit_x = min(limit_x, max(0.0, half_w - 24) / self.scale)
-        limit_y = min(limit_y, max(0.0, half_h - 24) / self.scale)
         mx, my = mouse if mouse is not None else (half_w, half_h)
         if aiming:
             target_x = max(-1.0, min(1.0, (mx - half_w) / half_w)) * limit_x
@@ -49,11 +47,8 @@ class PlayCamera:
         self.recenter(position)
 
     def recenter(self, position):
-        # 줌인 직후에도 부드럽게 남아 있는 오프셋이 플레이어를 화면 밖으로 밀지 않게 한다.
-        limit_x = max(0.0, self.width / 2 - 24) / self.scale
-        limit_y = max(0.0, self.height / 2 - 24) / self.scale
-        self.offset_x = self.width / 2 - (position[0] + max(-limit_x, min(limit_x, self.look_x))) * self.scale
-        self.offset_y = self.height / 2 - (position[1] + max(-limit_y, min(limit_y, self.look_y))) * self.scale
+        self.offset_x = self.width / 2 - (position[0] + self.look_x) * self.scale
+        self.offset_y = self.height / 2 - (position[1] + self.look_y) * self.scale
 
     def visible(self, rect):
         x0, y0 = self.world(0, 0)
