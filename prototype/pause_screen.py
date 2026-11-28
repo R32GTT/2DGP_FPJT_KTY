@@ -11,7 +11,7 @@ import sdl2
 from .camera import CANVAS_SIZE
 from .hud import HUD
 from .hud_theme import THEME
-from .savegame import AUTO_SAVE, save_slots
+from .savegame import AUTO_SAVE, compatible_save, content_version, save_slots
 
 
 MENU = (("resume", "이어하기"), ("save", "저장"), ("load", "로드"),
@@ -72,8 +72,13 @@ class PauseScreen:
 
     def refresh_slots(self):
         rows = []
-        for name, path in save_slots():
-            stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime("%m/%d %H:%M") if path.is_file() else "비어 있음"
+        self.loadable = set()
+        expected = content_version()
+        for name, path in save_slots(expected_content=expected):
+            usable = compatible_save(path, expected_content=expected)
+            if usable:
+                self.loadable.add(path)
+            stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime("%m/%d %H:%M") if usable else "비어 있음"
             rows.append((name, path, stamp))
         self.slots = tuple(rows)
 
@@ -90,7 +95,7 @@ class PauseScreen:
             return None
         if action == "save_exit":
             path = self.current_slot or AUTO_SAVE
-        if action in ("save", "save_exit") and path.is_file():
+        if action in ("save", "save_exit") and path in self.loadable:
             self.pending_choice = action, path
             self.return_page = self.page
             self.page = "confirm"
@@ -104,7 +109,7 @@ class PauseScreen:
             if not 0 <= self.selected < len(self.slots):
                 return None
             _, path, _ = self.slots[self.selected]
-            if self.page == "load" and not path.is_file():
+            if self.page == "load" and path not in self.loadable:
                 self.status = "비어 있는 슬롯입니다"
                 return None
             return self._choose(self.page, path)

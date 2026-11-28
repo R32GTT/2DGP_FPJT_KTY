@@ -207,6 +207,43 @@ class Renderer:
                 result[actor.id] = alpha
         return result
 
+    @staticmethod
+    def _vehicle_visibility(world, player, vehicles, sky, lights, night_vision):
+        """화면에 들어온 차량의 중심을 먼저 묶어 검사하고 가린 차체의 양끝만 추가 검사한다."""
+        if not vehicles:
+            return ()
+        if player.hp <= 0 or player.position.floor != 0:
+            return (0.0,) * len(vehicles)
+        origin = player.xy
+        centers = world.geometry.sight_flags(origin, [(x, y) for x, y, _ in vehicles], floor=0)
+        blocked = [index for index, clear in enumerate(centers) if not clear]
+        if blocked:
+            radius = TRUCK_SIZE[0] * 0.42
+            ends = []
+            for index in blocked:
+                x, y, heading = vehicles[index]
+                dx, dy = radius * math.cos(heading), radius * math.sin(heading)
+                ends.extend(((x - dx, y - dy), (x + dx, y + dy)))
+            flags = world.geometry.sight_flags(origin, ends, floor=0)
+            for index, left, right in zip(blocked, flags[::2], flags[1::2]):
+                centers[index] = left or right
+        ambient = sum(sky.ambient) / 765 * (1.9 if night_vision else 1.0)
+        ambient_clear = max(3, 1 + 30 * min(1.0, ambient))
+        alphas = []
+        for clear, (x, y, _) in zip(centers, vehicles):
+            if not clear:
+                alphas.append(0.0)
+                continue
+            distance = math.dist(origin, (x, y))
+            alpha = 1.0
+            if sky.daylight < 1 and distance > ambient_clear:
+                visible_light, infrared = incident_light(world, (x, y), sky, lights)
+                brightness = visible_light * 1.9 + infrared if night_vision else visible_light
+                limit = 3 + 30 * min(1.0, brightness)
+                alpha = smooth((limit - distance) / 2)
+            alphas.append(alpha if alpha >= 1 / 255 else 0.0)
+        return tuple(alphas)
+
     def _draw_throwables(self, simulation, view, floor):
         for flight in simulation.throwables.flights:
             if flight.floor != floor:
@@ -345,6 +382,12 @@ class Renderer:
             pile = Rect(point[0] - 0.28, point[1] - 0.22, 0.56, 0.44)
             if view.visible(pile):
                 self._rect(view, pile, (139, 161, 124))
+        sky = simulation.sky
+        player = simulation.player
+        night_vision = player.night_vision and player.hp > 0
+        floor = player.position.floor
+        lights = tuple(simulation.light_sources(sky, floor, infrared=night_vision))
+        flash_left = player.blinded_until - simulation.time
         if world.campaign_map:
             roads = simulation.campaign.simulation.state.roads
             for control in world.road_controls:
@@ -352,33 +395,47 @@ class Renderer:
                 if view.visible(marker):
                     self._rect(view, marker, (219, 100, 69) if roads[control["road"]].blocked else (238, 197, 92))
                     self._rect(view, marker, (47, 52, 48), filled=False)
-            for x, y, _ in simulation.campaign.parked(simulation.roster.active_nodes):
-                if view.visible(Rect(x - 2.8, y - 1.2, 5.6, 2.4)):
-                    self.truck.draw(*view.pico(x, y), 5.6 * view.scale, 2.4 * view.scale)
-            for truck in simulation.transports.display_trucks:
-                if view.visible(truck.bounds):
-                    x, y = view.pico(truck.x, truck.y)
-                    self.truck.rotate_draw(-truck.heading, x, y, TRUCK_SIZE[0] * view.scale, TRUCK_SIZE[1] * view.scale)
-                    if truck.stopped:
-                        for side in (-0.7, 0.7):
-                            px, py = truck.world_point(2.45, side)
-                            self._rect(view, Rect(px - 0.13, py - 0.13, 0.26, 0.26), (255, 148, 52))
-                    elif debug:
-                        for seat, side in enumerate((-0.25, 0.25)):
-                            if seat < len(truck.crew) and truck.crew[seat].hp > 0:
-                                px, py = truck.world_point(1.95, side)
-                                self._rect(view, Rect(px - 0.09, py - 0.09, 0.18, 0.18),
-                                           (255, 168, 92) if seat == 0 else (137, 201, 210))
+            parked = [(x, y) for x, y, _ in simulation.campaign.parked(simulation.roster.active_nodes)
+                      if view.visible(Rect(x - 2.8, y - 1.2, *TRUCK_SIZE))]
+            moving = [truck for truck in simulation.transports.display_trucks if view.visible(truck.bounds)]
+            poses = [(*position, 0.0) for position in parked]
+            poses.extend((truck.x, truck.y, truck.heading) for truck in moving)
+            alphas = ((1.0,) * len(poses) if debug else (0.0,) * len(poses) if flash_left > 0
+                      else self._vehicle_visibility(world, player, poses, sky, lights, night_vision))
+            last_alpha = 1.0
+            for (x, y), alpha in zip(parked, alphas):
+                if alpha == 0:
+                    continue
+                if alpha != last_alpha:
+                    self.truck.opacify(alpha)
+                    last_alpha = alpha
+                self.truck.draw(*view.pico(x, y), TRUCK_SIZE[0] * view.scale, TRUCK_SIZE[1] * view.scale)
+            for truck, alpha in zip(moving, alphas[len(parked):]):
+                if alpha == 0:
+                    continue
+                if alpha != last_alpha:
+                    self.truck.opacify(alpha)
+                    last_alpha = alpha
+                x, y = view.pico(truck.x, truck.y)
+                self.truck.rotate_draw(-truck.heading, x, y, TRUCK_SIZE[0] * view.scale, TRUCK_SIZE[1] * view.scale)
+                if truck.stopped:
+                    for side in (-0.7, 0.7):
+                        px, py = truck.world_point(2.45, side)
+                        self._rect(view, Rect(px - 0.13, py - 0.13, 0.26, 0.26),
+                                   (255, 148, 52, round(alpha * 255)))
+                elif debug:
+                    for seat, side in enumerate((-0.25, 0.25)):
+                        if seat < len(truck.crew) and truck.crew[seat].hp > 0:
+                            px, py = truck.world_point(1.95, side)
+                            self._rect(view, Rect(px - 0.09, py - 0.09, 0.18, 0.18),
+                                       (255, 168, 92) if seat == 0 else (137, 201, 210))
+            if last_alpha != 1.0:
+                self.truck.opacify(1.0)
         search_counts = None
         if debug:
             self._draw_navigation(world.navigation, view)
             if not map_open:
                 search_counts = self.hud.draw_search_overlay(simulation, view)
-        sky = simulation.sky
-        player = simulation.player
-        night_vision = player.night_vision and player.hp > 0
-        floor = player.position.floor
-        lights = tuple(simulation.light_sources(sky, floor, infrared=night_vision))
         candidates = []
         threat_candidates = []
         for actor in (*simulation.guards, player):
@@ -394,7 +451,6 @@ class Renderer:
             gun_bounds = self._rotated_bounds(center, weapon.spec.size_m, actor.facing) if weapon else body_bounds
             if view.visible(body_bounds) or view.visible(gun_bounds):
                 candidates.append((actor, body_angle, weapon, center, gun_bounds, brain))
-        flash_left = player.blinded_until - simulation.time
         seen_enemies = {} if flash_left > 0 else self._enemy_visibility(
             world, player, [actor for actor, *_ in candidates if actor.team != player.team], sky, lights, night_vision)
         awareness = []

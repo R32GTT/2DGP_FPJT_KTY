@@ -27,19 +27,40 @@ MAX_BYTES = 16 * 1024 * 1024
 ARCHIVE_PAGE_ROWS = 256
 
 
-def save_slots():
+def save_slots(*, expected_content=None):
     slots = [("자동 저장", AUTO_SAVE)]
     slots.extend((f"슬롯 {index}", path) for index, path in enumerate(MANUAL_SAVES, 1))
-    if DEFAULT_SAVE.is_file():
+    expected = expected_content if expected_content is not None else content_version()
+    if compatible_save(DEFAULT_SAVE, expected_content=expected):
         slots.append(("기존 저장", DEFAULT_SAVE))
-    if QUICK_SAVE.is_file():
+    if compatible_save(QUICK_SAVE, expected_content=expected):
         slots.append(("빠른 저장", QUICK_SAVE))
     return tuple(slots)
 
 
 def latest_save():
-    existing = (path for _, path in save_slots() if path.is_file())
+    expected = content_version()
+    existing = (path for _, path in save_slots(expected_content=expected)
+                if compatible_save(path, expected_content=expected))
     return max(existing, key=lambda path: path.stat().st_mtime, default=None)
+
+
+def compatible_save(path, *, expected_content=None):
+    """슬롯 목록을 위한 가벼운 형식·버전·참조 파일 검사."""
+    try:
+        path = Path(path)
+        payload = json.loads(read_bytes(path, MAX_BYTES))
+        if (not isinstance(payload, dict) or payload.get("format") != SAVE_FORMAT
+                or type(payload.get("version")) is not int
+                or payload["version"] not in (LEGACY_SAVE_VERSION, SAVE_VERSION)
+                or payload.get("content") != (expected_content if expected_content is not None else content_version())):
+            return False
+        if payload["version"] == LEGACY_SAVE_VERSION:
+            return isinstance(payload.get("generation"), dict)
+        files = WorldFiles(path.parent / "worlds", payload["world"])
+        return files.scene_path.is_file() and files.snapshot_path(payload["revision"]).is_file()
+    except (OSError, EOFError, ValueError, TypeError, KeyError, CompressionError):
+        return False
 
 
 def content_version():
