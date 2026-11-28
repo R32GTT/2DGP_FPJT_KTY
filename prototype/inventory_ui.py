@@ -1,6 +1,7 @@
 """가방 화면과 입력이 공유하는 고정 영역 및 항목 배치."""
 
 from dataclasses import dataclass
+import math
 
 from .inventory import AMMO_CRATE, C4, MULTITOOL, weapon_slots
 from .interactions import nearby_facility
@@ -119,6 +120,15 @@ def build_inventory_layout(inventory, size, bag_scroll=0, floor_scroll=0):
                 key = f"cargo:{resource}"
                 floor_rows.append((('cargo', cargo.id, resource), f"{inventory.item(key)[0]}  {count}", (),
                                    ("cargo", cargo.id, resource), ""))
+    for site_id, resource, point in play.supply_stacks:
+        if (math.dist(player.xy, point) <= 1.8
+                and play.world.geometry.raycast(player.xy, point, category="movement") is None):
+            count = play.campaign.simulation.state.facilities[site_id].inventory[resource]
+            if count:
+                key = f"cargo:{resource}"
+                floor_rows.append((('facility_stock', site_id, resource),
+                                   f"{inventory.item(key)[0]}  {count}", (),
+                                   ("facility_stock", site_id, resource), ""))
     site = nearby_facility(play.world, player.xy)
     safehouse = site["id"] if site and site["kind"] == "safehouse" else None
     if safehouse:

@@ -3,6 +3,7 @@
 import math
 
 from .interactions import nearby_facility
+from .supply_stacks import nearby_stack
 from .throwables import load_throwables
 
 
@@ -336,6 +337,23 @@ class FieldInventory:
         self.carried[key] = self.carried.get(key, 0) + amount
         play.message = f"{self.item(key)[0]} ×{amount} 회수"
 
+    def take_facility_stock(self, site_id, resource, *, single=False):
+        play = self.play
+        pile = nearby_stack(play, resource=resource, site_id=site_id)
+        if pile is None:
+            play.message = "보급 상자에 닿지 않습니다"
+            return
+        key = f"cargo:{resource}"
+        available = play.campaign.simulation.state.facilities[site_id].inventory[resource]
+        amount = min(self._pickup_amount(key, available), 1 if single else available)
+        if not amount:
+            play.message = "가방 용량 부족"
+            return
+        play.campaign.simulation.apply_action({"type": "capture", "owner_id": site_id,
+                                               "amount": {resource: amount}})
+        self.carried[key] = self.carried.get(key, 0) + amount
+        play.message = f"{self.item(key)[0]} ×{amount} 회수"
+
     def _unpack_ammunition(self, ammo_type):
         name, weight, rounds = AMMUNITION[ammo_type]
         if self.bag_weight - self.item(AMMO_CRATE)[1] + weight * rounds > BAG_LIMIT + 1e-8:
@@ -398,6 +416,13 @@ class FieldInventory:
             for resource, count in cargo.cargo.items():
                 if count:
                     rows.append((f"수송대  ·  {CARGO_ITEMS[resource][0]} ×{count} 회수", ("cargo", cargo.id, resource)))
+        for site_id, resource, point in play.supply_stacks:
+            if (math.dist(player.xy, point) <= PICKUP_REACH
+                    and play.world.geometry.raycast(player.xy, point, category="movement") is None):
+                count = play.campaign.simulation.state.facilities[site_id].inventory[resource]
+                if count:
+                    rows.append((f"시설 상자  ·  {CARGO_ITEMS[resource][0]} ×{count} 회수",
+                                 ("facility_stock", site_id, resource)))
         site = nearby_facility(play.world, player.xy)
         safehouse = site["id"] if site and site["kind"] == "safehouse" else None
         if safehouse:
@@ -461,6 +486,8 @@ class FieldInventory:
                 self.ground.pop(pile)
         elif kind == "cargo":
             self._take_cargo(*args)
+        elif kind == "facility_stock":
+            self.take_facility_stock(*args, single=single)
         elif kind == "unpack_ammunition":
             self._unpack_ammunition(*args)
         elif kind == "stash_gun":

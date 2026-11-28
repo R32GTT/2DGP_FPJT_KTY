@@ -122,8 +122,10 @@ class PlaySaveTests(unittest.TestCase):
         self.assertTrue(scheduled)
 
         play.player.position = Position(*site['terminal'])
-        play.take_supplies()
-        self.assertEqual(state.player_stock['supplies'], 10)
+        play.inventory.take_facility_stock(key, 'supplies')
+        captured = state.player_stock['supplies']
+        self.assertGreater(captured, 0)
+        self.assertEqual(play.inventory.carried['cargo:supplies'], captured)
         remaining = facility.inventory.copy()
         play.use_facility_alternate()
         self.assertEqual(facility.damage, 25)
@@ -136,7 +138,7 @@ class PlaySaveTests(unittest.TestCase):
         self.assertTrue(all(op.phase == 'cancelled' for op in scheduled))
         play.take_supplies()
         play.use_facility_alternate()
-        self.assertEqual(state.player_stock['supplies'], 10)
+        self.assertEqual(state.player_stock['supplies'], captured)
         self.assertEqual(state.ledger.destroyed, remaining)
 
         with tempfile.TemporaryDirectory() as directory:

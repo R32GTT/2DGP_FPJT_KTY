@@ -1,0 +1,47 @@
+"""실물 재고, 새 병력의 지급, C4 파괴와 복구 출동을 검증한다."""
+
+from copy import deepcopy
+from pathlib import Path
+import tempfile
+import unittest
+
+from campaign.models import Position
+from campaign.logistics import plan_supplies
+from campaign.resources import assert_invariants
+from prototype.generated_world import generate_world
+from prototype.inventory import C4
+from prototype.savegame import load_game, save_game
+from prototype.simulation import FIXED_DT, PlaySimulation
+
+
+class SupplyStackTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.scene = generate_world(42, region_count=2)
+
+    def setUp(self):
+        self.play = PlaySimulation(self.scene)
+        self.state = self.play.campaign.simulation.state
+        self.site = next(site for site in self.play.world.facilities if site["kind"] == "warehouse")
+
+    def stack(self, resource):
+        return next(row for row in self.play.supply_stacks
+                    if row[:2] == (self.site["id"], resource))
+
+    def test_collection_moves_physical_stock_into_bag(self):
+        site_id, resource, point = self.stack("supplies")
+        self.play.player.position = Position(*point)
+        before = self.state.facilities[site_id].inventory[resource]
+        self.play.inventory.take_facility_stock(site_id, resource, single=True)
+        self.assertEqual(self.state.facilities[site_id].inventory[resource], before - 1)
+        self.assertEqual(self.state.player_stock[resource], 1)
+        self.assertEqual(self.play.inventory.carried["cargo:supplies"], 1)
+        self.play.update_facility_interaction(True)
+        self.assertEqual(self.play.facility_interaction["duration"], 1.5)
+        for _ in range(round(1.5 / FIXED_DT)):
+            self.play.update_facility_interaction(True)
+        self.assertGreater(self.play.inventory.carried["cargo:supplies"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

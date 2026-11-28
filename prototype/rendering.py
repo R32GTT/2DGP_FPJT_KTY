@@ -28,6 +28,8 @@ from .world import ROOT
 # 몸통 원본은 위를 바라본다. 가로는 어깨 폭, 세로는 앞뒤 두께다.
 BODY_SIZE_M = (0.75, 0.375)
 BODY_FORWARD_OFFSET = math.pi / 2
+STOCK_COLORS = {"supplies": (173, 145, 79), "ammunition": (118, 140, 92),
+                "repair_parts": (109, 137, 149), "night_gear": (103, 117, 159)}
 
 
 class Renderer:
@@ -370,6 +372,19 @@ class Renderer:
             crate = Rect(world.crate[0] - 0.35, world.crate[1] - 0.35, 0.7, 0.7)
             self._rect(view, crate, (183, 156, 76))
             self._rect(view, crate, (228, 205, 137), filled=False)
+        facility_stock = simulation.campaign.simulation.state.facilities
+        for site_id, resource, point in simulation.supply_stacks:
+            count = facility_stock[site_id].inventory[resource]
+            if not count:
+                continue
+            crate = Rect(point[0] - 0.28, point[1] - 0.22, 0.56, 0.44)
+            if not view.visible(crate):
+                continue
+            color = STOCK_COLORS[resource]
+            for layer in range(min(3, 1 + count // 15)):
+                box = Rect(crate.x + layer * 0.08, crate.y + layer * 0.09, crate.w, crate.h)
+                self._rect(view, box, color)
+                self._rect(view, box, (220, 214, 172), filled=False)
         safe = Rect(world.safehouse[0] - 1.2, world.safehouse[1] - 1.2, 2.4, 2.4)
         if world.data.get("interaction_markers", True) and view.visible(safe):
             self._rect(view, safe, (47, 94, 82))

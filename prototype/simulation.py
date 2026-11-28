@@ -23,6 +23,7 @@ from .inventory import AMMUNITION, C4, MULTITOOL, NIGHT_KIT, PICKUP_REACH, Field
 from .intelligence import refresh_intelligence_view
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
+from .supply_stacks import build_stacks, nearby_stack
 from .throwables import Activation, BURST_SECONDS, SmokeCloud, Throwables
 from .transport import TransportCrew
 from .campaign_presence import CampaignPresence
@@ -51,6 +52,8 @@ class PlaySimulation:
                  world_root=None, initial_position=None):
         self.world = World(scene, world_root=world_root, initial_position=initial_position)
         self.facilities_by_id = {site["id"]: site for site in self.world.facilities}
+        self.supply_stacks = build_stacks(self.world)
+        self.supply_stack_points = {(site, resource): point for site, resource, point in self.supply_stacks}
         self.equipment_range, self.range_night = equipment_range, False
         range_setup = self.world.data.get("equipment_range")
         if equipment_range and (not range_setup or ai_scenario or search_drill or stack_drill):
@@ -365,6 +368,7 @@ class PlaySimulation:
         if progress is not None and progress["position"] == self.player.xy and progress["identity"][3] == alternate:
             site = self.facilities_by_id[progress["identity"][0]]
             at_watch = progress["identity"][1] == "watch"
+            stock_resource = progress["identity"][4] if len(progress["identity"]) > 4 else None
         else:
             if (nearby_road_control(self.world, self.player.xy) is not None
                     or self.inventory.nearby(self.dropped) is not None):
@@ -377,17 +381,29 @@ class PlaySimulation:
                         < math.dist(self.player.xy, site["terminal"]))
             if at_watch:
                 site = watch
+            stock_resource = None
+            if not alternate and not at_watch:
+                pile = nearby_stack(self)
+                if pile is not None:
+                    candidate = self.facilities_by_id[pile[0]]
+                    if candidate["kind"] in ("warehouse", "hq") and (
+                            site is None or math.dist(self.player.xy, pile[2])
+                            <= math.dist(self.player.xy, site["terminal"])):
+                        site, stock_resource = candidate, pile[1]
         if site is None:
             self.facility_interaction = None
             return
         kind = site["kind"]
-        action = "watch" if at_watch else ("stash" if alternate else "normal") if kind == "safehouse" else (
+        action = "stock" if stock_resource else "watch" if at_watch else ("stash" if alternate else "normal") if kind == "safehouse" else (
             "sabotage" if alternate or kind not in ("warehouse", "hq") else "normal")
         mode = self.inventory.sabotage_mode if action in ("sabotage", "watch") else "hand"
-        charge_id = site["id"] + ("#watch" if at_watch else "")
-        if action in ("sabotage", "watch") and site["campaign_id"]:
+        charge_id = site["id"] + ("#watch" if at_watch else f"#stock:{stock_resource}" if stock_resource else "")
+        if action in ("sabotage", "watch", "stock") and site["campaign_id"]:
             facility = self.campaign.simulation.state.facilities[site["campaign_id"]]
-            if facility.damage == 100 or at_watch and facility.watch_disabled:
+            if action != "stock" and (facility.damage == 100 or at_watch and facility.watch_disabled):
+                self.facility_interaction = None
+                return
+            if action == "stock" and not facility.inventory[stock_resource]:
                 self.facility_interaction = None
                 return
             if mode == "c4" and charge_id in self.planted_charges:
@@ -396,11 +412,11 @@ class PlaySimulation:
                 self.interaction_latched = True
                 return
         duration = (2.0 if mode == "c4" else 4.0 if mode == "multitool" else 8.0)
-        if action not in ("sabotage", "watch"):
+        if action not in ("sabotage", "watch", "stock") or action == "stock" and mode != "c4":
             duration = 1.5
-        label = ("C4 설치" if mode == "c4" else "멀티툴 파괴" if mode == "multitool" else "맨손 파괴") if action in ("sabotage", "watch") else (
-            "무기 보관함" if action == "stash" else "시설 상호작용")
-        identity = (site["id"], action, mode, alternate)
+        label = ("C4 설치" if mode == "c4" else "멀티툴 파괴" if mode == "multitool" else "맨손 파괴") if action in ("sabotage", "watch") or action == "stock" and mode == "c4" else (
+            "무기 보관함" if action == "stash" else "시설 상자 회수" if action == "stock" else "시설 상호작용")
+        identity = (site["id"], action, mode, alternate, stock_resource)
         if progress is None or progress["identity"] != identity or progress["position"] != self.player.xy:
             progress = {"identity": identity, "elapsed": 0.0, "duration": duration, "label": label,
                         "binding": "facility_alternate" if alternate else "supplies",
@@ -413,6 +429,8 @@ class PlaySimulation:
         self.interaction_latched = True
         if action == "stash":
             self.message = exchange_safehouse_weapon(self, site)
+        elif action == "stock" and mode != "c4":
+            self.inventory.take_facility_stock(site["id"], stock_resource)
         elif action == "normal":
             self.message = use_facility(self, site, method="hand" if kind == "hq" else None)
         elif mode == "c4":

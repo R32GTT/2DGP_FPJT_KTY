@@ -94,8 +94,7 @@ def use_facility(simulation, facility, *, sabotage=False, method=None):
                 _emit_sabotage(simulation, key, facility["terminal"], method=method)
             return f"{facility['name']} 기능이 이미 무력화됨"
         if kind == "warehouse" and not sabotage:
-            amount = bridge.take_supplies(key)
-            return f"{facility['name']}에서 실제 보급품 {amount}개 확보"
+            return "창고 안의 보급 상자에서 E를 길게 누르거나 가방에서 회수하세요"
         if kind == "hq" and not sabotage:
             if not bridge.disable_component(key, "relay_disabled"):
                 return "HQ 통신 중계기가 이미 무력화됨"
