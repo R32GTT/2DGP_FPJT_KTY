@@ -98,7 +98,7 @@ class SpatialIndex:
                 return [self.sight_clear(origin, target, floor=floor) for target in targets]
             return [self.raycast(origin, target, category="sight") is None for target in targets]
         rays = linestrings([(origin, point) for point in targets])
-        blocked = {row for row, collider in self.index.intersections(rays)
+        blocked = {row for row, collider in self.index.candidate_pairs(rays)
                    if collider.active and "sight" in collider.blocks
                    and collider.rect.segment_entry(origin, targets[row]) is not None}
         # 층을 받는 실시간 시야에만 연막을 적용한다. 정적 수색 지점 계산은 벽만 조회한다.
@@ -115,7 +115,7 @@ class SpatialIndex:
         else:
             shape = Point(start) if start == end else LineString((start, end))
         nearest = None
-        for collider in self.index.query_shape(shape):
+        for collider in self.index.query_candidates(shape):
             if (collider.id in ignore_ids or not collider.active or category not in collider.blocks
                     or (ignore_doors and collider.kind == "door" and (ignore_doors == "all" or collider.ai_access))):
                 continue

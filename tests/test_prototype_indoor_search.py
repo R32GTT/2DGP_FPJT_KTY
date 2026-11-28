@@ -81,6 +81,16 @@ class IndoorSearchTests(unittest.TestCase):
             self.assertEqual(query.call_count, 2)
         self.assertFalse(sweep.checked)
 
+    def test_sight_candidates_still_require_exact_segment_collision(self):
+        geometry = SpatialIndex()
+        geometry.add(Collider("wall", Rect(1, 2, .5, .5)))
+        origin = (0, 0)
+        targets = [(3, 3), (3, 6), (3, 0), (0, 3)]
+
+        self.assertEqual(geometry.sight_flags(origin, targets), [True, False, True, True])
+        self.assertIsNone(geometry.raycast(origin, targets[0]))
+        self.assertIsNotNone(geometry.raycast(origin, targets[1]))
+
     def test_indoor_gaze_starts_turning_immediately_and_brakes_before_reversing(self):
         actor = Actor("guard", Position(0, 0))
         brain = Brain([])

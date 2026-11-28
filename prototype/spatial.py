@@ -40,12 +40,13 @@ class BoundsIndex:
         del self.rects[key]
         self.tree = None
 
-    def query_shape(self, shape):
-        return [self.items[self.keys[index]][1] for index in self._query(shape, "intersects")]
+    def query_candidates(self, shape):
+        # 호출자가 선분과 확장 사각형의 실제 충돌을 검사한다.
+        return [self.items[self.keys[index]][1] for index in self._query(shape)]
 
-    def intersections(self, shapes):
+    def candidate_pairs(self, shapes):
         self._ensure_tree()
-        rows, columns = self.tree.query(shapes, predicate="intersects")
+        rows, columns = self.tree.query(shapes)
         return ((row, self.items[self.keys[column]][1]) for row, column in zip(rows, columns))
 
     def query(self, rect):
