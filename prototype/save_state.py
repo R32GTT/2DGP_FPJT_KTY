@@ -11,6 +11,7 @@ from .inventory import AMMUNITION, BAG_LIMIT
 from .intelligence import refresh_intelligence_view, restore_notes
 from .perception import Knowledge
 from .simulation import RegionAlarm
+from .supply_uses import EQUIPMENT_USES
 from .transport import Trip
 from .weapons import WeaponState
 
@@ -58,12 +59,18 @@ def actor_state(actor):
 
 
 def restore_actor(row, specs):
-    actor = Actor(**{**row, "position": Position(**row["position"]),
+    actor = Actor(**{**row, "armor_max": row.get("armor_max", max(row["armor"], 40 if row["team"] == "player" else 15)),
+                     "position": Position(**row["position"]),
                      "loadout": restore_weapons(row["loadout"], specs),
                      "boarding_goal": tuples(row["boarding_goal"])})
     if (not all(math.isfinite(value) for value in (*actor.xy, actor.hp, actor.facing, actor.radius,
                                                  actor.speed, actor.blinded_until))
             or actor.hp < 0 or actor.radius <= 0 or actor.speed <= 0
+            or type(actor.armor) is not int or type(actor.armor_max) is not int
+            or actor.armor_max < actor.armor or actor.armor < 0
+            or not isinstance(actor.armor_equipment, dict)
+            or any(key not in EQUIPMENT_USES or not EQUIPMENT_USES[key].armor_bonus or value is not True
+                   for key, value in actor.armor_equipment.items())
             or actor.blinded_until < 0
             or actor.night_kit is not None and type(actor.night_kit) is not bool
             or actor.lamp not in OPTICS_MODES or type(actor.night_vision) is not bool or type(actor.ir_laser) is not bool

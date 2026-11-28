@@ -13,9 +13,9 @@
     "hq": {
       "capabilities": ["command", "garrison", "qrf"], "units": [10],
       "mobile_units": [4, 4], "vehicles": {"troop_truck": 2, "truck": 1}, "staffing_target": 10,
-      "inventory": {"supplies": 100, "ammunition": 80, "repair_parts": 12},
+      "inventory": {"supplies": 250, "ammunition": 80, "repair_parts": 12},
       "minimum_stock": {"supplies": 10, "ammunition": 10, "repair_parts": 2},
-      "target_stock": {"supplies": 100, "ammunition": 80, "repair_parts": 5}
+      "target_stock": {"supplies": 250, "ammunition": 80, "repair_parts": 5}
     },
     "comms": {
       "capabilities": ["communication"], "units": [2], "vehicles": {}, "staffing_target": 4,
@@ -32,9 +32,9 @@
     },
     "garrison": {
       "capabilities": ["garrison", "qrf"], "units": [10], "vehicles": {}, "staffing_target": 8,
-      "inventory": {"supplies": 30, "ammunition": 50, "repair_parts": 8},
+      "inventory": {"supplies": 120, "ammunition": 50, "repair_parts": 8},
       "minimum_stock": {"supplies": 10, "ammunition": 10, "repair_parts": 2},
-      "target_stock": {"supplies": 80, "ammunition": 50, "repair_parts": 5}
+      "target_stock": {"supplies": 120, "ammunition": 50, "repair_parts": 5}
     },
     "sam": {
       "capabilities": ["air_defense"], "units": [2], "vehicles": {},

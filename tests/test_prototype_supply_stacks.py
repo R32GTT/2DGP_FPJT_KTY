@@ -79,6 +79,7 @@ class SupplyStackTests(unittest.TestCase):
         old = self.play.roster.by_unit[source.id][0]
         original_ammo = old.weapon.ammo + old.inventory.get(f"ammo:{old.weapon.spec.ammo_type}", 0)
         original_parts = dict(old.weapon.attachments)
+        original_armor = old.armor
         self.play.campaign.simulation.apply_action({"type": "damage_facility", "facility_id": site_id,
                                                     "damage": 100, "destroy_inventory": True})
         recruit = deepcopy(source)
@@ -91,9 +92,11 @@ class SupplyStackTests(unittest.TestCase):
         self.assertEqual(new.weapon.ammo, 0)
         self.assertFalse(new.inventory)
         self.assertFalse(new.weapon.attachments)
+        self.assertEqual(new.armor, 0)
         self.assertEqual(old.weapon.ammo + old.inventory.get(f"ammo:{old.weapon.spec.ammo_type}", 0),
                          original_ammo)
         self.assertEqual(old.weapon.attachments, original_parts)
+        self.assertEqual(old.armor, original_armor)
         assert_invariants(self.state)
 
     def test_warehouse_c4_destroys_stock_but_repair_does_not_restore_it(self):

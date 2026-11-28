@@ -4,10 +4,11 @@ from collections import defaultdict
 import math
 
 from campaign.models import Position
-from campaign.resources import available, consume, issue_ammunition
+from campaign.resources import issue_ammunition, issue_equipment
 
 from .actors import Actor
 from .weapons import WeaponState
+from .supply_uses import AMMO_USES, EQUIPMENT_USES
 
 
 ASSEMBLY_RADIUS_M = 3.5
@@ -83,29 +84,35 @@ class CampaignRoster:
             node = unit.node_id or state.operations[unit.operation_id].home_node
             home = state.nodes[node].position
             for index in range(unit.soldiers):
-                actor = Actor(f"{unit_id}:{index}", Position(home.x, home.y, home.floor), armor=15,
+                generated = bool(self.world.data.get("generation"))
+                actor = Actor(f"{unit_id}:{index}", Position(home.x, home.y, home.floor),
+                              armor=0 if generated else 15, armor_max=0 if generated else 15,
                               source_unit=unit_id, member=index, home_node=node, present=False)
                 spec = weapon(index) if callable(weapon) else weapon
                 actor.loadout = {spec.id: WeaponState.ready(spec)}
                 actor.active_weapon = spec.id
                 facility = self.bridge.node_facilities.get(node)
-                if self.world.data.get("generation"):
-                    rounds_per_crate = min(spec.capacity, spec.reserve)
-                    requested = (actor.weapon.ammo + spec.reserve) // rounds_per_crate if rounds_per_crate else 0
-                    issued = issue_ammunition(state, facility.id, requested) if facility else 0
-                    rounds = issued * rounds_per_crate
+                if generated:
+                    ammo = AMMO_USES[spec.ammo_type]
+                    rounds_per_crate = ammo.rounds
+                    requested = max(1, (actor.weapon.ammo + spec.reserve) // rounds_per_crate)
+                    issued = (issue_ammunition(state, facility.id, requested, cost=ammo.ammunition_cost)
+                              if facility else 0)
+                    rounds = min(issued * rounds_per_crate, actor.weapon.ammo + spec.reserve)
                     loaded = min(actor.weapon.ammo, rounds)
                     actor.weapon.magazine = max(0, loaded - int(actor.weapon.chambered))
                     actor.weapon.chambered = loaded > 0
                     reserve = max(0, rounds - loaded)
-                    if (facility and facility.damage < 100
-                            and available(state, facility.id, "supplies")
-                            > facility.minimum_stock["supplies"]):
+                    if facility:
                         optic = next((part for part in spec.compatible if part.slot == "optic"), None)
-                        if optic is not None:
-                            consume(state, facility.inventory, {"supplies": 1},
-                                    reason="garrison_attachment", owner_id=facility.id)
+                        if optic is not None and optic.id in EQUIPMENT_USES and issue_equipment(
+                                state, facility.id, EQUIPMENT_USES[optic.id].cost):
                             actor.weapon.attachments[optic.slot] = optic.id
+                        for item_id, gear in EQUIPMENT_USES.items():
+                            if gear.armor_bonus and issue_equipment(state, facility.id, gear.cost):
+                                actor.armor += gear.armor_bonus
+                                actor.armor_max += gear.armor_bonus
+                                actor.armor_equipment[item_id] = True
                 else:
                     reserve = actor.weapon.reserve
                 if reserve:

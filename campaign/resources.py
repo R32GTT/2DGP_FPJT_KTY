@@ -171,19 +171,32 @@ def consume(state: CampaignState, inventory: dict[str, int], requested: dict[str
     return used
 
 
-def issue_ammunition(state: CampaignState, facility_id: str, requested: int) -> int:
+def issue_ammunition(state: CampaignState, facility_id: str, requested: int, *, cost: int = 1) -> int:
     """수송에 예약된 물량은 보존하고 지급한 탄약만 전술 재고로 넘긴다."""
-    if type(requested) is not int or requested < 0:
+    if type(requested) is not int or requested < 0 or type(cost) is not int or cost <= 0:
         raise ValueError("지급 탄약은 음수가 아닌 정수여야 함")
     facility = state.facilities[facility_id]
     if facility.damage == 100 or state.regions[facility.region_id].owner != "enemy":
         return 0
     amount = min(requested, max(0, available(state, facility_id, "ammunition")
-                                   - minimum(state, facility_id, "ammunition")))
+                                   - minimum(state, facility_id, "ammunition")) // cost)
     if not amount:
         return 0
-    return consume(state, facility.inventory, {"ammunition": amount},
-                   reason="garrison_ammunition", owner_id=facility_id)["ammunition"]
+    consume(state, facility.inventory, {"ammunition": amount * cost},
+            reason="garrison_ammunition", owner_id=facility_id)
+    return amount
+
+
+def issue_equipment(state: CampaignState, facility_id: str, costs: dict[str, int]) -> bool:
+    """새 병사에게 지급할 장비의 실제 시설 재고를 한 번에 차감한다."""
+    costs = quantities(costs)
+    facility = state.facilities[facility_id]
+    if (facility.damage == 100 or state.regions[facility.region_id].owner != "enemy"
+            or any(available(state, facility_id, name) - minimum(state, facility_id, name) < amount
+                   for name, amount in costs.items())):
+        return False
+    consume(state, facility.inventory, costs, reason="garrison_equipment", owner_id=facility_id)
+    return True
 
 
 def remove(state: CampaignState, inventory: dict[str, int], amount: dict[str, int],

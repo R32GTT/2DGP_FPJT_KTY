@@ -24,6 +24,7 @@ from .inventory import AMMUNITION, C4, MULTITOOL, NIGHT_KIT, PICKUP_REACH, Field
 from .intelligence import refresh_intelligence_view
 from .lighting import Light, OPTICS_MODES, actor_optics, beam_end, incident_light, sky_at
 from .roster import CampaignRoster
+from .supply_uses import AMMO_USES
 from .supply_stacks import build_stacks, nearby_stack
 from .throwables import Activation, BURST_SECONDS, SmokeCloud, Throwables
 from .transport import TransportCrew
@@ -76,8 +77,10 @@ class PlaySimulation:
             player_spawn = initial_position
         parts = load_attachments()
         self.specs = load_weapons(attachments=parts)
+        if any(spec.ammo_type not in AMMO_USES for spec in self.specs.values()):
+            raise ValueError("총기에 등록되지 않은 탄종 보급 규칙")
         self.player = Actor("player", Position(*player_spawn), speed=3.0,
-                            hp=100, armor=40, team="player", state="player")
+                            hp=100, armor=40, armor_max=40, team="player", state="player")
         guard_rows = self.world.data["guards"]
         if stack_drill:
             left, right = stack_setup["layouts"][stack_variant]
@@ -92,7 +95,7 @@ class PlaySimulation:
                     positions.append(point)
             guard_rows = [dict(row, position=point) for row, point in
                           zip(guard_rows + stack_setup["extra_guards"], positions)]
-        self.guard_records = [Actor(row["id"], Position(*row["position"]), armor=15,
+        self.guard_records = [Actor(row["id"], Position(*row["position"]), armor=15, armor_max=15,
                                      source_unit=row.get("source_unit", ""), member=row.get("member", -1),
                                      home_node=row.get("home_node", "")) for row in guard_rows]
         self.player.loadout = {key: WeaponState.ready(self.specs[key])

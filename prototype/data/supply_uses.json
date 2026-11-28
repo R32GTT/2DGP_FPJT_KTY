@@ -1,0 +1,19 @@
+{
+  "ammo": [
+    {"id":"pistol","name":"권총탄","round_weight":0.014,"rounds":24,"ammunition_cost":1},
+    {"id":"rifle","name":"5.56 × 45mm","round_weight":0.018,"rounds":60,"ammunition_cost":1},
+    {"id":"shell","name":"산탄","round_weight":0.04,"rounds":12,"ammunition_cost":1},
+    {"id":"precision","name":"저격총탄","round_weight":0.027,"rounds":10,"ammunition_cost":2},
+    {"id":"machine_gun","name":"기관총탄","round_weight":0.024,"rounds":80,"ammunition_cost":2}
+  ],
+  "equipment": [
+    {"id":"gear:vest","name":"방탄복","weight":5.0,"cost":{"supplies":5},"armor_bonus":25},
+    {"id":"gear:helmet","name":"방탄모","weight":1.5,"cost":{"supplies":2},"armor_bonus":10},
+    {"id":"charge:c4","name":"C4","weight":0.8,"cost":{"supplies":2,"ammunition":1}},
+    {"id":"tool:multitool","name":"멀티툴","weight":1.2,"cost":{"supplies":3}},
+    {"id":"combat_optic","name":"조준경","weight":0.4,"cost":{"supplies":2}},
+    {"id":"suppressor","name":"소음기","weight":0.35,"cost":{"supplies":2}},
+    {"id":"extended_magazine","name":"대형 탄창","weight":0.45,"cost":{"supplies":2}}
+  ],
+  "armor_repair_per_part": 25
+}

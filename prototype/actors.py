@@ -20,6 +20,8 @@ class Actor:
     state: str = "patrol"
     team: str = "enemy"
     armor: int = 0
+    armor_max: int = 100
+    armor_equipment: dict[str, bool] = field(default_factory=dict)
     loadout: dict[str, "WeaponState"] = field(default_factory=dict)
     inventory: dict[str, int] = field(default_factory=dict)
     active_weapon: str = ""

@@ -65,7 +65,7 @@ def compatible_save(path, *, expected_content=None):
 
 def content_version():
     paths = [ROOT / "prototype/data/campaign_setup.json", ROOT / "prototype/data/weapons.json",
-             ROOT / "prototype/data/attachments.json"]
+             ROOT / "prototype/data/attachments.json", ROOT / "prototype/data/supply_uses.json"]
     if THROWABLE_DATA_PATH.is_file():
         paths.append(THROWABLE_DATA_PATH)
     paths += sorted((ROOT / "prototype/data/prefabs").glob("*.json"))

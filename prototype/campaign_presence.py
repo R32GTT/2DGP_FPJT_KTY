@@ -11,6 +11,7 @@ from .ai_config import COMBAT_ALERT_SECONDS
 from .geometry import Rect
 from .perception import SIGHT_RANGE
 from .roster import ASSEMBLY_RADIUS_M
+from .supply_uses import AMMO_USES
 
 
 MARCH_SPACING_M = 0.7
@@ -114,10 +115,11 @@ class CampaignPresence:
         if weapon is None or not actor.present or weapon.reloading or seconds < brain.resupply_at:
             return None
         spec = weapon.spec
-        rounds_per_issue = min(spec.capacity, spec.reserve)
+        ammo = AMMO_USES[spec.ammo_type]
+        rounds_per_issue = ammo.rounds
         key = f"ammo:{spec.ammo_type}"
         carried = actor.inventory.get(key, 0) + weapon.reserve
-        if not rounds_per_issue or spec.reserve - carried < rounds_per_issue:
+        if not rounds_per_issue or carried >= spec.reserve:
             return None
         state = self.bridge.simulation.state
         unit = state.units.get(actor.source_unit)
@@ -147,10 +149,11 @@ class CampaignPresence:
             brain.resupply_at = seconds + 5
             return None
 
-        requested = (spec.reserve - carried) // rounds_per_issue
-        granted = issue_ammunition(state, facility.id, requested)
+        requested = max(1, (spec.reserve - carried) // rounds_per_issue)
+        granted = issue_ammunition(state, facility.id, requested, cost=ammo.ammunition_cost)
         if granted:
-            actor.inventory[key] = actor.inventory.get(key, 0) + granted * rounds_per_issue
+            actor.inventory[key] = actor.inventory.get(key, 0) + min(
+                granted * rounds_per_issue, spec.reserve - carried)
         brain.resupply_at = seconds + (2 if granted else 5)
         return None
 
